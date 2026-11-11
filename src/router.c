@@ -1,0 +1,149 @@
+#include "router.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+
+/* Best model first. The two 0.8B files are the fallback, not upgrades. */
+static const struct zell_weight {
+    const char *id;
+    const char *file;
+    long long size;
+    int superior;
+} WEIGHTS[ZELL_ROUTER_SLOTS] = {
+    {"qwen3.8-27b", "Qwen3.8-27B-UD-Q4_K_M.gguf", 16464440224LL, 1},
+    {"qwen3.5-4b", "Qwen3.5-4B-Q6_K.gguf", 3525956768LL, 1},
+    {"qwen3.5-0.8b", "Qwen3.5-0.8B-Q8_0.gguf", 833592096LL, 0},
+    {"qwen-0.8b-no-loop-02", "qwen-0.8b-no-loop-02.gguf", 833592416LL, 0},
+};
+
+const char *zell_models_dir(void)
+{
+    const char *env = getenv("KILIX_LLM_MODELS_DIR");
+    const char *home;
+    static char path[400];
+    int wrote;
+
+    if (env != NULL && env[0] != '\0') {
+        return env;
+    }
+    home = getenv("GPU_TERMINAL_HOME");
+    if (home != NULL && home[0] != '\0') {
+        wrote = snprintf(path, sizeof path, "%s/kilix-llm/models", home);
+    } else {
+        home = getenv("HOME");
+        if (home == NULL || home[0] == '\0') {
+            home = ".";
+        }
+        wrote = snprintf(path, sizeof path,
+                         "%s/.local/gpu_terminal/kilix-llm/models", home);
+    }
+    if (wrote < 0 || (size_t)wrote >= sizeof path) {
+        return ".";
+    }
+    return path;
+}
+
+const char *zell_model_label(const char *model_id)
+{
+    if (model_id == NULL) {
+        return "Qwen3.5 0.8B";
+    }
+    if (strcmp(model_id, "qwen3.8-27b") == 0) {
+        return "Qwen3.8 27B";
+    }
+    if (strcmp(model_id, "qwen3.5-4b") == 0) {
+        return "Qwen3.5 4B";
+    }
+    return "Qwen3.5 0.8B";
+}
+
+static int weight_ready(const char *dir, const struct zell_weight *weight)
+{
+    char path[512];
+    struct stat info;
+    int wrote;
+
+    if (dir == NULL || dir[0] == '\0') {
+        return 0;
+    }
+    wrote = snprintf(path, sizeof path, "%s/%s", dir, weight->file);
+    if (wrote < 0 || (size_t)wrote >= sizeof path) {
+        return 0;
+    }
+    if (stat(path, &info) != 0 || !S_ISREG(info.st_mode)) {
+        return 0;
+    }
+    return (long long)info.st_size == weight->size;
+}
+
+static void add_slot(zell_router_slot *out, int capacity, int *count,
+                     const char *id, int superior)
+{
+    size_t length;
+
+    if (*count >= capacity || *count < 0) {
+        return;
+    }
+    length = strlen(id);
+    if (length >= sizeof out[*count].id) {
+        length = sizeof out[*count].id - 1;
+    }
+    memcpy(out[*count].id, id, length);
+    out[*count].id[length] = '\0';
+    out[*count].superior = superior;
+    *count += 1;
+}
+
+int zell_router_fill(const int ready[ZELL_ROUTER_SLOTS],
+                     zell_router_slot *out, int capacity)
+{
+    int index;
+    int count = 0;
+    int fallback = 2;
+
+    if (ready == NULL || out == NULL || capacity < 1) {
+        return 0;
+    }
+    for (index = 0; index < ZELL_ROUTER_SLOTS; index++) {
+        if (ready[index] && WEIGHTS[index].superior) {
+            add_slot(out, capacity, &count, WEIGHTS[index].id, 1);
+        }
+    }
+    if (ready[3] && !ready[2]) {
+        fallback = 3;
+    }
+    add_slot(out, capacity, &count, WEIGHTS[fallback].id, 0);
+    return count;
+}
+
+int zell_router_prepare(const char *models_dir,
+                        zell_router_slot *out, int capacity)
+{
+    int ready[ZELL_ROUTER_SLOTS];
+    int index;
+
+    for (index = 0; index < ZELL_ROUTER_SLOTS; index++) {
+        ready[index] = weight_ready(models_dir, &WEIGHTS[index]);
+    }
+    return zell_router_fill(ready, out, capacity);
+}
+
+int zell_router_should_switch(int superior, int stdout_bytes,
+                              long elapsed_ms, int more)
+{
+    return superior && stdout_bytes == 0 &&
+           elapsed_ms > ZELL_MODEL_START_MS && more;
+}
+
+int zell_ask_succeeded(int status, const char *text)
+{
+    if (status != 0 || text == NULL) {
+        return 0;
+    }
+    while (*text == ' ' || *text == '\t' || *text == '\n' || *text == '\r') {
+        text += 1;
+    }
+    return *text != '\0';
+}
