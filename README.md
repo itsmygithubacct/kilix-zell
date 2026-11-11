@@ -79,7 +79,7 @@ shared with `zell`: `src/draw_neuronte.c` gives the soft-raster calls a
 Neuronte body and includes `src/draw.c`.
 
 It needs a Neuronte checkout with `make` run in it, at `NEURONTE`
-(default `~/projects/neuronte`), and loads `neuronte-split-v2.nrt` from
+(default `~/projects/neuronte`), and loads `neuronte-split-v3.nrt` from
 there. `ZELL_NEURONTE_WEIGHTS` names another weight file at run time.
 `make test-neuronte` runs the scene tests against this renderer and its
 own checks, which are skipped when the weight file is absent. `make snap`
