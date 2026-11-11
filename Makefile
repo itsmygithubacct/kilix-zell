@@ -88,6 +88,12 @@ $(BUILD)/kitty_keyboard_posix.o: $(KB_DIR)/src/kitty_keyboard_posix.c | $(BUILD)
 $(BUILD)/soft_raster.o: $(SR_DIR)/src/soft_raster.c | $(BUILD)
 	$(CC) $(CPPFLAGS) -I$(SR_DIR)/src $(CFLAGS) -c $< -o $@
 
+# Sectioned copy for the Neuronte link. --gc-sections then drops the font
+# and the scaler, which that renderer does not call. The default build
+# keeps soft_raster.o and does not pass --gc-sections, so zell keeps them.
+$(BUILD)/soft_raster_neuronte.o: $(SR_DIR)/src/soft_raster.c | $(BUILD)
+	$(CC) $(CPPFLAGS) -I$(SR_DIR)/src $(CFLAGS) -ffunction-sections -fdata-sections -c $< -o $@
+
 test: $(BUILD)/test-scene
 	$(BUILD)/test-scene
 
@@ -118,6 +124,23 @@ SNAP_COMMON := \
 	$(BUILD)/room.o \
 	$(BUILD)/soft_raster.o
 
+# Same link as LIB_OBJS, with the sectioned soft-raster. --gc-sections
+# applies to the Neuronte program, its tests, and snap-neuronte only.
+N_LDFLAGS := -Wl,--gc-sections
+N_LIB_OBJS := \
+	$(BUILD)/kitty_framebuffer.o \
+	$(BUILD)/kitty_keyboard.o \
+	$(BUILD)/kitty_keyboard_posix.o \
+	$(BUILD)/soft_raster_neuronte.o
+
+SNAP_NEURONTE := \
+	$(BUILD)/scene.o \
+	$(BUILD)/router.o \
+	$(BUILD)/voice.o \
+	$(BUILD)/sprites.o \
+	$(BUILD)/room.o \
+	$(BUILD)/soft_raster_neuronte.o
+
 .PHONY: neuronte test-neuronte snap
 
 ifeq ($(RENDER),neuronte)
@@ -133,21 +156,21 @@ $(BUILD)/draw_neuronte.o: $(ROOT)/src/draw_neuronte.c $(ROOT)/src/draw.c | $(BUI
 $(BUILD)/main_neuronte.o: $(ROOT)/src/main.c | $(BUILD)
 	$(CC) $(N_CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(ROOT)/zell-neuronte: $(BUILD)/main_neuronte.o $(N_COMMON) $(LIB_OBJS) $(NEURONTE_LIB) | $(BUILD)
-	$(CC) $(CFLAGS) $^ $(LDLIBS) -o $@
+$(ROOT)/zell-neuronte: $(BUILD)/main_neuronte.o $(N_COMMON) $(N_LIB_OBJS) $(NEURONTE_LIB) | $(BUILD)
+	$(CC) $(CFLAGS) $(N_LDFLAGS) $^ $(LDLIBS) -o $@
 
 $(BUILD)/test_neuronte.o: $(ROOT)/tests/test_neuronte.c | $(BUILD)
 	$(CC) $(N_CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/test-neuronte: $(BUILD)/test_neuronte.o $(N_COMMON) $(BUILD)/soft_raster.o $(NEURONTE_LIB) | $(BUILD)
-	$(CC) $(CFLAGS) $^ -lm -o $@
+$(BUILD)/test-neuronte: $(BUILD)/test_neuronte.o $(N_COMMON) $(BUILD)/soft_raster_neuronte.o $(NEURONTE_LIB) | $(BUILD)
+	$(CC) $(CFLAGS) $(N_LDFLAGS) $^ -lm -o $@
 
 # The scene tests again, with the Neuronte renderer in place of draw.o.
 $(BUILD)/test_scene_neuronte.o: $(ROOT)/tests/test_scene.c | $(BUILD)
 	$(CC) $(N_CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/test-scene-neuronte: $(BUILD)/test_scene_neuronte.o $(N_COMMON) $(BUILD)/soft_raster.o $(NEURONTE_LIB) | $(BUILD)
-	$(CC) $(CFLAGS) $^ -lm -o $@
+$(BUILD)/test-scene-neuronte: $(BUILD)/test_scene_neuronte.o $(N_COMMON) $(BUILD)/soft_raster_neuronte.o $(NEURONTE_LIB) | $(BUILD)
+	$(CC) $(CFLAGS) $(N_LDFLAGS) $^ -lm -o $@
 
 test-neuronte: $(BUILD)/test-neuronte $(BUILD)/test-scene-neuronte
 	$(BUILD)/test-neuronte
@@ -162,8 +185,8 @@ $(BUILD)/snap_neuronte.o: $(ROOT)/tools/snap.c | $(BUILD)
 $(BUILD)/snap: $(BUILD)/snap.o $(BUILD)/draw.o $(SNAP_COMMON) | $(BUILD)
 	$(CC) $(CFLAGS) $^ -lm -o $@
 
-$(BUILD)/snap-neuronte: $(BUILD)/snap_neuronte.o $(BUILD)/draw_neuronte.o $(SNAP_COMMON) $(NEURONTE_LIB) | $(BUILD)
-	$(CC) $(CFLAGS) $^ -lm -o $@
+$(BUILD)/snap-neuronte: $(BUILD)/snap_neuronte.o $(BUILD)/draw_neuronte.o $(SNAP_NEURONTE) $(NEURONTE_LIB) | $(BUILD)
+	$(CC) $(CFLAGS) $(N_LDFLAGS) $^ -lm -o $@
 
 snap: $(BUILD)/snap $(BUILD)/snap-neuronte
 
