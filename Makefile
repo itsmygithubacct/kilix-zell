@@ -103,7 +103,7 @@ test: $(BUILD)/test-scene
 # checkout of that library with `make` run in it. The default build above
 # does not need it.
 NEURONTE ?= $(HOME)/projects/neuronte
-NEURONTE_WEIGHTS ?= $(NEURONTE)/weights/neuronte-split-v3.nrt
+NEURONTE_WEIGHTS ?= $(NEURONTE)/weights/neuronte-split-v4.nrt
 NEURONTE_LIB := $(NEURONTE)/build/libneuronte.a
 N_CPPFLAGS := $(CPPFLAGS) -I$(NEURONTE)/include -DZELL_RENDER_NEURONTE \
 	-DZELL_NEURONTE_WEIGHTS='"$(NEURONTE_WEIGHTS)"'
