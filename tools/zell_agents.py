@@ -3,6 +3,8 @@ import json
 import os
 import stat
 import subprocess
+import sys
+from pathlib import Path
 
 from zell_weather import settings_path
 
@@ -59,6 +61,29 @@ def catalog():
             and isinstance(row.get('id'), str) and isinstance(row.get('label'), str)]
 
 
+def switch(ui):
+    try:
+        toggle_yolo(ui)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        ui.page_text('YOLO setting: '+str(error))
+
+
+def run_updates(identifiers):
+    """Keep the PTY's final report visible until the user returns to the room."""
+    try:
+        status = subprocess.run(['kilix', 'install', '--update', *identifiers], check=False).returncode
+    except KeyboardInterrupt:
+        status = 130
+    except OSError as error:
+        print('Could not run the agent updater: '+str(error))
+        status = 1
+    try:
+        input(f'\nAgent updates finished (exit {status}). Enter to return to the Command Center... ')
+    except (EOFError, KeyboardInterrupt):
+        pass
+    return status
+
+
 def updates(ui):
     """Remember a selection, then run it in the interactive PTY for sudo/input."""
     from zell_terminal import terminal_loop
@@ -84,7 +109,8 @@ def updates(ui):
                 ui.state_write(STATE, {'update_agents': sorted(selected)})
                 argv = ['kilix', 'install', '--update', *sorted(selected)]
                 if ui.DIALOGUE:
-                    return terminal_loop(ui, argv, title='Coding-agent updates / Ctrl-C interrupts', sensitive=True)
+                    return terminal_loop(ui, [sys.executable, str(Path(__file__).resolve()), '--run-updates', *sorted(selected)],
+                                         title='Coding-agent updates / Ctrl-C interrupts', sensitive=True)
                 return ui.run(argv)
             if choice == 'all':
                 selected = set(available)
@@ -99,3 +125,11 @@ def updates(ui):
             ui.state_write(STATE, {'update_agents': sorted(selected)})
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         ui.page_text('Agent updates: '+str(error))
+
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--run-updates', nargs='+', required=True)
+    args = parser.parse_args()
+    raise SystemExit(run_updates(args.run_updates))

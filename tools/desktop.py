@@ -432,7 +432,7 @@ def vitals_snapshot():
 
 def desktop(station,action):
     ui=sys.modules.get(__name__) or SimpleNamespace(**globals())
-    if station==46:return zell_agents.toggle_yolo(ui)
+    if station==46:return zell_agents.switch(ui)
     if station==47:return zell_agents.updates(ui)
     if station in zell_os.STATIONS:return zell_os.hub(ui,zell_os.STATIONS[station],action)
     if station==45:

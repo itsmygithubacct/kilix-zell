@@ -56,13 +56,13 @@ class AgentControlsTests(unittest.TestCase):
         with patch.object(agents, 'catalog', return_value=rows), patch('zell_terminal.terminal_loop') as terminal:
             agents.updates(ui)
         terminal.assert_called_once()
-        self.assertEqual(terminal.call_args.args[1], ['kilix','install','--update','grok'])
+        self.assertEqual(terminal.call_args.args[1][2:], ['--run-updates','grok'])
         self.assertTrue(terminal.call_args.kwargs['sensitive'])
         ui.state_write.assert_called_with(agents.STATE, {'update_agents':['grok']})
         ui.choose.side_effect=['all','run']
         with patch.object(agents, 'catalog', return_value=rows), patch('zell_terminal.terminal_loop') as terminal:
             agents.updates(ui)
-        self.assertEqual(terminal.call_args.args[1], ['kilix','install','--update','codex','grok'])
+        self.assertEqual(terminal.call_args.args[1][2:], ['--run-updates','codex','grok'])
 
     def test_cancel_and_empty_selection_never_run_an_updater(self):
         ui = SimpleNamespace(DIALOGUE=Mock(), state_read=Mock(return_value={'update_agents':[]}),
@@ -78,7 +78,20 @@ class AgentControlsTests(unittest.TestCase):
         with patch.object(agents, 'catalog', return_value=[dict(id='codex',label='Codex',installed=True)]), \
                 patch('zell_terminal.terminal_loop') as terminal:
             agents.updates(ui)
-        self.assertEqual(terminal.call_args.args[1], ['kilix','install','--update','codex'])
+        self.assertEqual(terminal.call_args.args[1][2:], ['--run-updates','codex'])
+
+    def test_final_update_report_waits_for_acknowledgement(self):
+        with patch.object(agents.subprocess, 'run', return_value=Mock(returncode=7)) as run, \
+                patch('builtins.input', return_value='') as pause:
+            self.assertEqual(agents.run_updates(['codex','grok']),7)
+        run.assert_called_once_with(['kilix','install','--update','codex','grok'],check=False)
+        self.assertIn('exit 7',pause.call_args.args[0])
+
+    def test_switch_errors_remain_visible_until_acknowledged(self):
+        ui=SimpleNamespace(page_text=Mock())
+        with patch.object(agents, 'toggle_yolo', side_effect=ValueError('cannot read settings')):
+            agents.switch(ui)
+        ui.page_text.assert_called_once_with('YOLO setting: cannot read settings')
 
 
 if __name__ == '__main__': unittest.main()
