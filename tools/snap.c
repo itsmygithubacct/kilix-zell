@@ -7,6 +7,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <zlib.h>
 
 #include "draw.h"
 #include "desktop.h"
@@ -17,10 +20,67 @@
 #include "draw_neuronte.h"
 #endif
 
+static void png_chunk(FILE *file, const char *type, const unsigned char *data, size_t size)
+{
+    unsigned char head[8] = {(unsigned char)(size >> 24), (unsigned char)(size >> 16),
+                             (unsigned char)(size >> 8), (unsigned char)size,
+                             (unsigned char)type[0], (unsigned char)type[1],
+                             (unsigned char)type[2], (unsigned char)type[3]};
+    uLong crc = crc32(0L, head + 4, 4);
+    unsigned char tail[4];
+
+    if (size) crc = crc32(crc, data, (uInt)size);
+    tail[0] = (unsigned char)(crc >> 24); tail[1] = (unsigned char)(crc >> 16);
+    tail[2] = (unsigned char)(crc >> 8); tail[3] = (unsigned char)crc;
+    fwrite(head, 1, sizeof head, file);
+    if (size) fwrite(data, 1, size, file);
+    fwrite(tail, 1, sizeof tail, file);
+}
+
+/* 8-bit RGB PNG: image viewers that cannot read PPM can read this copy. */
+static bool write_png(const sr_canvas *canvas, const char *path)
+{
+    static const unsigned char signature[8] = {137, 'P', 'N', 'G', 13, 10, 26, 10};
+    size_t stride = (size_t)canvas->w * 3 + 1, raw_size = stride * (size_t)canvas->h;
+    uLongf packed_size = compressBound((uLong)raw_size);
+    unsigned char *raw = malloc(raw_size), *packed = malloc(packed_size);
+    unsigned char header[13] = {(unsigned char)(canvas->w >> 24), (unsigned char)(canvas->w >> 16),
+                                (unsigned char)(canvas->w >> 8), (unsigned char)canvas->w,
+                                (unsigned char)(canvas->h >> 24), (unsigned char)(canvas->h >> 16),
+                                (unsigned char)(canvas->h >> 8), (unsigned char)canvas->h,
+                                8, 2, 0, 0, 0};
+    FILE *file = NULL;
+    bool ok = false;
+
+    if (raw && packed) {
+        for (int y = 0; y < canvas->h; y++) {
+            unsigned char *row = raw + (size_t)y * stride;
+            *row++ = 0;
+            for (int x = 0; x < canvas->w; x++) {
+                uint32_t pixel = canvas->px[(size_t)y * (size_t)canvas->w + (size_t)x];
+                *row++ = (unsigned char)(pixel >> 16);
+                *row++ = (unsigned char)(pixel >> 8);
+                *row++ = (unsigned char)pixel;
+            }
+        }
+        if (compress2(packed, &packed_size, raw, (uLong)raw_size, 6) == Z_OK &&
+            (file = fopen(path, "wb")) != NULL) {
+            fwrite(signature, 1, sizeof signature, file);
+            png_chunk(file, "IHDR", header, sizeof header);
+            png_chunk(file, "IDAT", packed, packed_size);
+            png_chunk(file, "IEND", NULL, 0);
+            ok = !ferror(file);
+            ok = fclose(file) == 0 && ok;
+        }
+    }
+    free(raw); free(packed);
+    return ok;
+}
+
 static int shot(const zell_scene *scene, sr_canvas *canvas, const char *prefix,
                 const char *name)
 {
-    char path[512];
+    char path[512], png[512];
 
     zell_draw(scene, canvas);
     if (snprintf(path, sizeof path, "%s-%s.ppm", prefix, name) >= (int)sizeof path ||
@@ -28,7 +88,12 @@ static int shot(const zell_scene *scene, sr_canvas *canvas, const char *prefix,
         fprintf(stderr, "snap: cannot write %s-%s.ppm\n", prefix, name);
         return 1;
     }
-    printf("%s\n", path);
+    snprintf(png, sizeof png, "%s-%s.png", prefix, name);
+    if (!write_png(canvas, png)) {
+        fprintf(stderr, "snap: cannot write %s\n", png);
+        return 1;
+    }
+    printf("%s\n%s\n", path, png);
     return 0;
 }
 

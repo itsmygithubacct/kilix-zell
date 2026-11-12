@@ -124,6 +124,9 @@ make snap
 build/snap-neuronte /tmp/zell-preview 960 640
 ```
 
+Each snapshot is written twice, as `NAME.ppm` and `NAME.png` with the same
+pixels. Open the PNG in viewers that do not read PPM.
+
 Tests cover scene behavior, routing, output capture under a controlling
 terminal, cancellation, camera/resize, launcher, model schema, command/URL
 validation and cleanup boundaries. Tests do not install packages, delete real
