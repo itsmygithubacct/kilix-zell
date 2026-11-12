@@ -99,7 +99,7 @@ def updates(ui):
                        ('Clear selection', 'none')]
             choices += [(('[x] ' if row['id'] in selected else '[ ] ')+row['label']+
                          ('' if row['id'] in available else ' (not installed)'), 'agent:'+row['id']) for row in rows]
-            choice = ui.choose('Coding-agent updates / '+labels, choices)
+            choice = ui.choose('Coding-agent updates', choices)
             if choice is None:
                 return
             if choice == 'run':
