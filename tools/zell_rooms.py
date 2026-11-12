@@ -123,7 +123,7 @@ def _create(ui, state, snapshot, cwd, index=None, role='Coding session', prompt=
     anchor = _anchor(snapshot)
     args = ['new-tab', anchor['pane_id'], '--expect-broker', anchor['broker'],
             '--agent', 'codex', '--model', MODEL, '--own-tab', '--cwd', cwd,
-            '--title', f'Zell / {role} / {cwd.name}']
+            '--title', f'Zell / {role} / {cwd.name}', '--coding-yolo']
     if prompt:
         _check_prompt(prompt)
         args += ['--prompt', prompt]

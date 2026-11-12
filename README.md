@@ -256,6 +256,19 @@ preview. Preview text stays in memory. Click a screen from anywhere in the room
 to open its menu. The controller can explicitly dispatch tasks to verified
 workers and open the task board.
 
+The large **YOLO** switch reads Kilix's shared `KILIX_CODING_YOLO` setting on
+room entry and follows changes made elsewhere. Clicking it, or walking up and
+pressing Enter, saves through the shared settings writer. New screen, project
+and Pilot launches request that setting through Kilix's provider-specific
+launch flags. Existing sessions keep the mode they started with.
+
+The **Agent updates** switch remembers a selection of installed clients, with
+controls to select some or all. Run the selection in Zell's floating terminal;
+it shows each client's result and accepts any sudo prompt there. Updates use
+`kilix install --update`, including npm-installed Codex and Grok. Ctrl-C stops
+the batch; an individual failure is reported while the other selected clients
+continue. Missing clients are shown but cannot be selected for an update.
+
 **Git Wizard** can register projects, inspect changes, enable health watches and
 open project coding sessions on a screen or regular tab. **Pilot** previews
 project session arrangements (single, review pair, or coordinator and workers),

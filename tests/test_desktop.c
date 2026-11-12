@@ -162,7 +162,8 @@ int main(void) {
     s.x=zell_stations[13].x*ZELL_WORLD_W;s.y=zell_stations[13].y*ZELL_WORLD_H;
     c=(zell_controls){.confirm=true};zell_scene_tick(&s,&c);
     assert(s.room==1&&s.mode==ZELL_MODE_WALK&&!s.desktop_launch);
-    assert(zell_desktop_launcher_count(&s)==9);
+    assert(zell_desktop_launcher_count(&s)==11);
+    assert(s.coding_yolo_refresh&&!s.coding_yolo_ready);
     assert(zell_desktop_launcher_station(&s,0)==15);
     assert(zell_desktop_launcher_station(&s,6)==29);
     s.x=zell_stations[28].x*ZELL_WORLD_W;s.y=zell_stations[28].y*ZELL_WORLD_H;
@@ -216,6 +217,21 @@ int main(void) {
         assert(a&&b&&a->height==112&&b->height==112);
         assert(a->width==b->width);
         assert(memcmp(a->pixels,b->pixels,(size_t)a->width*(size_t)a->height*4)!=0);
+    }
+    /* Switch picking shares the painted rectangles, including a panned view. */
+    for(int width=640;width<=1600;width+=960){
+        zell_scene t;zell_scene_init(&t,width,width==640?400:1000);zell_desktop_init(&t);
+        t.room=1;t.mouse_valid=true;
+        for(int i=0;i<2;i++){
+            t.x=zell_stations[46+i].x*ZELL_WORLD_W;t.y=zell_stations[46+i].y*ZELL_WORLD_H;
+            zell_rect r;zell_command_switch_layout(i,&r);zell_desktop_camera(&t,&cx,&cy);
+            t.mode=ZELL_MODE_WALK;t.mouse_x=r.x+r.w/2-cx;t.mouse_y=r.y+r.h/2-cy;t.mouse_click=true;
+            assert(zell_desktop_click(&t)&&t.station==46+i&&t.desktop_launch);
+            t.mode=ZELL_MODE_WALK;t.desktop_launch=false;
+            c=(zell_controls){.confirm=true};zell_scene_tick(&t,&c);
+            assert(t.station==46+i&&t.desktop_launch);
+            t.room=0;assert(!zell_desktop_station_visible(&t,46+i));t.room=1;
+        }
     }
     s.hp=10;s.fatigue=100;assert(zell_desktop_speed_factor(&s)<.5f);
     s.hp=100;s.fatigue=0;assert(zell_desktop_speed_factor(&s)==.35f);

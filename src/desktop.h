@@ -4,7 +4,7 @@
 #define ZELL_VERSION "0.1.1"
 #define ZELL_WORLD_W 1536
 #define ZELL_WORLD_H 1024
-#define ZELL_STATIONS 46
+#define ZELL_STATIONS 48
 #define ZELL_CAVE_STATIONS 15
 /* Where the Neuronte lever is drawn, relative to its floor interaction point. */
 #define ZELL_SWITCH_WALL_DX 104
@@ -43,6 +43,7 @@ int zell_desktop_actions(int station);
 typedef struct { int x, y, w, h; } zell_rect;
 /* World-space monitor geometry shared by drawing, collision and picking. */
 void zell_monitor_layout(int screen,zell_rect *frame,zell_rect *display);
+void zell_command_switch_layout(int index,zell_rect *frame);
 bool zell_desktop_click(zell_scene *s);
 typedef struct { zell_rect frame, image, minimize, maximize, tab; } zell_terminal_layout;
 void zell_terminal_layout_for(const zell_scene *s,int width,int height,zell_terminal_layout *out);

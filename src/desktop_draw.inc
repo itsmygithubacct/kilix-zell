@@ -57,12 +57,29 @@ static void desktop_monitor(const zell_scene *s,sr_canvas *c,int index,int cx,in
  }
  if(selected)desktop_label(c,frame.x+frame.w/2,frame.y+frame.h+8,"Enter / click: session & tasks",0xa8f3d5u);
 }
+static void desktop_command_switch(const zell_scene *s,sr_canvas *c,int index,int cx,int cy,bool selected){
+ zell_rect r;zell_command_switch_layout(index,&r);r.x-=cx;r.y-=cy;
+ uint32_t ink=index?0x8bd9d0u:!s->coding_yolo_ready?0xdab568u:s->coding_yolo?0xffa058u:0x84d2b6u;
+ sr_fill_rect(c,(float)r.x,(float)r.y,(float)r.w,(float)r.h,0x111f29u,.98f);
+ sr_stroke_rect(c,(float)r.x,(float)r.y,(float)r.w,(float)r.h,3,selected?0xf5dba3u:0x96764bu,1);
+ for(int i=0;i<4;i++)sr_fill_circle(c,(float)(r.x+(i%2?r.w-10:10)),(float)(r.y+(i/2?r.h-10:10)),3,0xd8bd82u,1);
+ sr_fill_rect(c,(float)(r.x+30),(float)(r.y+22),44,94,0x060e15u,1);
+ sr_stroke_rect(c,(float)(r.x+30),(float)(r.y+22),44,94,2,0x6a746fu,1);
+ int lever=r.y+(!index&&s->coding_yolo_ready&&s->coding_yolo?33:86);
+ sr_fill_rect(c,(float)(r.x+23),(float)lever,58,22,ink,1);
+ sr_fill_rect(c,(float)(r.x+28),(float)(lever+4),48,4,0xf6ead1u,.65f);
+ sr_text(c,(float)(r.x+102),(float)(r.y+20),index?"AGENTS":"YOLO",ink,2,1);
+ desktop_text(c,r.x+102,r.y+61,index?"UPDATE":!s->coding_yolo_ready?"READING...":s->coding_yolo?"ENABLED":"DISABLED",ink,180);
+ desktop_text(c,r.x+102,r.y+86,index?"Choose some or all":"Shared Kilix setting",0xc1c9bfu,185);
+ desktop_text(c,r.x+18,r.y+125,index?"Click / Enter: configure & run":"Click / Enter: toggle",0xc1c9bfu,265);
+}
 /* Drawn twice: once for what stands behind Kilix, once for what stands in front. */
 static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy,bool front){
  int near=zell_desktop_near(s);
  for(int i=15;i<ZELL_STATIONS;i++){
   if(!zell_desktop_station_visible(s,i)||zell_desktop_station_in_front(s,i)!=front)continue;
   int x=(int)(zell_stations[i].x*ZELL_WORLD_W)-cx,y=(int)(zell_stations[i].y*ZELL_WORLD_H)-cy;
+  if(i>=46){desktop_command_switch(s,c,i-46,cx,cy,i==near);continue;}
   /* The Vault and Workshop floors already end in painted steps. */
   if(i==28){if(s->room<3)desktop_hatch(c,s->room==1?ZELL_ART_COMMAND_STAIRS:ZELL_ART_LAUNDRY_STAIRS,x,y,false,"");continue;}
   if(i>=29){

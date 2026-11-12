@@ -30,6 +30,10 @@ static void service_frame(zell_scene *s,char *frame){
     }
     decoded[n]=0;
     if(kind=='J'){s->restart_needed=decoded[0]=='1';return;}
+    if(kind=='Y'){
+        s->coding_yolo_ready=n==1&&(decoded[0]=='0'||decoded[0]=='1');
+        s->coding_yolo=s->coding_yolo_ready&&decoded[0]=='1';return;
+    }
     if(kind=='N'){int count=0;if(sscanf(decoded,"%d",&count)==1&&count>=0&&count<=200){s->notice_count=count;char *text=strchr(decoded,' ');snprintf(s->notice_text,sizeof s->notice_text,"%.319s",text?text+1:"");}return;}
     if(kind=='A'){int muted,active;if(sscanf(decoded,"%d %d",&muted,&active)==2){s->music_muted=muted==1;s->dj_active=active==1;}return;}
     if(kind=='W'){
@@ -187,6 +191,9 @@ failed:
 static void service_start(desktop_service *p,zell_scene *s){service_start_mode(p,s,false);}
 static void service_pump(desktop_service *p,zell_scene *s){
     if(p->pid<=0)return;
+    if(p->monitor&&s->coding_yolo_refresh){
+        if(write(p->in_fd,"Y\n",2)==2)s->coding_yolo_refresh=false;
+    }
     if(!p->monitor&&s->service_cancel&&!p->cancelled){kill(-p->pid,SIGTERM);p->cancelled=now_ms();s->service_cancel=false;}
     if(p->cancelled&&now_ms()-p->cancelled>500)kill(-p->pid,SIGKILL);
     if(!p->monitor&&s->service_send){
@@ -201,7 +208,7 @@ static void service_pump(desktop_service *p,zell_scene *s){
     for(int batch=0;batch<8;batch++){
         count=read(p->out_fd,bytes,sizeof bytes);if(count<=0)break;
         for(ssize_t i=0;i<count;i++){
-            if(bytes[i]=='\n'){p->frame[p->length]=0;if(p->length&&(!p->monitor||strchr("VDBSWJNA",p->frame[0])))service_frame(s,p->frame);p->length=0;}
+            if(bytes[i]=='\n'){p->frame[p->length]=0;if(p->length&&(!p->monitor||strchr("VDBSWJNAY",p->frame[0])))service_frame(s,p->frame);p->length=0;}
             else if(p->length+1<sizeof p->frame)p->frame[p->length++]=bytes[i];
         }
     }
@@ -209,13 +216,13 @@ static void service_pump(desktop_service *p,zell_scene *s){
     int status=0;pid_t ended=waitpid(p->pid,&status,WNOHANG);
     if(ended==p->pid){
         p->pid=0;
-        if(p->monitor){s->fatigue=-1;s->screens_ready=false;s->weather_state=0;memset(s->screen_preview,0,sizeof s->screen_preview);service_stop(p);return;}
+        if(p->monitor){s->fatigue=-1;s->screens_ready=false;s->coding_yolo_ready=false;s->weather_state=0;memset(s->screen_preview,0,sizeof s->screen_preview);service_stop(p);return;}
         if(p->cancelled)service_append(s,"\nCancelled.");
         else if(!WIFEXITED(status)||WEXITSTATUS(status)!=0)service_append(s,"\nThe station helper failed. Please try again.");
         else if(!s->service_text[0])service_append(s,"Done.");
         bool sensitive=p->sensitive;
         service_stop(p);zell_terminal_restore(s);s->service_phase=4;s->service_scroll=0;
-        if(s->station==45&&WIFEXITED(status)&&WEXITSTATUS(status)==0)s->mode=ZELL_MODE_WALK;
+        if((s->station==45||s->station==46)&&WIFEXITED(status)&&WEXITSTATUS(status)==0)s->mode=ZELL_MODE_WALK;
         if(sensitive){
             if(s->terminal_pixels){explicit_bzero(s->terminal_pixels,1200u*640u*4u);free(s->terminal_pixels);s->terminal_pixels=NULL;s->terminal_width=s->terminal_height=0;}
             explicit_bzero(s->service_reply,sizeof s->service_reply);

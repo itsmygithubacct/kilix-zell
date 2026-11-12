@@ -55,6 +55,7 @@ class RoomsTests(unittest.TestCase):
             rooms.screen(self.ui, 2)
         self.assertEqual(self.ui.state_write.call_args.args[1]['screens']['2'], pane(8))
         argv = control.call_args.args
+        self.assertIn('--coding-yolo', argv)
         self.assertIn('--own-tab', argv)
         self.assertIn('gpt-6-astra', argv)
         self.assertIn('--expect-broker', argv)

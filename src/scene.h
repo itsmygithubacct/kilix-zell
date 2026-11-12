@@ -103,6 +103,7 @@ typedef struct zell_scene {
     char disk_labels[8][96];
     char screen_status[5][96], screen_preview[5][1200];
     bool screens_ready;
+    bool coding_yolo, coding_yolo_ready, coding_yolo_refresh;
     int weather_state, weather_icon;
     char weather_temperature[24], weather_place[96], weather_condition[64];
     uint32_t *terminal_pixels;

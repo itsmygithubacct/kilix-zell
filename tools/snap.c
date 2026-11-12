@@ -162,7 +162,11 @@ int main(int argc, char **argv)
         strcpy(scene.weather_temperature,"47 F");strcpy(scene.weather_place,"Example location");strcpy(scene.weather_condition,"Rain showers");
         failed+=shot(&scene,&canvas,argv[1],"weather-map");scene.weather_state=0;
         scene.mode=ZELL_MODE_WALK;scene.room=1;scene.x=ZELL_WORLD_W*.50f;scene.y=ZELL_WORLD_H*.55f;
+        scene.coding_yolo_ready=true;scene.coding_yolo=false;
         failed+=shot(&scene,&canvas,argv[1],"command-center");
+        scene.coding_yolo=true;
+        failed+=shot(&scene,&canvas,argv[1],"command-center-yolo");
+        scene.coding_yolo=false;
         scene.room=2;scene.disk_count=3;scene.disks_ready=true;
         strcpy(scene.disk_labels[0],"nvme0n1p2 /system");scene.disk_used[0]=42;
         strcpy(scene.disk_labels[1],"nvme1n1p1 /work");scene.disk_used[1]=78;

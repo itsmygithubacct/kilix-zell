@@ -31,6 +31,7 @@ import zell_projects
 import zell_weather
 import zell_os
 import zell_audio
+import zell_agents
 from zell_dialogue import Dialogue
 DIALOGUE = None
 
@@ -431,6 +432,8 @@ def vitals_snapshot():
 
 def desktop(station,action):
     ui=sys.modules.get(__name__) or SimpleNamespace(**globals())
+    if station==46:return zell_agents.toggle_yolo(ui)
+    if station==47:return zell_agents.updates(ui)
     if station in zell_os.STATIONS:return zell_os.hub(ui,zell_os.STATIONS[station],action)
     if station==45:
         muted=zell_audio.toggle_mute()
@@ -457,13 +460,24 @@ def desktop(station,action):
         audio_stop=threading.Event()
         def audio_updates():
             previous=None
+            previous_yolo=None
             while not audio_stop.is_set():
                 try:
                     audio=audio_monitor.poll()
                     value=str(int(audio.get('muted',False)))+' '+str(int(audio.get('dj_active',False)))
                     if value!=previous:DIALOGUE.send('A',value);previous=value
                 except (OSError,ValueError,RuntimeError,subprocess.SubprocessError):pass
-                audio_stop.wait(.25)
+                # A room-entry request forces a fresh reading, even when the
+                # file has not changed since the previous room visit.
+                import select
+                refresh=False
+                if select.select([DIALOGUE.reader],[],[],.25)[0]:
+                    request=os.read(DIALOGUE.reader.fileno(),128)
+                    if not request:return
+                    refresh=b'Y' in request
+                yolo=zell_agents.yolo_state()
+                if refresh or yolo!=previous_yolo:
+                    DIALOGUE.send('Y',str(yolo));previous_yolo=yolo
         audio_thread=threading.Thread(target=audio_updates,daemon=True);audio_thread.start()
         def stop_monitor(_signum,_frame):
             audio_stop.set();audio_thread.join(timeout=1);audio_monitor.close();raise SystemExit(0)
