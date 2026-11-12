@@ -29,7 +29,8 @@ static void desktop_label(sr_canvas *c,int x,int y,const char *text,uint32_t col
 }
 static void desktop_text(sr_canvas *c,int x,int y,const char *text,uint32_t color,int width);
 static void desktop_hatch(sr_canvas *c,int art,int x,int y,bool selected,const char *label){
- int height=(art==ZELL_ART_COMMAND_STAIRS||art==ZELL_ART_LAUNDRY_STAIRS||art==ZELL_ART_VAULT_STAIRS||art==ZELL_ART_WORKSHOP_STAIRS)?142:76;
+ /* Each cutout is compiled at the height it is drawn at. */
+ const zell_art *cut=zell_art_get(art);int height=cut?cut->height:76;
  if(selected)sr_fill_ellipse(c,(float)x,(float)(y+2),54,12,0x80e5c4u,.55f);
  desktop_art(c,art,x,y+14,height);
  if(selected)desktop_label(c,x,y+28,label,0xa8f3d5u);

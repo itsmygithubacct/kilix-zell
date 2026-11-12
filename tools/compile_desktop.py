@@ -23,6 +23,20 @@ def cutout(cell):
     return cell.crop(box) if box else cell
 
 
+def top_piece(cell):
+    """Cut out the first object in a cell, dropping any stray piece below it."""
+    cell.putalpha(cell.getchannel('A').point(lambda a: 0 if a <= 3 else a))
+    mask = cell.getchannel('A').point(lambda a: 255 if a > 32 else 0)
+    box = mask.getbbox()
+    if not box:
+        return cell
+    bottom = box[1]
+    while bottom < box[3] and mask.crop((0, bottom, cell.width, bottom + 1)).getbbox():
+        bottom += 1
+    cell = cell.crop((0, box[1], cell.width, bottom))
+    return cell.crop(cell.getchannel('A').point(lambda a: 255 if a > 32 else 0).getbbox())
+
+
 def premultiplied_pixels(image, height=None):
     image = image.convert('RGBa')
     if height is not None:
@@ -99,7 +113,7 @@ def load_images():
     images.extend(Image.open(ROOM_ASSETS/name).convert('RGBA') for name in ('vault.png','workshop.png'))
     sheet=Image.open(ROOM_ASSETS/'extra-room-props.png').convert('RGBA')
     for row in range(2):
-        for col in range(2):images.append(cutout(sheet.crop((col*sheet.width//2,row*sheet.height//2,(col+1)*sheet.width//2,(row+1)*sheet.height//2))))
+        for col in range(2):images.append((cutout if row else top_piece)(sheet.crop((col*sheet.width//2,row*sheet.height//2,(col+1)*sheet.width//2,(row+1)*sheet.height//2))))
     return images
 
 
@@ -109,6 +123,12 @@ def main():
     heights += [88] * 8
     heights += [112]*40+[None,None,76,76,142,142]
     images = load_images()
+    # The four cave hatches are drawn at one width. The Vault and Workshop
+    # hatches are squarer than the first two, so they are taller at that width.
+    command = heights.index(76)
+    width = images[command].width * 76 / images[command].height
+    for index in (len(heights) - 4, len(heights) - 3):
+        heights[index] = round(width * images[index].height / images[index].width)
     if len(images) != len(heights):
         raise ValueError('Asset dimensions do not match the atlas')
     compiled = [premultiplied_pixels(im, height) for im, height in zip(images, heights)]

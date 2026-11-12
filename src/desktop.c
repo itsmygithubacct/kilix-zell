@@ -19,8 +19,8 @@ const zell_station zell_stations[ZELL_STATIONS]={
  {"Voice switch","Toggle the wizard's spoken answers",.064f,.34f,16},
  {"Wall clock","Time and system health",.88f,.32f,13},
  {"Neuronte shell switch","Neural terminal / behind the shell computer",.90f,.42f,ZELL_ART_SWITCH},
- {"Command center hatch","Five connected coding screens downstairs",.30f,.65f,ZELL_ART_COMMAND_HATCH},
- {"Laundry room hatch","Drive bins and storage explorer downstairs",.78f,.64f,ZELL_ART_LAUNDRY_HATCH},
+ {"Command center hatch","Five connected coding screens downstairs",.30f,.645f,ZELL_ART_COMMAND_HATCH},
+ {"Laundry room hatch","Drive bins and storage explorer downstairs",.78f,.645f,ZELL_ART_LAUNDRY_HATCH},
  {"Command screen","Coordinate the four worker sessions",.50f,.43f,ZELL_ART_CONTROLLER},
  {"Worker screen 1","Coding session",.22f,.42f,ZELL_ART_WORKER},
  {"Worker screen 2","Coding session",.78f,.42f,ZELL_ART_WORKER},
@@ -48,8 +48,8 @@ const zell_station zell_stations[ZELL_STATIONS]={
  {"Sentinel","Accounts, updates and security",.59f,.88f,ZELL_ART_CIVIC_IDLE+16},
  {"Vault Keeper","Backups, verification and restore",.50f,.55f,ZELL_ART_CRAFT_IDLE+12},
  {"Tinkerer","Displays, sound, printers and devices",.50f,.55f,ZELL_ART_CRAFT_IDLE+16},
- {"Vault hatch","Backups and restore downstairs",.38f,.73f,ZELL_ART_VAULT_HATCH},
- {"Workshop hatch","Device workshop downstairs",.62f,.62f,ZELL_ART_WORKSHOP_HATCH},
+ {"Vault hatch","Backups and restore downstairs",.46f,.645f,ZELL_ART_VAULT_HATCH},
+ {"Workshop hatch","Device workshop downstairs",.62f,.645f,ZELL_ART_WORKSHOP_HATCH},
  {"Dictation switch","Listen once; review words before sending",.078f,.34f,16},
  {"Music mute switch","Pause or resume the DJ and room music",.092f,.34f,16}
 };
