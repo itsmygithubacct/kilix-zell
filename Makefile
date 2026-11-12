@@ -281,6 +281,16 @@ test-desktop-neuronte: $(BUILD)/test-desktop-neuronte
 # raster binary remains available only inside the source tree.
 ZELL_INSTALL_DIR ?= $(if $(GPU_TERMINAL_HOME),$(GPU_TERMINAL_HOME),$(HOME)/.local/gpu_terminal)/kilix/data/desktop-apps/kilix-zell
 ZELL_BIN_DIR ?= $(HOME)/.local/bin
+.PHONY: test-snap
+test: test-snap
+test-snap: $(BUILD)/snap
+	python3 $(ROOT)/tests/test_snap.py $(BUILD)/snap
+
+test-neuronte: test-snap-neuronte
+.PHONY: test-snap-neuronte
+test-snap-neuronte: $(BUILD)/snap-neuronte
+	python3 $(ROOT)/tests/test_snap.py $(BUILD)/snap-neuronte
+
 .PHONY: install
 install: neuronte
 	python3 tools/package_runtime.py --modules "$(MODULES)" --neuronte "$(NEURONTE)" --install "$(DESTDIR)$(ZELL_INSTALL_DIR)" --bin-dir "$(DESTDIR)$(ZELL_BIN_DIR)" $(if $(DESTDIR),,--user-unit-dir "$(HOME)/.config/systemd/user")
