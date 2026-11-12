@@ -94,6 +94,23 @@ class DialogueTests(unittest.TestCase):
             with patch.dict(os.environ,{'KILIX_ZELL_NEURONTE_DISPLAY':str(Path(root)/'missing')}),patch.object(desktop,'open_tab') as tab:
                 desktop.desktop(12,0);tab.assert_not_called()
 
+    def test_neuronte_shell_is_sized_to_its_tab(self):
+        base=[sys.executable,'/x/neuronte_display.py','--','/bin/sh','-i']
+        # A 1904x1035-pixel tab holds 238x64 cells of 8x16 pixels.
+        self.assertEqual(desktop.fit_neuronte(base,(1904,1035)),
+                         [sys.executable,'/x/neuronte_display.py','--cols','238','--rows','64','--','/bin/sh','-i'])
+        # The display's own limits bound a very large or very small tab.
+        self.assertEqual(desktop.fit_neuronte(base,(9000,9000))[2:6],['--cols','240','--rows','120'])
+        self.assertEqual(desktop.fit_neuronte(base,(50,50))[2:6],['--cols','20','--rows','18'])
+        # No pixel size reported, an explicit size, or another program: unchanged.
+        self.assertEqual(desktop.fit_neuronte(base,(0,0)),base)
+        sized=[sys.executable,'/x/neuronte_display.py','--cols','100','--','/bin/sh']
+        self.assertEqual(desktop.fit_neuronte(sized,(1904,1035)),sized)
+        self.assertEqual(desktop.fit_neuronte(['top'],(1904,1035)),['top'])
+        # A shell argument named --cols after the separator is not an option.
+        after=[sys.executable,'/x/neuronte_display.py','--','tool','--cols','3']
+        self.assertEqual(desktop.fit_neuronte(after,(800,480))[2:6],['--cols','100','--rows','30'])
+
     def test_combined_git_and_os_health_floors(self):
         base={'health':90,'fatigue':100,'mana':-1,'age_days':1,'mana_age':-1,'details':'OS'}
         with patch.object(desktop.zell_vitals,'snapshot',side_effect=lambda ui:dict(base)),patch.object(desktop.zell_projects,'dirty_summary',return_value={'count':12,'details':'project changes','known':True}) as dirty:

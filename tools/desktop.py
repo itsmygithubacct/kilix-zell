@@ -22,6 +22,9 @@ import zell_media
 import zell_library
 import zell_vitals
 import zell_debug
+import fcntl
+import struct
+import termios
 import zell_rooms
 import zell_terminal
 import zell_projects
@@ -51,6 +54,27 @@ def open_tab(argv, title=None):
     print('Opened in a Kilix tab. Return to the cave tab when ready.' if result.returncode==0
           else 'Could not open a Kilix tab: '+(result.stderr or result.stdout))
     return result.returncode
+
+
+def fit_neuronte(argv, size=None):
+    """Size a Neuronte display command to the tab it is about to fill.
+
+    neuronte_display.py draws a fixed grid (80x25 unless told otherwise), which
+    is a small picture in the corner of a full tab. Called inside the new tab,
+    this asks the terminal for its pixel size and passes the grid that fits.
+    """
+    if len(argv)<2 or Path(argv[1]).name!='neuronte_display.py':return argv
+    options=argv[2:argv.index('--')] if '--' in argv else argv[2:]
+    if '--cols' in options or '--rows' in options:return argv
+    if size is None:
+        try:
+            _,_,width,height=struct.unpack('HHHH',fcntl.ioctl(sys.stdout.fileno(),termios.TIOCGWINSZ,bytes(8)))
+        except (OSError,ValueError):return argv
+    else:width,height=size
+    if width<=0 or height<=0:return argv  # the terminal did not report pixels
+    # 8x16-pixel cells; the display accepts 20..240 columns and 18..120 rows.
+    cols=max(20,min(240,width//8));rows=max(18,min(120,height//16))
+    return [*argv[:2],'--cols',str(cols),'--rows',str(rows),*argv[2:]]
 
 
 def run(argv, *, pause=True):
@@ -439,7 +463,8 @@ def desktop(station,action):
 
 if __name__=='__main__':
     if len(sys.argv)>2 and sys.argv[1]=='--terminal':
-        argv=json.loads(sys.argv[2])
+        argv=fit_neuronte(json.loads(sys.argv[2]))
+        zell_debug.log('tab.command',argv=argv)
         try:
             status=subprocess.call(argv)
             input(f'\nCommand exited {status}. Enter to close this tab... ')
