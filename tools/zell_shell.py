@@ -28,6 +28,30 @@ def resize(workspace, presenter, size):
     return presenter, True
 
 
+def drop_exited(workspace):
+    """Close panes whose program has ended; quit once none remain.
+
+    The display keeps a finished pane on screen. For a shell that leaves
+    `exit` with nothing to do, so finish the way a terminal tab does.
+    """
+    changed = False
+    for tab in list(workspace.tabs):
+        for pane in [p for p in tab['panes'] if p.exit_status is not None]:
+            tab['panes'].remove(pane)
+            pane.close()
+            changed = True
+        if not tab['panes']:
+            workspace.tabs.remove(tab)
+    if not workspace.tabs:
+        workspace.quit = True
+    elif changed:
+        workspace.tab = min(workspace.tab, len(workspace.tabs)-1)
+        workspace.focus = min(workspace.focus, len(workspace.current['panes'])-1)
+        for tab in workspace.tabs:
+            workspace.layout(tab)
+    return changed
+
+
 def main(argv=None):
     import numpy as np
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -71,6 +95,7 @@ def main(argv=None):
                 if workspace.lib.nd_present(presenter, rgba.ctypes.data, frame.shape[1], frame.shape[0]):
                     raise RuntimeError('Neuronte presentation failed.')
             dirty = workspace.poll(.04, keyboard=True)
+            dirty = drop_exited(workspace) or dirty
     finally:
         if presenter:
             workspace.lib.nd_presenter_close(presenter)

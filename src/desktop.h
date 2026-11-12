@@ -6,6 +6,9 @@
 #define ZELL_WORLD_H 1024
 #define ZELL_STATIONS 32
 #define ZELL_CAVE_STATIONS 15
+/* Where the Neuronte lever is drawn, relative to its floor interaction point. */
+#define ZELL_SWITCH_WALL_DX 104
+#define ZELL_SWITCH_WALL_DY 6
 #define ZELL_RUN_CHARGE_TICKS 24
 #define ZELL_WALK_SPEED 3.5f
 #define ZELL_RUN_SPEED 9.0f

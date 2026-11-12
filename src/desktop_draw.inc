@@ -2,12 +2,28 @@
 #include "desktop.h"
 #include "desktop_assets.h"
 #include <time.h>
+#include <stdlib.h>
 static void desktop_art(sr_canvas *c,int id,int x,int foot,int height){
  const zell_art *a=zell_art_get(id);if(!a)return;sr_canvas src;sr_canvas_wrap(&src,a->pixels,a->width,a->height);
  int width=height*a->width/a->height;sr_blit_scaled(c,&src,x-width/2,foot-height,width,height,1.0f);
 }
+/* Draw one cutout mirrored left to right. The mirrored copy is built once. */
+static void desktop_art_mirrored(sr_canvas *c,int id,int x,int foot,int height){
+ static uint32_t *pixels;static int cached=-1;
+ const zell_art *a=zell_art_get(id);if(!a)return;
+ if(cached!=id){
+  uint32_t *copy=realloc(pixels,(size_t)a->width*(size_t)a->height*sizeof *copy);if(!copy)return;
+  pixels=copy;cached=id;
+  for(int row=0;row<a->height;row++)for(int col=0;col<a->width;col++)
+   pixels[row*a->width+col]=a->pixels[row*a->width+a->width-1-col];
+ }
+ sr_canvas src;sr_canvas_wrap(&src,pixels,a->width,a->height);
+ int width=height*a->width/a->height;sr_blit_scaled(c,&src,x-width/2,foot-height,width,height,1.0f);
+}
 static void desktop_label(sr_canvas *c,int x,int y,const char *text,uint32_t color){
  int w=sr_text_width_in(SR_FONT_FIXED_8X16,text,1);
+ /* Keep labels for wall objects inside the view. */
+ if(w+16<=c->w){if(x>c->w-w/2-8)x=c->w-w/2-8;if(x<w/2+8)x=w/2+8;}
  sr_fill_rect(c,(float)(x-w/2-6),(float)(y-3),(float)(w+12),22,0x101f26u,.92f);
  sr_text(c,(float)(x-w/2),(float)y,text,color,1,1);
 }
@@ -125,10 +141,14 @@ static void desktop_base(const zell_scene *s,sr_canvas *c){
   const zell_station *p=&zell_stations[i];int x=(int)(p->x*(float)ZELL_WORLD_W),y=(int)(p->y*(float)ZELL_WORLD_H);
   x-=cx;y-=cy;
   int h=i<6?height:height*3/4;
-  if(i==near){sr_fill_ellipse(c,(float)x,(float)y, (float)h*.42f,6,0x80e5c4u,.65f);}
+  if(i==12){x+=ZELL_SWITCH_WALL_DX;y+=ZELL_SWITCH_WALL_DY;}
+  /* A floor glow under a wall fitting would hang in the air; its label marks it. */
+  if(i==near&&i!=12){sr_fill_ellipse(c,(float)x,(float)y, (float)h*.42f,6,0x80e5c4u,.65f);}
   if(i<6){zell_actor_pose pose=zell_desktop_pose(s,i);sr_fill_ellipse(c,(float)x,(float)y,23,7,0x071719u,.45f);desktop_art(c,pose.art,x+pose.offset_x,y+pose.offset_y,h);}
   if(i==13||i==14){desktop_hatch(c,p->art,x,y,i==near,i==13?"Command center":"Laundry room");continue;}
-  if(i==12){desktop_art(c,ZELL_ART_SWITCH,x,y+22,62);if(i!=near)desktop_label(c,x,y+28,"N-SHELL",0x91e9d8u);}
+  /* The lever hangs on the east wall beside the shell desk, mirrored to face
+   * the room. Its interaction point stays on the reachable floor edge. */
+  if(i==12){desktop_art_mirrored(c,ZELL_ART_SWITCH,x,y+22,62);if(i!=near)desktop_label(c,x,y+28,"N-SHELL",0x91e9d8u);}
   if(i==6||i==7)desktop_label(c,x,y+8,i==6?"TUI":"SHELL",0x91e9d8u);
   if(i==near)desktop_label(c,x,y+(i==12?28:8),p->name,0xb9f8dbu);
  }

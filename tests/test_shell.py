@@ -55,6 +55,50 @@ class ShellTests(unittest.TestCase):
         finally:
             workspace.close()
 
+    def _run_until(self, workspace, done, seconds=5):
+        deadline = time.monotonic()+seconds
+        while time.monotonic() < deadline:
+            workspace.poll(.01, keyboard=False)
+            shell.drop_exited(workspace)
+            if done():
+                return True
+        return False
+
+    def test_exit_in_the_only_shell_ends_the_session(self):
+        display = terminal.load_display()
+        workspace = display.Workspace(80, 25, 8, 16, ['/bin/sh', '-c', 'exit 0'])
+        try:
+            self.assertFalse(workspace.quit)
+            self.assertTrue(self._run_until(workspace, lambda: workspace.quit),
+                            'the session must end when its only shell exits')
+            self.assertEqual(workspace.tabs, [])
+        finally:
+            workspace.close()
+
+    def test_exit_in_one_split_keeps_the_other_shell(self):
+        display = terminal.load_display()
+        marker = Path(os.environ.get('TMPDIR', '/tmp'))/f'zell-shell-test-{os.getpid()}'
+        marker.unlink(missing_ok=True)
+        # The first pane lives; later panes exit once the marker exists.
+        workspace = display.Workspace(80, 25, 8, 16,
+            ['/bin/sh', '-c', f'test -e {marker} && exit 0; printf READY; sleep 30'])
+        try:
+            keeper = workspace.selected
+            self.assertTrue(self._run_until(workspace,
+                lambda: 'READY' in ''.join(chr(c[0]) for c in workspace.grid())), 'first shell did not start')
+            marker.touch()
+            workspace.split(True)
+            self.assertEqual(len(workspace.current['panes']), 2)
+            self.assertTrue(self._run_until(workspace, lambda: len(workspace.panes()) == 1),
+                            'the finished split must close')
+            self.assertFalse(workspace.quit)
+            self.assertIs(workspace.selected, keeper)
+            self.assertIsNone(keeper.exit_status)
+            self.assertEqual(keeper.cols, 80)
+        finally:
+            marker.unlink(missing_ok=True)
+            workspace.close()
+
 
 if __name__ == '__main__':
     unittest.main()

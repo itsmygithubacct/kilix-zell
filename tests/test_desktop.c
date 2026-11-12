@@ -57,6 +57,9 @@ int main(void) {
     s.mode=ZELL_MODE_WALK;s.desktop_launch=false;
     assert(zell_stations[12].y<zell_stations[7].y);
     assert(zell_desktop_near(&s)==12);
+    /* It is drawn on the east wall: past the walkable edge, inside the world. */
+    assert(zell_stations[12].x*ZELL_WORLD_W+ZELL_SWITCH_WALL_DX>ZELL_WORLD_W*.94f);
+    assert(zell_stations[12].x*ZELL_WORLD_W+ZELL_SWITCH_WALL_DX<ZELL_WORLD_W-24);
     c=(zell_controls){.confirm=true};zell_scene_tick(&s,&c);
     assert(s.station==12&&s.desktop_launch&&s.mode==ZELL_MODE_DESK);
     s.y=zell_stations[7].y*ZELL_WORLD_H;
