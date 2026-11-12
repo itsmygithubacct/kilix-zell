@@ -78,6 +78,17 @@ def run_to_completion(command):
         adopt_orphans()
         process = subprocess.Popen(['/bin/sh', '-c', command])
         zell_debug.log('update.started', command=command, shell_pid=process.pid)
+        # Adopted orphans exit before the shell does; reap them as they go so a
+        # long update does not collect zombies. WNOWAIT leaves the shell's own
+        # status for Popen.
+        while True:
+            try:
+                ended = os.waitid(os.P_ALL, 0, os.WEXITED | os.WNOWAIT)
+            except ChildProcessError:
+                break
+            if ended is None or ended.si_pid == process.pid:
+                break
+            os.waitpid(ended.si_pid, 0)
         result = process.wait()
         zell_debug.log('update.shell_exited', status=result)
         announced = False

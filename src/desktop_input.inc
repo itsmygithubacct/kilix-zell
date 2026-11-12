@@ -14,6 +14,8 @@ static void desktop_input_feed(zell_scene *s,const char *bytes,size_t count){
    p[n]=0;unsigned buttons,x,y;char end;
    if(sscanf(p,"\033[<%u;%u;%u%c",&buttons,&x,&y,&end)==4&&x>0&&y>0&&x<100000&&y<100000){
     s->mouse_x=(int)x-1-kittyfb_origin_x(&framebuffer);s->mouse_y=(int)y-1-kittyfb_origin_y(&framebuffer);s->mouse_valid=true;
+    /* Left press only: not motion (32), wheel (64) or extra buttons (128). */
+    if(ch=='M'&&!(buttons&(3u|32u|64u|128u)))s->mouse_click=true;
    }
    pointer_input.used=0;
   }else if(n>=sizeof pointer_input.pending-1){pointer_input.used=0;}

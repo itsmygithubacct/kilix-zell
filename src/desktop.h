@@ -26,5 +26,12 @@ float zell_desktop_speed_factor(const zell_scene *s);
 int zell_desktop_launcher_count(const zell_scene *s);
 int zell_desktop_launcher_station(const zell_scene *s,int index);
 int zell_desktop_actions(int station);
+/* Floating terminal window. The same rectangles are drawn and hit-tested. */
+typedef struct { int x, y, w, h; } zell_rect;
+typedef struct { zell_rect frame, image, minimize, maximize, tab; } zell_terminal_layout;
+void zell_terminal_layout_for(const zell_scene *s,int width,int height,zell_terminal_layout *out);
+void zell_terminal_cells(const zell_scene *s,int *cols,int *rows);
+bool zell_terminal_click(zell_scene *s);
+void zell_terminal_restore(zell_scene *s);
 const char *zell_desktop_action(int station,int index);
 #endif

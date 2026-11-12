@@ -98,6 +98,10 @@ typedef struct zell_scene {
     char disk_labels[8][96];
     uint32_t *terminal_pixels;
     int terminal_width, terminal_height;
+    /* Floating terminal window state. Minimized, its command keeps running
+     * and Kilix walks freely; a button on the bottom bar reopens it. */
+    bool terminal_maximized, terminal_minimized;
+    bool mouse_click; /* an unconsumed left press at mouse_x, mouse_y */
     /* Native station dialogue. Helpers exchange bounded frames over pipes. */
     int service_phase; /* 0 working, 1 text, 2 choices, 3 report, 4 finished */
     char service_title[512];

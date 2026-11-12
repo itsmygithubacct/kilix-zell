@@ -1013,8 +1013,20 @@ static int run_scene(void)
         if ((scene.desktop?desktop_input_read(&scene):kittykb_terminal_read(&keyboard)) < 0 && errno != EINTR) {
             break;
         }
+        zell_terminal_click(&scene);
         read_controls(&scene, &controls);
-        if (zell_scene_tick(&scene, &controls)) {
+        int quit = zell_scene_tick(&scene, &controls);
+        if (scene.terminal_minimized &&
+            (quit || scene.leave || scene.desktop_launch)) {
+            /* A minimized terminal still runs its command. Leaving the cave or
+             * starting another station would end it unseen: reopen it instead. */
+            if (scene.leave) scene.y = ZELL_WORLD_H * .95f;
+            quit = 0;
+            scene.leave = false;
+            scene.desktop_launch = false;
+            zell_terminal_restore(&scene);
+        }
+        if (quit) {
             break;
         }
         if (scene.desktop_launch) {

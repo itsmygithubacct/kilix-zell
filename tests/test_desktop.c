@@ -145,6 +145,54 @@ int main(void) {
 
     /* Check visible motion in the actual renderer, with unmoving floor
      * pixels as a control. This catches a pose that is never drawn. */
+    /* Floating terminal window buttons. Windowed is smaller than maximized;
+     * minimizing frees Kilix and leaves a bottom-bar button that reopens it. */
+    {
+        zell_scene t;zell_scene_init(&t,1000,700);zell_desktop_init(&t);
+        int cols,rows,big_cols,big_rows;
+        zell_terminal_cells(&t,&cols,&rows);
+        t.terminal_maximized=true;zell_terminal_cells(&t,&big_cols,&big_rows);t.terminal_maximized=false;
+        assert(big_cols==117&&big_rows==33&&cols==81&&rows==23);
+        t.mode=ZELL_MODE_SERVICE;t.service_phase=5;t.terminal_width=cols*8;t.terminal_height=rows*16;
+        zell_terminal_layout l;zell_terminal_layout_for(&t,t.width,t.height,&l);
+        /* Both buttons sit inside the title bar, at its right end, apart. */
+        assert(l.maximize.x+l.maximize.w<=l.frame.x+l.frame.w&&l.maximize.y>=l.frame.y);
+        assert(l.maximize.y+l.maximize.h<=l.image.y&&l.minimize.x+l.minimize.w<=l.maximize.x);
+        assert(l.minimize.x>l.frame.x+l.frame.w/2);
+        t.mouse_valid=true;
+        /* A press on the terminal picture is not a button. */
+        t.mouse_x=l.image.x+20;t.mouse_y=l.image.y+20;t.mouse_click=true;
+        assert(!zell_terminal_click(&t)&&!t.mouse_click&&t.mode==ZELL_MODE_SERVICE);
+        /* Moving over a button without pressing does nothing. */
+        t.mouse_x=l.minimize.x+3;t.mouse_y=l.minimize.y+3;
+        assert(!zell_terminal_click(&t)&&!t.terminal_minimized);
+        t.mouse_x=l.maximize.x+3;t.mouse_y=l.maximize.y+3;t.mouse_click=true;
+        assert(zell_terminal_click(&t)&&t.terminal_maximized&&t.mode==ZELL_MODE_SERVICE);
+        t.mouse_click=true;assert(zell_terminal_click(&t)&&!t.terminal_maximized);
+        t.mouse_x=l.minimize.x+3;t.mouse_y=l.minimize.y+3;t.mouse_click=true;
+        assert(zell_terminal_click(&t)&&t.terminal_minimized&&t.mode==ZELL_MODE_WALK&&t.service_phase==5);
+        /* Minimized: the old button positions are dead, only the bar button works. */
+        t.mouse_click=true;assert(!zell_terminal_click(&t)&&t.terminal_minimized);
+        assert(l.tab.y+l.tab.h<=t.height-30&&l.tab.y>t.height/2);
+        t.mouse_x=l.tab.x+5;t.mouse_y=l.tab.y+5;t.mouse_click=true;
+        assert(zell_terminal_click(&t)&&!t.terminal_minimized&&t.mode==ZELL_MODE_SERVICE);
+        /* No terminal, no buttons: the same press is ignored. */
+        t.service_phase=2;t.mouse_x=l.minimize.x+3;t.mouse_y=l.minimize.y+3;t.mouse_click=true;
+        assert(!zell_terminal_click(&t)&&!t.terminal_minimized);
+        /* The bar button is drawn only while minimized. */
+        sr_canvas shown,hidden;
+        assert(sr_canvas_init(&shown,t.width,t.height)&&sr_canvas_init(&hidden,t.width,t.height));
+        t.mode=ZELL_MODE_WALK;t.service_phase=5;t.mouse_valid=false;
+        t.terminal_minimized=false;zell_draw(&t,&hidden);
+        t.terminal_minimized=true;zell_draw(&t,&shown);
+        int inside=0,outside=0;
+        for(int py=0;py<t.height;py++)for(int px=0;px<t.width;px++){
+            if(shown.px[py*t.width+px]==hidden.px[py*t.width+px])continue;
+            if(px>=l.tab.x&&px<l.tab.x+l.tab.w&&py>=l.tab.y&&py<l.tab.y+l.tab.h)inside++;else outside++;
+        }
+        assert(inside>1000&&outside==0);
+        sr_canvas_free(&shown);sr_canvas_free(&hidden);
+    }
     int render_ready=1;
 #ifdef ZELL_RENDER_NEURONTE
     render_ready=zell_neuronte_open();

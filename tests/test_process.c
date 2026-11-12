@@ -194,6 +194,25 @@ int main(void)
     assert(keyboard.input.queue_count==0);
     desktop_input_feed(&scene,"70M",3);
     assert(scene.mouse_x==29&&scene.mouse_y==69&&keyboard.input.queue_count==0);
+    /* Motion (35) is not a press; a left press latches once; release, wheel
+     * and right button do not. Modifier bits do not stop a left press. */
+    assert(!scene.mouse_click);
+    desktop_input_feed(&scene,"\033[<0;40;80M",sizeof "\033[<0;40;80M"-1);
+    assert(scene.mouse_click&&scene.mouse_x==39&&scene.mouse_y==79&&keyboard.input.queue_count==0);
+    scene.mouse_click=false;
+    desktop_input_feed(&scene,"\033[<0;40;80m",sizeof "\033[<0;40;80m"-1);assert(!scene.mouse_click);
+    desktop_input_feed(&scene,"\033[<64;40;80M",sizeof "\033[<64;40;80M"-1);assert(!scene.mouse_click);
+    desktop_input_feed(&scene,"\033[<2;40;80M",sizeof "\033[<2;40;80M"-1);assert(!scene.mouse_click);
+    desktop_input_feed(&scene,"\033[<32;40;80M",sizeof "\033[<32;40;80M"-1);assert(!scene.mouse_click);
+    desktop_input_feed(&scene,"\033[<4;40;80M",sizeof "\033[<4;40;80M"-1);assert(scene.mouse_click);
+    scene.mouse_click=false;
+    /* The shared surface is asked for the window's size, then the maximized one. */
+    {
+        desktop_service sized={.in_fd=-1,.out_fd=-1,.frame_fd=-1};uint32_t cells[8]={0};
+        zell_scene view=scene;view.width=1000;view.height=700;view.terminal_maximized=false;
+        sized.frame_map=cells;terminal_size(&sized,&view);assert(cells[0]==81&&cells[1]==23);
+        view.terminal_maximized=true;terminal_size(&sized,&view);assert(cells[0]==117&&cells[1]==33);
+    }
     desktop_input_feed(&scene,"a",1);
     kittykb_event typed;assert(kittykb_input_next(&keyboard.input,&typed)&&typed.key=='a');
     desktop_input_feed(&scene,"\033[A",3);

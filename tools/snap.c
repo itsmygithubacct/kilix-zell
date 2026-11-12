@@ -102,6 +102,21 @@ int main(int argc, char **argv)
         scene.room=0;scene.hp=57;scene.os_health=70;scene.dirty_files=13;scene.update_age_days=3;
         scene.mouse_valid=true;scene.mouse_x=32;scene.mouse_y=50;
         failed+=shot(&scene,&canvas,argv[1],"health-hover");scene.mouse_valid=false;
+        {
+            /* Floating terminal window, then minimized to the bottom bar. */
+            int cols,rows;zell_terminal_cells(&scene,&cols,&rows);
+            scene.terminal_width=cols*8;scene.terminal_height=rows*16;
+            scene.terminal_pixels=calloc((size_t)scene.terminal_width*(size_t)scene.terminal_height,4);
+            if(scene.terminal_pixels){
+                for(int i=0;i<scene.terminal_width*scene.terminal_height;i++)scene.terminal_pixels[i]=0xff0b1418u;
+                scene.mode=ZELL_MODE_SERVICE;scene.station=2;scene.service_phase=5;
+                failed+=shot(&scene,&canvas,argv[1],"terminal-window");
+                scene.terminal_minimized=true;scene.mode=ZELL_MODE_WALK;
+                failed+=shot(&scene,&canvas,argv[1],"terminal-minimized");
+                scene.terminal_minimized=false;free(scene.terminal_pixels);scene.terminal_pixels=NULL;
+                scene.terminal_width=scene.terminal_height=0;
+            }
+        }
         scene.mode=ZELL_MODE_SERVICE;scene.station=4;scene.service_phase=2;
         strcpy(scene.service_title,"YouTube / playlists and creators");
         scene.service_count=5;scene.service_index=1;

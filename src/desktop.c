@@ -223,3 +223,43 @@ zell_actor_pose zell_desktop_pose(const zell_scene *s, int actor)
     }
     return pose;
 }
+
+/* Windowed, the terminal takes about 70% of the pane; maximized, all of it
+ * (bounded by the 150x40-cell shared surface). */
+void zell_terminal_cells(const zell_scene *s,int *cols,int *rows){
+ int c=(s->width-64)/8,r=(s->height-160)/16;
+ if(!s->terminal_maximized){c=c*7/10;r=r*7/10;}
+ if(c<20)c=20;
+ if(c>150)c=150;
+ if(r<8)r=8;
+ if(r>40)r=40;
+ *cols=c;*rows=r;
+}
+void zell_terminal_layout_for(const zell_scene *s,int width,int height,zell_terminal_layout *out){
+ int w=s->terminal_width,h=s->terminal_height;
+ out->image=(zell_rect){(width-w)/2,(height-h)/2,w,h};
+ out->frame=(zell_rect){out->image.x-8,out->image.y-30,w+16,h+58};
+ out->maximize=(zell_rect){out->frame.x+out->frame.w-34,out->frame.y+5,26,20};
+ out->minimize=(zell_rect){out->maximize.x-30,out->frame.y+5,26,20};
+ out->tab=(zell_rect){12,height-64,236,26};
+}
+void zell_terminal_restore(zell_scene *s){
+ if(!s->terminal_minimized)return;
+ s->terminal_minimized=false;s->mode=ZELL_MODE_SERVICE;
+}
+static bool rect_holds(const zell_rect *r,int x,int y){return x>=r->x&&x<r->x+r->w&&y>=r->y&&y<r->y+r->h;}
+/* Consume one left press. True when it pressed a terminal window button. */
+bool zell_terminal_click(zell_scene *s){
+ if(!s->mouse_click)return false;
+ s->mouse_click=false;
+ if(!s->desktop||s->service_phase!=5||!s->mouse_valid)return false;
+ zell_terminal_layout l;zell_terminal_layout_for(s,s->width,s->height,&l);
+ if(s->terminal_minimized){
+  if(!rect_holds(&l.tab,s->mouse_x,s->mouse_y))return false;
+  zell_terminal_restore(s);return true;
+ }
+ if(s->mode!=ZELL_MODE_SERVICE||s->terminal_width<=0)return false;
+ if(rect_holds(&l.minimize,s->mouse_x,s->mouse_y)){s->terminal_minimized=true;s->mode=ZELL_MODE_WALK;return true;}
+ if(rect_holds(&l.maximize,s->mouse_x,s->mouse_y)){s->terminal_maximized=!s->terminal_maximized;return true;}
+ return false;
+}

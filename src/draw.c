@@ -748,9 +748,10 @@ void zell_draw(const zell_scene *scene, sr_canvas *canvas)
     if (scene->desktop) {
         desktop_base(scene, canvas);
         if (scene->mode == ZELL_MODE_SERVICE) {desktop_service(scene, canvas);return;}
-        if (scene->mode == ZELL_MODE_DESK || scene->mode == ZELL_MODE_LAUNCHER) {desktop_panel(scene, canvas);return;}
-        if (scene->mode == ZELL_MODE_WALK) return;
-        desktop_dialogue(scene, canvas);return;
+        if (scene->mode == ZELL_MODE_DESK || scene->mode == ZELL_MODE_LAUNCHER) desktop_panel(scene, canvas);
+        else if (scene->mode != ZELL_MODE_WALK) desktop_dialogue(scene, canvas);
+        desktop_terminal_tab(scene, canvas);
+        return;
     } else {
     sr_clear(canvas, 0x100e14u);
     draw_room(canvas);

@@ -226,16 +226,42 @@ static void desktop_dialogue(const zell_scene *s,sr_canvas *c) {
  desktop_text(c,left,c->h-54,"Enter ask | Esc back",0x89aaa9u,width);
 }
 
+/* Window buttons: 0 minimize (bar at the foot), 1 maximize (one frame),
+ * 2 restore (two overlapped frames). Drawn shapes, so no font glyph is needed. */
+static void desktop_button(const zell_scene *s,sr_canvas *c,const zell_rect *r,int kind){
+ bool hover=s->mouse_valid&&s->mouse_x>=r->x&&s->mouse_x<r->x+r->w&&s->mouse_y>=r->y&&s->mouse_y<r->y+r->h;
+ uint32_t ink=hover?0xf4ffe9u:0xabc8c0u;
+ sr_fill_rect(c,(float)r->x,(float)r->y,(float)r->w,(float)r->h,hover?0x2f5f63u:0x1b3a42u,1);
+ sr_stroke_rect(c,(float)r->x,(float)r->y,(float)r->w,(float)r->h,1,0x74b8a9u,1);
+ int cx=r->x+r->w/2,cy=r->y+r->h/2;
+ if(kind==0)sr_fill_rect(c,(float)(cx-6),(float)(cy+4),12,2,ink,1);
+ else if(kind==1)sr_stroke_rect(c,(float)(cx-6),(float)(cy-5),12,10,2,ink,1);
+ else {sr_stroke_rect(c,(float)(cx-3),(float)(cy-6),10,8,1,ink,1);sr_fill_rect(c,(float)(cx-7),(float)(cy-2),10,8,hover?0x2f5f63u:0x1b3a42u,1);sr_stroke_rect(c,(float)(cx-7),(float)(cy-2),10,8,1,ink,1);}
+}
+/* The minimized terminal: a button on the bottom bar, in every mode. */
+static void desktop_terminal_tab(const zell_scene *s,sr_canvas *c){
+ if(!s->terminal_minimized||s->service_phase!=5)return;
+ zell_terminal_layout l;zell_terminal_layout_for(s,c->w,c->h,&l);
+ bool hover=s->mouse_valid&&s->mouse_x>=l.tab.x&&s->mouse_x<l.tab.x+l.tab.w&&s->mouse_y>=l.tab.y&&s->mouse_y<l.tab.y+l.tab.h;
+ sr_fill_rect(c,(float)l.tab.x,(float)l.tab.y,(float)l.tab.w,(float)l.tab.h,hover?0x2f5f63u:0x10232cu,.97f);
+ sr_stroke_rect(c,(float)l.tab.x,(float)l.tab.y,(float)l.tab.w,(float)l.tab.h,2,0x74b8a9u,1);
+ /* A blinking lamp says the command is still running behind the button. */
+ sr_fill_rect(c,(float)(l.tab.x+8),(float)(l.tab.y+9),8,8,(s->flame_tick/16)%2?0x7bd88fu:0x2f6b45u,1);
+ desktop_text(c,l.tab.x+24,l.tab.y+5,"Neuronte terminal: click",hover?0xf4ffe9u:0xe5cf98u,l.tab.w-30);
+}
 /* The scene keeps animating beneath every station conversation. */
 static void desktop_service(const zell_scene *s,sr_canvas *c){
  if(s->service_phase==5){
-  int w=s->terminal_width,h=s->terminal_height,x=(c->w-w)/2,y=(c->h-h)/2;
+  zell_terminal_layout l;zell_terminal_layout_for(s,c->w,c->h,&l);
+  int w=l.image.w,h=l.image.h,x=l.image.x,y=l.image.y;
   sr_fill_rect(c,0,30,(float)c->w,(float)(c->h-60),0x041017u,.35f);
   if(s->terminal_pixels&&w>0&&h>0){
-   sr_fill_rect(c,(float)(x-8),(float)(y-30),(float)(w+16),(float)(h+58),0x10232cu,1);
-   sr_stroke_rect(c,(float)(x-8),(float)(y-30),(float)(w+16),(float)(h+58),2,0x74b8a9u,1);
+   sr_fill_rect(c,(float)l.frame.x,(float)l.frame.y,(float)l.frame.w,(float)l.frame.h,0x10232cu,1);
+   sr_stroke_rect(c,(float)l.frame.x,(float)l.frame.y,(float)l.frame.w,(float)l.frame.h,2,0x74b8a9u,1);
    sr_canvas frame;sr_canvas_wrap(&frame,s->terminal_pixels,w,h);sr_blit_scaled(c,&frame,x,y,w,h,1);
-   desktop_text(c,x,y-23,"ADMIN / INTERACTIVE NEURONTE TERMINAL",0xe5cf98u,w);
+   desktop_text(c,x,y-23,"ADMIN / INTERACTIVE NEURONTE TERMINAL",0xe5cf98u,w-72);
+   desktop_button(s,c,&l.minimize,0);
+   desktop_button(s,c,&l.maximize,s->terminal_maximized?2:1);
    desktop_text(c,x,y+h+7,"Type here for sudo | Ctrl-C interrupts command",0xabc8c0u,w);
   }else desktop_label(c,c->w/2,c->h/2,"Opening Neuronte terminal...",0xc9e4d5u);
   return;

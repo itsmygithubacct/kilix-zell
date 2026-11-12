@@ -46,7 +46,9 @@ static void service_frame(zell_scene *s,char *frame){
         }
         return;
     }
-    if(kind=='T'){s->service_phase=5;return;}
+    if(kind=='T'){s->service_phase=5;s->terminal_maximized=s->terminal_minimized=false;return;}
+    /* A helper that leaves the terminal for a prompt or report must be seen. */
+    if(kind=='P'||kind=='Q'||kind=='R')zell_terminal_restore(s);
     if(kind=='O')service_append(s,decoded);
     if(kind=='C'||kind=='M'){s->service_text[0]=0;s->service_scroll=0;}
     if(kind=='M'){s->service_count=0;s->service_index=0;}
@@ -80,11 +82,7 @@ static void service_stop(desktop_service *p){
 static void terminal_size(desktop_service *p,const zell_scene *s){
     if(!p->frame_map)return;
     volatile uint32_t *header=p->frame_map;
-    int cols=(s->width-64)/8,rows=(s->height-160)/16;
-    if(cols<20)cols=20;
-    if(cols>150)cols=150;
-    if(rows<8)rows=8;
-    if(rows>40)rows=40;
+    int cols,rows;zell_terminal_cells(s,&cols,&rows);
     header[0]=(uint32_t)cols;header[1]=(uint32_t)rows;
 }
 /* Candidate pixels never touch the visible buffer until the sequence validates. */
@@ -107,6 +105,7 @@ static void service_start_mode(desktop_service *p,zell_scene *s,bool monitor){
     if(!monitor){
     free(s->terminal_pixels);s->terminal_pixels=NULL;s->terminal_width=s->terminal_height=0;
     s->desktop_launch=false;s->mode=ZELL_MODE_SERVICE;s->service_phase=0;
+    s->terminal_maximized=s->terminal_minimized=false;
     s->service_text[0]=s->service_title[0]=s->service_input[0]=0;
     s->service_scroll=0;s->service_send=s->service_cancel=false;
     }
@@ -185,6 +184,6 @@ static void service_pump(desktop_service *p,zell_scene *s){
         if(p->cancelled)service_append(s,"\nCancelled.");
         else if(!WIFEXITED(status)||WEXITSTATUS(status)!=0)service_append(s,"\nThe station helper failed. Please try again.");
         else if(!s->service_text[0])service_append(s,"Done.");
-        service_stop(p);s->service_phase=4;s->service_scroll=0;
+        service_stop(p);zell_terminal_restore(s);s->service_phase=4;s->service_scroll=0;
     }
 }

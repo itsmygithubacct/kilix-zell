@@ -99,6 +99,19 @@ class UpdateTests(unittest.TestCase):
         self.assertLess(text.index('LATE-CHILD'), text.index('Press Enter'), text)
         self.assertIn('did not complete (exit -2)', text)
 
+    def test_orphans_are_reaped_while_the_command_still_runs(self):
+        # The inner shell exits at once and orphans a short-lived child, which
+        # this process adopts. It must be reaped during the run, not left a
+        # zombie until the end, and the command's own status must survive.
+        probe = ("sh -c 'sleep .2 & echo $! >\"$KILIX_ZELL_STATE/orphan\"'; sleep .8; "
+                 "grep -c '^State:.Z' /proc/$(cat \"$KILIX_ZELL_STATE/orphan\")/status "
+                 ">\"$KILIX_ZELL_STATE/zombie\" 2>/dev/null; exit 5")
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, KILIX_ZELL_STATE=directory):
+            self.assertEqual(update.run_to_completion(probe), 5)
+            self.assertTrue(Path(directory, 'orphan').read_text().strip().isdigit())
+            # Reaped: its /proc entry is gone, so grep found no zombie line.
+            self.assertEqual(Path(directory, 'zombie').read_text().strip(), '')
+
     def test_interrupt_does_not_wait_for_a_daemon_that_left_the_session(self):
         text, status = self.interrupted_run(
             "setsid sh -c 'sleep 30' >/dev/null 2>&1 & echo $! >\"$KILIX_ZELL_STATE/daemon\"; "
