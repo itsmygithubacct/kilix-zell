@@ -216,8 +216,12 @@ def check_provider(provider):
     script = claudex_script()
     if script is None:
         raise FileNotFoundError('Claudex is not installed')
+    # The reader starts the provider's client in the directory it is given.
+    # From a project folder the client stops at its folder-trust question and
+    # no usage is read, so always read from the home folder.
     subprocess.run([sys.executable, str(script), '--config', str(config_path()), 'usage', 'read', provider, '--full'],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=120)
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=120,
+                   cwd=Path.home())
 
 
 def write_json(path, value):

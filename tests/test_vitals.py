@@ -161,6 +161,15 @@ class VitalsTests(unittest.TestCase):
             self.assertFalse(first.is_alive() or second.is_alive())
         self.assertEqual(calls, list(vitals.PROVIDERS))
 
+    def test_usage_is_read_from_the_home_folder(self):
+        # From a project folder the provider client stops at a folder-trust
+        # question, so the reader must not inherit Zell's working directory.
+        with patch.object(vitals, 'claudex_script', return_value=Path('/x/pane_loop.py')), \
+                patch.object(vitals.subprocess, 'run') as run:
+            vitals.check_provider('codex')
+        self.assertEqual(run.call_args.kwargs['cwd'], Path.home())
+        self.assertEqual(run.call_args.args[0][-4:], ['usage', 'read', 'codex', '--full'])
+
     def test_snapshot_and_report_never_check_providers(self):
         self.cache({'codex': self.entry(50), 'qwen': self.entry(100)})
         with patch.object(vitals, 'check_provider') as call, patch.object(vitals, 'fatigue', return_value=50):
