@@ -1218,6 +1218,27 @@ static void test_history_switch(void)
     zell_history_order(stored, count, order);
     expect(order[0] == 1 && order[1] == 0, "the higher count moves first");
 
+    {
+        char settings[512],journal[512],journal_text[1024];
+        snprintf(settings,sizeof settings,"%s/conversation-settings.json",directory);
+        snprintf(journal,sizeof journal,"%s/wizard-conversations.jsonl",directory);
+        expect(zell_conversation_save("Question","Answer")==0,"full replies default to off");
+        expect(access(journal,F_OK)!=0,"disabled conversations leave no journal");
+        FILE *config=fopen(settings,"w");
+        if(config){fputs("{\"enabled\": true}",config);fclose(config);}
+        expect(zell_conversation_save("Quote \"here\"","One\nTwo\\three")==1,"enabled conversations save");
+        expect(stat(journal,&info)==0&&(info.st_mode&0777)==0600,"conversation journal is private");
+        FILE *log=fopen(journal,"r");
+        if(log){
+            size_t len=fread(journal_text,1,sizeof journal_text-1,log);journal_text[len]=0;fclose(log);
+            expect(strstr(journal_text,"One\\u000aTwo\\\\three")!=NULL,"journal escapes multiline replies");
+        }
+        unlink(journal);
+        expect(symlink(path,journal)==0,"journal symlink test setup");
+        expect(zell_conversation_save("q","a")==-1,"journal refuses symlink destination");
+        unlink(journal);unlink(settings);
+    }
+
     if (had_env) {
         setenv("KILIX_ZELL_STATE", saved_env, 1);
     } else {

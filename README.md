@@ -1,4 +1,4 @@
-# Zell Neuronte 0.1.0
+# Zell Neuronte 0.1.1
 
 A walkable Kilix desktop inside a terminal pane. Kilix is an orange firekitten
 in a green adventurer outfit. Six staff members help with questions, logs,
@@ -172,12 +172,21 @@ Removing a library reference never deletes its file; refreshing a saved folder
 can rediscover that file. Metadata lives in `library-documents.json` and
 `library-music.json` under Zell's state directory.
 
-`make install` installs the Neuronte executable, helper scripts, font weights and
-`~/.local/bin/zell`. The installed `zell` command always selects `zell-neuronte`,
-not the legacy raster scene. `ZELL_NEURONTE_HOME` overrides its application path.
-`DESTDIR`, `ZELL_INSTALL_DIR` and `ZELL_BIN_DIR` support packaging/staging.
-The RC9 OS candidate provisioner also installs this command in `/usr/local/bin`;
-the application payload must be included separately in the release image.
+`make install` installs the Neuronte executable, helper scripts, font weights,
+terminal renderer, vault binaries, user service units and `~/.local/bin/zell`.
+Build `kilix-modules/kilix-secrets` first; packaging also needs Neuronte's shared
+library and the Ghostty prefix used by `neuronte-display`. Runtime dependencies
+include Python NumPy, libsodium, libsystemd, zlib and glibc. The renderer's shared
+libraries use paths relative to the application, so source checkouts are not
+needed after installation. Run `systemctl --user daemon-reload` after installing
+updated units. Key Master starts the vault socket when opened; initialization
+remains an explicit user action.
+
+`ZELL_NEURONTE_HOME` overrides the application path. `DESTDIR`,
+`ZELL_INSTALL_DIR` and `ZELL_BIN_DIR` support packaging/staging. `make runtime`
+creates a relocatable archive under `build/`, with an exact file manifest and
+dependency notices. The RC9 OS carrier pins its archive digest, verifies all
+files before installation, and carries it through the offline installer.
 
 ### Running
 
@@ -231,8 +240,12 @@ Two floor hatches lead to the **Command Center** and **Laundry**. Enter interact
 the downstairs stair hatch returns to the cave. Tab lists the current room's
 stations. Five command-center screens bind to real Kilix coding tabs, with exact
 broker identities saved after successful creation. Interacting opens/focuses the
-session; monitor artwork is a portal, not a live video feed of hidden tabs.
-The controller can explicitly dispatch tasks to verified workers.
+session. The larger screens show bounded text previews of their assigned Codex
+sessions, refreshed about every five seconds. Exact pane, tab and broker
+identities are checked before and after capture; changed sessions lose their
+preview. Preview text stays in memory. Click a screen from anywhere in the room
+to open its menu. The controller can explicitly dispatch tasks to verified
+workers and open the task board.
 
 **Git Wizard** can register projects, inspect changes, enable health watches and
 open project coding sessions on a screen or regular tab. **Pilot** previews
@@ -247,3 +260,53 @@ opens overflow disks if needed. Disconnected or inaccessible disks are reported;
 no cleanup or deletion is performed by digging through a bin.
 
 New work is on RC9 branches. Frozen RC8 release refs are unchanged.
+
+### Key Master
+
+The Command Center's locksmith manages `kilix-secrets`: initialize and unlock
+the encrypted vault, confirm its recovery code, lock it, save API keys, save
+logins or other secrets, browse metadata, copy a field, and delete a record.
+First-time initialization shows the recovery code in a private floating
+terminal. Keep it privately, then choose **Confirm recovery code / recover
+access** to activate the vault. Zell never saves the passphrase or recovery
+code. The same recovery action restores access when the passphrase is lost.
+
+Secret entry has terminal echo disabled. The normal room interface shows only
+record labels, identities and field names. Values travel through descriptors;
+they are excluded from room reports, conversation history, command arguments
+and debug logging. Private terminal frames are cleared when the helper exits,
+including after minimizing and changing rooms. Core dumps are disabled.
+Logins are one encrypted `login-json` field containing username and password.
+Clipboard retrieval uses the vault's explicit confirmation and clears the
+clipboard after 20 seconds if it still holds that value. Clipboard managers
+may retain their own history.
+
+Select **Launch a client with a saved key** to use a record for Codex, Claude,
+Grok or Qwen. The client must already be installed. Codex uses a command-backed
+provider and ephemeral credential storage. Claude uses its explicit API-key
+helper in bare mode, which avoids reading its saved account credentials.
+Grok and Qwen accept their API keys through the launched process's environment;
+their child processes inherit it. Qwen's default endpoint is DashScope
+International. Keys for other services can be stored with **Other API key**.
+API use can incur separate billing from an existing subscription.
+
+The encrypted vault is the persistent secret store. Once launched, a client
+must handle its received credential securely; its own storage/logging policy
+still applies. The vault is not a boundary against hostile software running as
+the same OS user. `KILIX_ZELL_SECRETS` and `KILIX_ZELL_SECRETS_SOCKET` select an
+alternate CLI/socket for isolated testing; there is no plaintext fallback.
+
+### Tasks, conversations and shell resizing
+
+The Noticeboard and controller offer a private local task board. Add tasks,
+mark them done, reopen or remove them. The Noticeboard also enables, reads and
+clears conversation history. Saving full station reports and Wizard replies
+is off by default and requires a separate opt-in; Key Master and terminal
+contents are always excluded. Tasks and history use owner-only files in Zell's
+state directory. Reports can include personal information.
+
+The Neuronte shell follows later pane resizes and preserves its running PTYs.
+Generated Command Center/Laundry backgrounds, hatches, stairs, monitor frames,
+drive bins and animated Git Wizard, Pilot and Key Master sprites are under
+`assets/v0.1.1/`, with their image-generation prompts. `tools/compile_desktop.py`
+compiles premultiplied cutouts for both renderers.

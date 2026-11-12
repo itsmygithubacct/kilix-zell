@@ -11,6 +11,7 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / 'assets/v0.1.0'
+ROOM_ASSETS = ROOT / 'assets/v0.1.1'
 
 
 def cutout(cell):
@@ -52,12 +53,43 @@ def load_images():
             images.append(cutout(image.crop((x * image.width // 4, y * image.height // 4,
                                              (x + 1) * image.width // 4,
                                              (y + 1) * image.height // 4))))
+    images.extend(Image.open(ROOM_ASSETS / name).convert('RGBA')
+                  for name in ('command-center.png', 'laundry.png'))
+    sheet = Image.open(ROOM_ASSETS / 'room-props.png').convert('RGBA')
+    for row in range(2):
+        for col in range(4):
+            images.append(cutout(sheet.crop((col * sheet.width // 4, row * sheet.height // 2,
+                                            (col + 1) * sheet.width // 4,
+                                            (row + 1) * sheet.height // 2))))
+    frames = []
+    for name, rows in (('staff.png', 2), ('key-master.png', 1)):
+        sheet = Image.open(ROOM_ASSETS / name).convert('RGBA')
+        for row in range(rows):
+            frames.append([sheet.crop((col * sheet.width // 4, row * sheet.height // rows,
+                                       (col + 1) * sheet.width // 4, (row + 1) * sheet.height // rows))
+                           for col in range(4)])
+    for cells in frames:
+        # Share the crop and scale across an animation: breathing must not
+        # change the character's size or shift its feet between frames.
+        boxes = []
+        for cell in cells:
+            cell.putalpha(cell.getchannel('A').point(lambda a: 0 if a <= 3 else a))
+            boxes.append(cell.getchannel('A').point(lambda a: 255 if a > 32 else 0).getbbox())
+        if any(box is None for box in boxes):
+            raise ValueError('Missing staff animation frame')
+        bounds = (min(b[0] for b in boxes), min(b[1] for b in boxes),
+                  max(b[2] for b in boxes), max(b[3] for b in boxes))
+        images.extend(cell.crop(bounds) for cell in cells)
     return images
 
 
 def main():
-    compiled = [premultiplied_pixels(im, None if i == 0 else 112 if 5 <= i <= 10 else 84)
-                for i, im in enumerate(load_images())]
+    heights = [None] + [84] * 4 + [112] * 6 + [84] * 22
+    heights += [None, None, 76, 76, 142, 142, 310, 235, 164, 62] + [128] * 12
+    images = load_images()
+    if len(images) != len(heights):
+        raise ValueError('Asset dimensions do not match the atlas')
+    compiled = [premultiplied_pixels(im, height) for im, height in zip(images, heights)]
     with (ROOT / 'src/desktop_assets.c').open('w') as output:
         output.write('/* Generated premultiplied ARGB; do not hand-edit. */\n'
                      '#include "desktop_assets.h"\n#include <stdlib.h>\n#include <zlib.h>\n')

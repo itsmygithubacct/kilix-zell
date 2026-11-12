@@ -89,7 +89,7 @@ class DialogueTests(unittest.TestCase):
             (Path(root)/'build').mkdir();(Path(root)/'build/libneuronte-display.so').touch()
             with patch.dict(os.environ,{'KILIX_ZELL_NEURONTE_DISPLAY':str(script),'SHELL':'/bin/sh'}),patch.object(desktop,'open_tab',return_value=0) as tab:
                 desktop.desktop(12,0)
-                self.assertEqual(tab.call_args.args[0],[sys.executable,str(script),'--','/bin/sh','-i'])
+                self.assertEqual(tab.call_args.args[0],[sys.executable,str(Path(desktop.__file__).with_name('zell_shell.py')),'--','/bin/sh','-i'])
                 self.assertEqual(tab.call_args.kwargs['title'],'Zell / Neuronte shell')
             with patch.dict(os.environ,{'KILIX_ZELL_NEURONTE_DISPLAY':str(Path(root)/'missing')}),patch.object(desktop,'open_tab') as tab:
                 desktop.desktop(12,0);tab.assert_not_called()

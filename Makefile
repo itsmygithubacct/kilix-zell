@@ -256,6 +256,9 @@ test-desktop: $(BUILD)/test-desktop
 	python3 $(ROOT)/tests/test_rooms.py
 	python3 $(ROOT)/tests/test_projects.py
 	python3 $(ROOT)/tests/test_terminal.py
+	python3 $(ROOT)/tests/test_secrets.py
+	python3 $(ROOT)/tests/test_journal.py
+	python3 $(ROOT)/tests/test_shell.py
 
 $(BUILD)/test_process.o $(BUILD)/test_desktop.o: $(ROOT)/src/scene.h $(ROOT)/src/desktop.h
 
@@ -278,8 +281,8 @@ ZELL_INSTALL_DIR ?= $(if $(GPU_TERMINAL_HOME),$(GPU_TERMINAL_HOME),$(HOME)/.loca
 ZELL_BIN_DIR ?= $(HOME)/.local/bin
 .PHONY: install
 install: neuronte
-	install -d "$(DESTDIR)$(ZELL_INSTALL_DIR)/tools" "$(DESTDIR)$(ZELL_INSTALL_DIR)/weights" "$(DESTDIR)$(ZELL_BIN_DIR)"
-	install -m 0755 "$(ROOT)/zell-neuronte" "$(DESTDIR)$(ZELL_INSTALL_DIR)/zell-neuronte"
-	install -m 0644 $(ROOT)/tools/*.py "$(DESTDIR)$(ZELL_INSTALL_DIR)/tools/"
-	install -m 0644 "$(NEURONTE_WEIGHTS)" "$(DESTDIR)$(ZELL_INSTALL_DIR)/weights/neuronte-split-v4.nrt"
-	install -m 0755 "$(ROOT)/bin/zell" "$(DESTDIR)$(ZELL_BIN_DIR)/zell"
+	python3 tools/package_runtime.py --modules "$(MODULES)" --neuronte "$(NEURONTE)" --install "$(DESTDIR)$(ZELL_INSTALL_DIR)" --bin-dir "$(DESTDIR)$(ZELL_BIN_DIR)" $(if $(DESTDIR),,--user-unit-dir "$(HOME)/.config/systemd/user")
+
+.PHONY: runtime
+runtime: neuronte
+	python3 tools/package_runtime.py --modules "$(MODULES)" --neuronte "$(NEURONTE)" --output "$(BUILD)/zell-$(shell cat VERSION)-$(shell uname -m).tar.xz"

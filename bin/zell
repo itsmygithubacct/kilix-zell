@@ -5,7 +5,8 @@ runtime_root=${GPU_TERMINAL_HOME:-"$HOME/.local/gpu_terminal"}
 source_root=${GPU_TERMINAL_SOURCE_HOME:-"$HOME/gpu_terminal"}
 for app in "${ZELL_NEURONTE_HOME:-}" \
     "$runtime_root/kilix/data/desktop-apps/kilix-zell" \
-    "$source_root/kilix-apps/kilix-zell"
+    "$source_root/kilix-apps/kilix-zell" \
+    /usr/local/share/kilix-zell
 do
     [ -n "$app" ] || continue
     if [ -x "$app/zell-neuronte" ]; then

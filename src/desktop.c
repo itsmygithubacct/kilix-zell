@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "draw.h"
+#include "desktop_assets.h"
 const zell_station zell_stations[ZELL_STATIONS]={
  {"Wizard","Ask, think, discover",.23f,.35f,5},
  {"Archivist","Logs and sessions",.50f,.35f,6},
@@ -16,14 +17,14 @@ const zell_station zell_stations[ZELL_STATIONS]={
  {"Noticeboard","Notes and tasks",.90f,.40f,15},
  {"Voice","Toggle the wizard's voice",.10f,.39f,16},
  {"Wall clock","Time and system health",.88f,.32f,13},
- {"Neuronte shell switch","Neural terminal / behind the shell computer",.90f,.42f,-1},
- {"Command center hatch","Five connected coding screens downstairs",.30f,.65f,-1},
- {"Laundry room hatch","Drive bins and storage explorer downstairs",.78f,.64f,-1},
- {"Command screen","Coordinate the four worker sessions",.20f,.37f,-1},
- {"Worker screen 1","Coding session",.35f,.37f,-1},
- {"Worker screen 2","Coding session",.50f,.37f,-1},
- {"Worker screen 3","Coding session",.65f,.37f,-1},
- {"Worker screen 4","Coding session",.80f,.37f,-1},
+ {"Neuronte shell switch","Neural terminal / behind the shell computer",.90f,.42f,ZELL_ART_SWITCH},
+ {"Command center hatch","Five connected coding screens downstairs",.30f,.65f,ZELL_ART_COMMAND_HATCH},
+ {"Laundry room hatch","Drive bins and storage explorer downstairs",.78f,.64f,ZELL_ART_LAUNDRY_HATCH},
+ {"Command screen","Coordinate the four worker sessions",.50f,.43f,ZELL_ART_CONTROLLER},
+ {"Worker screen 1","Coding session",.22f,.42f,ZELL_ART_WORKER},
+ {"Worker screen 2","Coding session",.78f,.42f,ZELL_ART_WORKER},
+ {"Worker screen 3","Coding session",.22f,.70f,ZELL_ART_WORKER},
+ {"Worker screen 4","Coding session",.78f,.70f,ZELL_ART_WORKER},
  {"Drive bin 1","Capacity and files",.22f,.46f,-1},
  {"Drive bin 2","Capacity and files",.40f,.46f,-1},
  {"Drive bin 3","Capacity and files",.58f,.46f,-1},
@@ -32,9 +33,10 @@ const zell_station zell_stations[ZELL_STATIONS]={
  {"Drive bin 6","Capacity and files",.40f,.72f,-1},
  {"Drive bin 7","Capacity and files",.58f,.72f,-1},
  {"Drive bin 8","Capacity and files",.76f,.72f,-1},
- {"Stairs to the cave","Return upstairs",.50f,.90f,-1},
- {"Git Wizard","Projects, changes and health watches",.30f,.65f,5},
- {"Pilot","Project fleets and session arrangements",.70f,.65f,7}
+ {"Stairs to the cave","Return upstairs",.50f,.91f,ZELL_ART_COMMAND_STAIRS},
+ {"Git Wizard","Projects, changes and health watches",.36f,.72f,ZELL_ART_GIT_IDLE},
+ {"Pilot","Project fleets and session arrangements",.64f,.72f,ZELL_ART_PILOT_IDLE},
+ {"Key Master","API keys, logins and encrypted secrets",.50f,.72f,ZELL_ART_KEY_MASTER_IDLE}
 };
 static const char *const actions[ZELL_STATIONS][9]={
  {"Ask the wizard",NULL},
@@ -45,7 +47,7 @@ static const char *const actions[ZELL_STATIONS][9]={
  {"Books and documents library","Find a document","OCR an image","OCR a PDF","Read text aloud","Document converter","Export a text audiobook","How to find and add files",NULL},
  {"Open Kilix TUI",NULL}, {"Open Kilix shell",NULL},
  {"Application launcher","Home folder","Downloads","Web browser",NULL},
- {"Read notebook","Add a note","Edit notebook",NULL},
+ {"Read notebook","Add a note","Edit notebook","Task board","Station conversations",NULL},
  {"Toggle voice",NULL}, {"Time and calendar","System health report","Check coding-token mana",NULL},
  {"Switch to Neuronte shell",NULL},
  {"Go down to command center",NULL}, {"Go down to laundry room",NULL},
@@ -53,7 +55,8 @@ static const char *const actions[ZELL_STATIONS][9]={
  {"Dig through drive",NULL}, {"Dig through drive",NULL}, {"Dig through drive",NULL}, {"Dig through drive",NULL},
  {"Dig through drive",NULL}, {"Dig through drive",NULL}, {"Dig through drive",NULL}, {"Dig through drive",NULL},
  {"Return to the cave",NULL},
- {"Projects and Git health",NULL}, {"Launch a project fleet",NULL}
+ {"Projects and Git health",NULL}, {"Launch a project fleet",NULL},
+ {"Open the secret vault",NULL}
 };
 int zell_desktop_actions(int station){int n=0;
  if(station<0||station>=ZELL_STATIONS)return 0;
@@ -64,7 +67,7 @@ void zell_desktop_init(zell_scene *s){s->desktop=true;s->x=(float)ZELL_WORLD_W*.
 bool zell_desktop_station_visible(const zell_scene *s,int station){
  if(s->room==0)return station<ZELL_CAVE_STATIONS;
  if(station==28)return true;
- return s->room==1?((station>=15&&station<=19)||station==29||station==30):(station>=20&&station<20+s->disk_count);
+ return s->room==1?((station>=15&&station<=19)||station>=29):(station>=20&&station<20+s->disk_count);
 }
 int zell_desktop_launcher_count(const zell_scene *s){
  int count=0;for(int i=0;i<ZELL_STATIONS;i++)if(zell_desktop_station_visible(s,i))count++;
@@ -209,7 +212,10 @@ zell_actor_pose zell_desktop_pose(const zell_scene *s, int actor)
 {
     static const int idle_y[4] = {0, -1, -1, 0};
     zell_actor_pose pose = {1, 0, 0};
-    if (actor >= 0 && actor < 6) {
+    if (actor >= 6 && actor <= 8) {
+        int phase = (s->flame_tick / 20 + actor) % 4;
+        pose.art = (actor == 6 ? ZELL_ART_GIT_IDLE : actor == 7 ? ZELL_ART_PILOT_IDLE : ZELL_ART_KEY_MASTER_IDLE) + phase;
+    } else if (actor >= 0 && actor < 6) {
         int phase = (s->flame_tick / 16 + actor * 3) % 4;
         pose.art = zell_stations[actor].art;
         pose.offset_y = idle_y[phase];
@@ -248,6 +254,22 @@ void zell_terminal_restore(zell_scene *s){
  s->terminal_minimized=false;s->mode=ZELL_MODE_SERVICE;
 }
 static bool rect_holds(const zell_rect *r,int x,int y){return x>=r->x&&x<r->x+r->w&&y>=r->y&&y<r->y+r->h;}
+void zell_monitor_layout(int screen,zell_rect *frame,zell_rect *display){
+ if(screen<0||screen>=5){*frame=*display=(zell_rect){0};return;}
+ const zell_station *station=&zell_stations[15+screen];
+ int w=screen==0?420:320,h=screen==0?310:235;
+ *frame=(zell_rect){(int)(station->x*ZELL_WORLD_W)-w/2,(int)(station->y*ZELL_WORLD_H)-h,w,h};
+ *display=(zell_rect){frame->x+w*11/100,frame->y+h*(screen==0?26:15)/100,w*78/100,h*(screen==0?52:62)/100};
+}
+bool zell_desktop_click(zell_scene *s){
+ if(!s->desktop||!s->mouse_valid||!s->mouse_click||s->mode!=ZELL_MODE_WALK||s->room!=1)return false;
+ int cx,cy;zell_desktop_camera(s,&cx,&cy);
+ for(int i=0;i<5;i++){
+  zell_rect frame,display;zell_monitor_layout(i,&frame,&display);
+  if(rect_holds(&frame,s->mouse_x+cx,s->mouse_y+cy)){s->mouse_click=false;open_station(s,15+i);return true;}
+ }
+ return false;
+}
 /* Consume one left press. True when it pressed a terminal window button. */
 bool zell_terminal_click(zell_scene *s){
  if(!s->mouse_click)return false;

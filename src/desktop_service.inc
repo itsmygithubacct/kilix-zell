@@ -6,6 +6,7 @@ typedef struct {
     size_t length;
     int64_t cancelled;
     bool monitor;
+    bool sensitive;
     int frame_fd;
     void *frame_map;
     unsigned frame_seq;
@@ -28,6 +29,13 @@ static void service_frame(zell_scene *s,char *frame){
         if(c>=32||c=='\n'||c=='\t')decoded[n++]=(char)c;
     }
     decoded[n]=0;
+    if(kind=='S'){
+        if(n<2||decoded[0]<'0'||decoded[0]>'4'||decoded[1]!=' ')return;
+        int i=decoded[0]-'0';char *body=strchr(decoded+2,'\n');
+        if(!body)return;
+        *body++=0;snprintf(s->screen_status[i],sizeof s->screen_status[i],"%.95s",decoded+2);
+        snprintf(s->screen_preview[i],sizeof s->screen_preview[i],"%.1199s",body);s->screens_ready=true;return;
+    }
     if(kind=='V'){
         int hp,fatigue,mana,days,age,baseline,dirty;
         int fields=sscanf(decoded,"%d %d %d %d %d %d %d",&hp,&fatigue,&mana,&days,&age,&baseline,&dirty);
@@ -73,8 +81,8 @@ static void service_stop(desktop_service *p){
             while(waitpid(p->pid,NULL,0)<0&&errno==EINTR){}
         }
     }
-    if(p->frame_map){munmap(p->frame_map,ZELL_TERMINAL_BYTES);close(p->frame_fd);}
-    free(p->frame_scratch);
+    if(p->frame_map){explicit_bzero(p->frame_map,ZELL_TERMINAL_BYTES);munmap(p->frame_map,ZELL_TERMINAL_BYTES);close(p->frame_fd);}
+    if(p->frame_scratch){explicit_bzero(p->frame_scratch,1200u*640u*4u);free(p->frame_scratch);}
     if(p->in_fd>=0)close(p->in_fd);
     if(p->out_fd>=0)close(p->out_fd);
     *p=(desktop_service){.in_fd=-1,.out_fd=-1,.frame_fd=-1};
@@ -102,10 +110,13 @@ static void terminal_frame(desktop_service *p,zell_scene *s){
 static void service_start_mode(desktop_service *p,zell_scene *s,bool monitor){
     service_stop(p);
     p->monitor=monitor;
+    p->sensitive=!monitor&&s->station==31;
     if(!monitor){
-    free(s->terminal_pixels);s->terminal_pixels=NULL;s->terminal_width=s->terminal_height=0;
+    if(s->terminal_pixels){explicit_bzero(s->terminal_pixels,1200u*640u*4u);free(s->terminal_pixels);}
+    s->terminal_pixels=NULL;s->terminal_width=s->terminal_height=0;
     s->desktop_launch=false;s->mode=ZELL_MODE_SERVICE;s->service_phase=0;
     s->terminal_maximized=s->terminal_minimized=false;
+    s->terminal_private=p->sensitive;
     s->service_text[0]=s->service_title[0]=s->service_input[0]=0;
     s->service_scroll=0;s->service_send=s->service_cancel=false;
     }
@@ -117,7 +128,7 @@ static void service_start_mode(desktop_service *p,zell_scene *s,bool monitor){
     snprintf(station,sizeof station,"%d",monitor?-1:s->station);snprintf(action,sizeof action,"%d",s->menu_index);
     if(pipe(to_child)!=0)goto failed;
     if(pipe(from_child)!=0){close(to_child[0]);close(to_child[1]);goto failed;}
-    if(!monitor&&s->station==2&&s->menu_index==6){
+    if(!monitor&&((s->station==2&&s->menu_index==6)||s->station==31)){
         p->frame_fd=(int)syscall(SYS_memfd_create,"zell-terminal",0);
         if(p->frame_fd>=0&&ftruncate(p->frame_fd,(off_t)ZELL_TERMINAL_BYTES)==0){
             p->frame_map=mmap(NULL,ZELL_TERMINAL_BYTES,PROT_READ|PROT_WRITE,MAP_SHARED,p->frame_fd,0);
@@ -172,7 +183,7 @@ static void service_pump(desktop_service *p,zell_scene *s){
     for(int batch=0;batch<8;batch++){
         count=read(p->out_fd,bytes,sizeof bytes);if(count<=0)break;
         for(ssize_t i=0;i<count;i++){
-            if(bytes[i]=='\n'){p->frame[p->length]=0;if(p->length&&(!p->monitor||strchr("VDB",p->frame[0])))service_frame(s,p->frame);p->length=0;}
+            if(bytes[i]=='\n'){p->frame[p->length]=0;if(p->length&&(!p->monitor||strchr("VDBS",p->frame[0])))service_frame(s,p->frame);p->length=0;}
             else if(p->length+1<sizeof p->frame)p->frame[p->length++]=bytes[i];
         }
     }
@@ -180,10 +191,16 @@ static void service_pump(desktop_service *p,zell_scene *s){
     int status=0;pid_t ended=waitpid(p->pid,&status,WNOHANG);
     if(ended==p->pid){
         p->pid=0;
-        if(p->monitor){s->fatigue=-1;service_stop(p);return;}
+        if(p->monitor){s->fatigue=-1;s->screens_ready=false;memset(s->screen_preview,0,sizeof s->screen_preview);service_stop(p);return;}
         if(p->cancelled)service_append(s,"\nCancelled.");
         else if(!WIFEXITED(status)||WEXITSTATUS(status)!=0)service_append(s,"\nThe station helper failed. Please try again.");
         else if(!s->service_text[0])service_append(s,"Done.");
+        bool sensitive=p->sensitive;
         service_stop(p);zell_terminal_restore(s);s->service_phase=4;s->service_scroll=0;
+        if(sensitive){
+            if(s->terminal_pixels){explicit_bzero(s->terminal_pixels,1200u*640u*4u);free(s->terminal_pixels);s->terminal_pixels=NULL;s->terminal_width=s->terminal_height=0;}
+            explicit_bzero(s->service_reply,sizeof s->service_reply);
+            explicit_bzero(s->service_input,sizeof s->service_input);
+        }
     }
 }

@@ -68,7 +68,8 @@ int main(void) {
     for (int id=1; id<ZELL_ART_COUNT; id++) {
         const zell_art *art=zell_art_get(id);
         assert(art);
-        assert(art->height==(id>=5&&id<=10?112:84));
+        if(id<33)assert(art->height==(id>=5&&id<=10?112:84));
+        else assert(art->height>0&&art->width>0);
         for (int pixel=0; pixel<art->width*art->height; pixel++) {
             uint32_t rgba=art->pixels[pixel], alpha=rgba>>24;
             assert(((rgba>>16)&255u)<=alpha);
@@ -82,6 +83,29 @@ int main(void) {
         s.flame_tick=32;zell_actor_pose b=zell_desktop_pose(&s,actor);
         assert(a.art==b.art && a.offset_y!=b.offset_y);
     }
+    for(int actor=6;actor<=8;actor++){
+        int seen[4]={0};
+        for(int frame=0;frame<4;frame++){
+            s.flame_tick=frame*20;
+            int art=zell_desktop_pose(&s,actor).art;
+            int base=actor==6?ZELL_ART_GIT_IDLE:actor==7?ZELL_ART_PILOT_IDLE:ZELL_ART_KEY_MASTER_IDLE;
+            assert(art>=base&&art<base+4);seen[art-base]++;
+        }
+        for(int frame=0;frame<4;frame++)assert(seen[frame]==1);
+    }
+    /* Large screens are clickable even when the player is across the room. */
+    s.room=1;s.mode=ZELL_MODE_WALK;s.mouse_valid=true;
+    for(int screen=0;screen<5;screen++){
+        zell_rect frame,display;zell_monitor_layout(screen,&frame,&display);
+        assert(frame.w>=(screen?320:420)&&display.w>=249);
+        assert(display.x>frame.x&&display.x+display.w<frame.x+frame.w);
+        zell_desktop_camera(&s,&cx,&cy);
+        s.mouse_x=display.x+display.w/2-cx;s.mouse_y=display.y+display.h/2-cy;s.mouse_click=true;
+        assert(zell_desktop_click(&s)&&s.station==15+screen&&s.mode==ZELL_MODE_DESK);
+        s.mode=ZELL_MODE_WALK;
+    }
+    s.room=0;s.mouse_click=true;assert(!zell_desktop_click(&s));
+    zell_scene_init(&s,640,400);zell_desktop_init(&s);
     c=(zell_controls){.move_x=1};
     for (int frame=0;frame<4;frame++) {
         for (int tick=0;tick<7;tick++) zell_scene_tick(&s,&c);
@@ -129,7 +153,7 @@ int main(void) {
     s.x=zell_stations[13].x*ZELL_WORLD_W;s.y=zell_stations[13].y*ZELL_WORLD_H;
     c=(zell_controls){.confirm=true};zell_scene_tick(&s,&c);
     assert(s.room==1&&s.mode==ZELL_MODE_WALK&&!s.desktop_launch);
-    assert(zell_desktop_launcher_count(&s)==8);
+    assert(zell_desktop_launcher_count(&s)==9);
     assert(zell_desktop_launcher_station(&s,0)==15);
     assert(zell_desktop_launcher_station(&s,6)==29);
     s.x=zell_stations[28].x*ZELL_WORLD_W;s.y=zell_stations[28].y*ZELL_WORLD_H;

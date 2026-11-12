@@ -21,6 +21,7 @@ def load_display():
     root = Path(os.environ.get('GPU_TERMINAL_HOME', Path.home()/'.local/gpu_terminal'))
     override = os.environ.get('KILIX_ZELL_NEURONTE_DISPLAY')
     paths = [Path(override).expanduser()] if override else [
+        Path(__file__).resolve().parents[1]/'libexec/neuronte-display/neuronte_display.py',
         Path(os.environ.get('GPU_TERMINAL_SOURCE_HOME', Path.home()/'gpu_terminal')) /
         'kilix-modules/neuronte-display/neuronte_display.py',
         Path.home()/'gpu_terminal/kilix-modules/neuronte-display/neuronte_display.py',
@@ -36,6 +37,15 @@ def load_display():
             spec.loader.exec_module(module)
             return module
     raise RuntimeError('Neuronte display is unavailable. Set KILIX_ZELL_NEURONTE_DISPLAY to neuronte_display.py.')
+
+
+def renderer_paths():
+    app = Path(__file__).resolve().parents[1]
+    home = Path(os.environ.get('NEURONTE_HOME', Path.home()/'projects/neuronte'))
+    weights = app/'weights/neuronte-split-v4.nrt'
+    library = app/'lib/libneuronte.so'
+    return (Path(os.environ.get('ZELL_NEURONTE_WEIGHTS', weights if weights.is_file() else home/'weights/neuronte-split-v4.nrt')),
+            Path(os.environ.get('ZELL_NEURONTE_LIBRARY', library if library.is_file() else home/'build/libneuronte.so')))
 
 
 def dimensions(shared):
@@ -77,7 +87,7 @@ def forward_input(pending, data, pane):
         raise RuntimeError('Terminal input frame is too large')
 
 
-def make_workspace(display, cols, rows, command):
+def make_workspace(display, cols, rows, command, title='OS update / keyboard goes to terminal / Ctrl-C interrupts'):
     class FloatingWorkspace(display.Workspace):
         def resize(self, cols, rows):
             # The upstream presenter enforces 18 rows, but its layout supports
@@ -90,14 +100,14 @@ def make_workspace(display, cols, rows, command):
 
         def grid(self):
             records = super().grid()
-            label = 'OS update / keyboard goes to terminal / Ctrl-C interrupts'
+            label = title
             records[-self.cols:] = [(ord(c), display.FG, 0x263448, 0)
                                     for c in label[:self.cols].ljust(self.cols)]
             return records
     return FloatingWorkspace(cols, rows, 8, 16, command)
 
 
-def terminal_loop(ui, command):
+def terminal_loop(ui, command, title=None, sensitive=False):
     workspace = cache = shared = None
     old_signals = {}
 
@@ -113,17 +123,15 @@ def terminal_loop(ui, command):
         os.set_inheritable(fd, False)
         shared = mmap.mmap(fd, BUFFER_SIZE)
         display = load_display()
-        home = Path(os.environ.get('NEURONTE_HOME', Path.home()/'projects/neuronte'))
         cache_dir = Path(os.environ.get('XDG_CACHE_HOME', Path.home()/'.cache'))/'neuronte-display'
-        installed_weights = Path(__file__).resolve().parents[1]/'weights/neuronte-split-v4.nrt'
-        weights = Path(os.environ.get('ZELL_NEURONTE_WEIGHTS',
-                       installed_weights if installed_weights.is_file() else home/'weights/neuronte-split-v4.nrt'))
-        library = Path(os.environ.get('ZELL_NEURONTE_LIBRARY', home/'build/libneuronte.so'))
+        weights, library = renderer_paths()
         cache = display.MaskCache(weights, library, cache_dir, 8, 16)
         renderer = display.Renderer(cache)
         cols, rows = dimensions(shared)
-        workspace = make_workspace(display, cols, rows, command)
-        zell_debug.log('terminal.opened', cols=cols, rows=rows, command=command, display=display.__file__)
+        workspace = (make_workspace(display, cols, rows, command, title=title) if title
+                     else make_workspace(display, cols, rows, command))
+        if not sensitive:
+            zell_debug.log('terminal.opened', cols=cols, rows=rows, command=command, display=display.__file__)
         input_fd = ui.DIALOGUE.reader.fileno()
         pending = bytearray()
         ui.DIALOGUE.send('T', '')
@@ -156,7 +164,8 @@ def terminal_loop(ui, command):
         zell_debug.log('terminal.closed_by_room')
         return None
     except (OSError, ValueError, RuntimeError, ImportError, KeyError):
-        zell_debug.error('terminal.failed')
+        if not sensitive:
+            zell_debug.error('terminal.failed')
         # Stop the PTY before waiting for acknowledgement of a failed surface.
         if workspace is not None:
             workspace.close()
@@ -171,6 +180,10 @@ def terminal_loop(ui, command):
         if cache is not None:
             cache.close()
         if shared is not None:
+            if sensitive:
+                # The renderer's output may include a recovery code. Remove
+                # every shared frame before the surface is handed back.
+                shared[8:] = b'\0' * (BUFFER_SIZE - 8)
             shared.close()
         for sig, handler in old_signals.items():
             signal.signal(sig, handler)

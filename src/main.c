@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <sys/resource.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <time.h>
@@ -345,6 +346,11 @@ static void sync_voice(zell_scene *scene, zell_speech *speech, unsigned *spoken)
 
 static void sync_history(zell_scene *scene)
 {
+    static unsigned saved_answer;
+    if(scene->answer_serial!=saved_answer){
+        saved_answer=scene->answer_serial;
+        if(scene->answer[0])zell_conversation_save(scene->question,scene->answer);
+    }
     if (!scene->history_changed) {
         return;
     }
@@ -1013,7 +1019,7 @@ static int run_scene(void)
         if ((scene.desktop?desktop_input_read(&scene):kittykb_terminal_read(&keyboard)) < 0 && errno != EINTR) {
             break;
         }
-        zell_terminal_click(&scene);
+        if(!zell_desktop_click(&scene))zell_terminal_click(&scene);
         read_controls(&scene, &controls);
         int quit = zell_scene_tick(&scene, &controls);
         if (scene.terminal_minimized &&
@@ -1084,6 +1090,9 @@ static int run_scene(void)
 
 int main(int argc, char **argv)
 {
+    /* Recovery codes may be visible in a private vault surface. */
+    const struct rlimit no_core={0,0};
+    if(setrlimit(RLIMIT_CORE,&no_core)!=0){perror("disable core dumps");return 1;}
     if (argc == 2 && strcmp(argv[1], "--version") == 0) { puts("zell-neuronte " ZELL_VERSION); return 0; }
     if (argc == 2 && strcmp(argv[1], "--selftest") == 0) {
         fputs("zell: run make test\n", stdout);

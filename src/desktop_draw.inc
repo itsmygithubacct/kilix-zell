@@ -11,80 +11,62 @@ static void desktop_label(sr_canvas *c,int x,int y,const char *text,uint32_t col
  sr_fill_rect(c,(float)(x-w/2-6),(float)(y-3),(float)(w+12),22,0x101f26u,.92f);
  sr_text(c,(float)(x-w/2),(float)y,text,color,1,1);
 }
-static void desktop_shell_switch(sr_canvas *c,int x,int y,bool near){
- /* A wall-mounted brass lever: fixed world pixels, independent of pane size. */
- sr_fill_rect(c,(float)(x-18),(float)(y-24),36,48,0x071219u,.85f);
- sr_fill_rect(c,(float)(x-15),(float)(y-22),30,44,0x294347u,1);
- sr_stroke_rect(c,(float)(x-15),(float)(y-22),30,44,2,near?0xe8d6a0u:0x9a8659u,1);
- sr_fill_rect(c,(float)(x-3),(float)(y-11),6,26,0x0b191du,1);
- sr_fill_circle(c,(float)x,(float)(y+10),6,0xb5a16bu,1);
- sr_fill_rect(c,(float)(x-2),(float)(y-8),4,18,0xe0ce91u,1);
- sr_fill_rect(c,(float)(x-10),(float)(y-13),20,8,near?0xa6ffe1u:0x56c5b6u,1);
- sr_fill_circle(c,(float)(x+9),(float)(y+15),2,0x83f6ceu,1);
+static void desktop_text(sr_canvas *c,int x,int y,const char *text,uint32_t color,int width);
+static void desktop_hatch(sr_canvas *c,int art,int x,int y,bool selected,const char *label){
+ int height=(art==ZELL_ART_COMMAND_STAIRS||art==ZELL_ART_LAUNDRY_STAIRS)?142:76;
+ if(selected)sr_fill_ellipse(c,(float)x,(float)(y+2),54,12,0x80e5c4u,.55f);
+ desktop_art(c,art,x,y+14,height);
+ if(selected)desktop_label(c,x,y+28,label,0xa8f3d5u);
 }
-static void desktop_hatch(sr_canvas *c,int x,int y,bool selected,const char *label){
- sr_fill_ellipse(c,(float)x,(float)(y+10),42,18,0x061419u,.6f);
- sr_fill_rect(c,(float)(x-36),(float)(y-25),72,43,0x132228u,1);
- sr_stroke_rect(c,(float)(x-36),(float)(y-25),72,43,3,selected?0x99edcbu:0x81734fu,1);
- for(int i=0;i<4;i++)sr_fill_rect(c,(float)(x-29),(float)(y-19+i*9),58,5,0x53605cu,1);
- sr_fill_rect(c,(float)(x+19),(float)(y-9),10,5,0xe1c67fu,1);
- if(selected)desktop_label(c,x,y+24,label,0xa8f3d5u);
+static void desktop_monitor(const zell_scene *s,sr_canvas *c,int index,int cx,int cy,bool selected){
+ zell_rect frame,display;zell_monitor_layout(index,&frame,&display);
+ frame.x-=cx;frame.y-=cy;display.x-=cx;display.y-=cy;
+ const zell_art *a=zell_art_get(index==0?ZELL_ART_CONTROLLER:ZELL_ART_WORKER);
+ if(a){sr_canvas src;sr_canvas_wrap(&src,a->pixels,a->width,a->height);sr_blit_scaled(c,&src,frame.x,frame.y,frame.w,frame.h,1);}
+ sr_fill_rect(c,(float)display.x,(float)display.y,(float)display.w,(float)display.h,0x091820u,1);
+ if(selected)sr_stroke_rect(c,(float)display.x,(float)display.y,(float)display.w,(float)display.h,2,0x96ead0u,1);
+ char title[32];snprintf(title,sizeof title,index==0?"CONTROLLER":"WORKER %d",index);
+ desktop_text(c,display.x+8,display.y+7,title,0xe9d49fu,display.w-16);
+ desktop_text(c,display.x+8,display.y+27,s->screens_ready?s->screen_status[index]:"Reading sessions...",0x8fd5c6u,display.w-16);
+ const char *body=s->screen_preview[index];
+ if(!*body)body=s->screens_ready?"Click to open this screen":"Session previews refresh here";
+ int lines=(display.h-59)/17;
+ for(int row=0;row<lines&&*body;row++){
+  const char *end=strchr(body,'\n');size_t n=end?(size_t)(end-body):strlen(body);
+  char line[200];if(n>=sizeof line)n=sizeof line-1;memcpy(line,body,n);line[n]=0;
+  desktop_text(c,display.x+8,display.y+49+row*17,line,0xc9dcd8u,display.w-16);
+  if(!end)break;
+  body=end+1;
+ }
+ if(selected)desktop_label(c,frame.x+frame.w/2,frame.y+frame.h+8,"Enter / click: session & tasks",0xa8f3d5u);
 }
 static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy){
- sr_clear(c,s->room==1?0x0b1822u:0x192323u);
- int left=(int)(ZELL_WORLD_W*.11f)-cx,top=(int)(ZELL_WORLD_H*.27f)-cy;
- sr_fill_rect(c,(float)left,(float)top,ZELL_WORLD_W*.78f,ZELL_WORLD_H*.68f,0x22343bu,1);
- for(int y=0;y<ZELL_WORLD_H;y+=48)for(int x=0;x<ZELL_WORLD_W;x+=64){
-  int xx=x-cx,yy=y-cy;
-  sr_stroke_rect(c,(float)xx,(float)yy,64,48,1,s->room==1?0x243c48u:0x354744u,.7f);
- }
- sr_fill_rect(c,(float)left,(float)(top-90),ZELL_WORLD_W*.78f,90,0x101f2bu,1);
- sr_fill_rect(c,(float)left,(float)(top-4),ZELL_WORLD_W*.78f,4,0x68b8b4u,.7f);
- desktop_label(c,ZELL_WORLD_W/2-cx,top-55,s->room==1?"COMMAND CENTER / FIVE CONNECTED SESSIONS":"LAUNDRY / MOUNTED DRIVES",0xe1c78fu);
  int near=zell_desktop_near(s);
  for(int i=15;i<ZELL_STATIONS;i++){
   if(!zell_desktop_station_visible(s,i))continue;
   int x=(int)(zell_stations[i].x*ZELL_WORLD_W)-cx,y=(int)(zell_stations[i].y*ZELL_WORLD_H)-cy;
-  if(i==28){desktop_hatch(c,x,y,i==near,"Up to the cave");continue;}
-  if(i==29||i==30){
-   zell_actor_pose staff=zell_desktop_pose(s,i==29?0:2);
-   desktop_art(c,staff.art,x+staff.offset_x,y+staff.offset_y,112);
+  if(i==28){desktop_hatch(c,s->room==1?ZELL_ART_COMMAND_STAIRS:ZELL_ART_LAUNDRY_STAIRS,x,y,i==near,"Up to the cave");continue;}
+  if(i>=29){
+   zell_actor_pose staff=zell_desktop_pose(s,i-23);
+   sr_fill_ellipse(c,(float)x,(float)y,24,7,0x071719u,.45f);
+   desktop_art(c,staff.art,x+staff.offset_x,y+staff.offset_y,128);
    desktop_label(c,x,y+15,zell_stations[i].name,0xe9d49fu);
-   if(i==near)desktop_label(c,x,y+40,i==29?"Enter: projects and Git":"Enter: coding fleets",0xa8f3d5u);
+   if(i==near)desktop_label(c,x,y+40,i==29?"Enter: projects and Git":i==30?"Enter: coding fleets":"Enter: encrypted secret vault",0xa8f3d5u);
    continue;
   }
-  if(s->room==1){
-   sr_fill_rect(c,(float)(x-82),(float)(y-95),164,98,0x030b11u,1);
-   sr_stroke_rect(c,(float)(x-82),(float)(y-95),164,98,3,i==near?0xa2f5d5u:0x426878u,1);
-   sr_fill_rect(c,(float)(x-74),(float)(y-86),148,74,i==15?0x163b41u:0x102a38u,1);
-   char name[32];snprintf(name,sizeof name,i==15?"CONTROLLER":"WORKER %d",i-15);
-   sr_text(c,(float)(x-65),(float)(y-78),name,0xb5e9d7u,1,1);
-   sr_text(c,(float)(x-65),(float)(y-52),"GPT-6 Astra",0x849faeu,1,1);
-   sr_text(c,(float)(x-65),(float)(y-29),">_ Kilix tab",0xdbc787u,1,1);
-   sr_fill_rect(c,(float)(x-8),(float)(y+4),16,19,0x47616au,1);
-   sr_fill_rect(c,(float)(x-44),(float)(y+22),88,8,0x54717bu,1);
-   /* Rack panels below the monitors, with quiet activity lamps. */
-   sr_fill_rect(c,(float)(x-74),(float)(y+42),148,55,0x0c1922u,1);
-   for(int slot=0;slot<3;slot++){
-    sr_stroke_rect(c,(float)(x-68),(float)(y+48+slot*14),136,11,1,0x36525eu,1);
-    sr_fill_circle(c,(float)(x+57),(float)(y+53+slot*14),2,0x72d2b0u,.8f);
-   }
-  }else{
-   int bin=i-20,percent=s->disk_used[bin];
-   uint32_t color=percent<0?0x7b8990u:percent>=90?0xe18c70u:percent>=75?0xd6b867u:0x6cc9b7u;
-   sr_fill_ellipse(c,(float)x,(float)(y+7),63,14,0x071518u,.6f);
-   sr_fill_rect(c,(float)(x-58),(float)(y-88),116,88,0x182b32u,1);
-   int fill=percent<0?0:72*percent/100;
-   sr_fill_rect(c,(float)(x-50),(float)(y-8-fill),100,(float)fill,color,.65f);
-   for(int rib=0;rib<5;rib++)sr_fill_rect(c,(float)(x-49+rib*24),(float)(y-80),3,72,0x74918du,.45f);
-   sr_stroke_rect(c,(float)(x-58),(float)(y-88),116,88,3,i==near?0xb5efd1u:0x57716fu,1);
-   sr_fill_ellipse(c,(float)x,(float)(y-88),58,12,0x6b8d88u,1);
-   sr_fill_ellipse(c,(float)x,(float)(y-89),49,6,0x0e2026u,1);
-   char value[24];if(percent<0)snprintf(value,sizeof value,"Unknown");else snprintf(value,sizeof value,"%d%% full",percent);
-   desktop_label(c,x,y-45,value,0xe0eee3u);
-   char label[22];snprintf(label,sizeof label,"%.21s",s->disk_labels[bin]);desktop_label(c,x,y+16,label,color);
-  }
-  if(i==near)desktop_label(c,x,y+38,s->room==1?"Enter: open session":"Enter: dig through drive",0xa8f3d5u);
+  if(s->room==1){desktop_monitor(s,c,i-15,cx,cy,i==near);continue;}
+  int bin=i-20,percent=s->disk_used[bin];
+  uint32_t color=percent<0?0x7b8990u:percent>=90?0xe18c70u:percent>=75?0xd6b867u:0x6cc9b7u;
+  desktop_art(c,ZELL_ART_BIN,x,y,164);
+  /* The generated bin's dark front window remains a live capacity gauge. */
+  int width=70,top=y-94,height=28;
+  sr_fill_rect(c,(float)(x-width/2),(float)top,(float)width,(float)height,0x071318u,1);
+  if(percent>0)sr_fill_rect(c,(float)(x-width/2),(float)top,(float)(width*percent)/100,(float)height,color,.7f);
+  char value[24];if(percent<0)snprintf(value,sizeof value,"?");else snprintf(value,sizeof value,"%d%%",percent);
+  sr_text(c,(float)(x-sr_text_width_in(SR_FONT_FIXED_8X16,value,1)/2),(float)(top+6),value,0xf3eee0u,1,1);
+  if(i==near)sr_stroke_rect(c,(float)(x-70),(float)(y-164),140,166,2,0x96ead0u,1);
+  char label[28];snprintf(label,sizeof label,"%.27s",s->disk_labels[bin]);desktop_label(c,x,y+16,label,color);
+  if(i==near)desktop_label(c,x,y+40,"Enter: dig through drive",0xa8f3d5u);
  }
  if(s->room==2&&s->disk_count==0)desktop_label(c,ZELL_WORLD_W/2-cx,ZELL_WORLD_H/2-cy,s->disks_ready?"No eligible mounted disks found":"Reading mounted drives...",0xc9d8d2u);
 }
@@ -118,10 +100,13 @@ static void desktop_vitals(const zell_scene *s,sr_canvas *c){
  }
 }
 static void desktop_base(const zell_scene *s,sr_canvas *c){
- static sr_canvas background; const zell_art *a=zell_art_get(0);
- if(!background.px){if(sr_canvas_init(&background,ZELL_WORLD_W,ZELL_WORLD_H)&&a){sr_canvas src;sr_canvas_wrap(&src,a->pixels,a->width,a->height);sr_blit_scaled(&background,&src,0,0,ZELL_WORLD_W,ZELL_WORLD_H,1);}}
+ static sr_canvas backgrounds[3];
+ int room=s->room>=0&&s->room<3?s->room:0;
+ sr_canvas *background=&backgrounds[room];
+ const zell_art *a=zell_art_get(room==1?ZELL_ART_COMMAND_ROOM:room==2?ZELL_ART_LAUNDRY_ROOM:0);
+ if(!background->px&&a){if(sr_canvas_init(background,ZELL_WORLD_W,ZELL_WORLD_H)){sr_canvas src;sr_canvas_wrap(&src,a->pixels,a->width,a->height);sr_blit_scaled(background,&src,0,0,ZELL_WORLD_W,ZELL_WORLD_H,1);}}
  int cx,cy;zell_desktop_camera(s,&cx,&cy);sr_clear(c,0x081319u);
- if(background.px){for(int y=0;y<c->h&&y+cy<ZELL_WORLD_H;y++){int w=c->w;if(w+cx>ZELL_WORLD_W)w=ZELL_WORLD_W-cx;memcpy(c->px+(size_t)y*(size_t)c->w,background.px+(size_t)(y+cy)*ZELL_WORLD_W+(size_t)cx,(size_t)w*4);}}
+ if(background->px){for(int y=0;y<c->h&&y+cy<ZELL_WORLD_H;y++){int w=c->w;if(w+cx>ZELL_WORLD_W)w=ZELL_WORLD_W-cx;memcpy(c->px+(size_t)y*(size_t)c->w,background->px+(size_t)(y+cy)*ZELL_WORLD_W+(size_t)cx,(size_t)w*4);}}
  if(s->room)desktop_room(s,c,cx,cy);
  int near=zell_desktop_near(s);int height=112;
  for(int i=0;i<ZELL_CAVE_STATIONS&&s->room==0;i++){
@@ -130,8 +115,8 @@ static void desktop_base(const zell_scene *s,sr_canvas *c){
   int h=i<6?height:height*3/4;
   if(i==near){sr_fill_ellipse(c,(float)x,(float)y, (float)h*.42f,6,0x80e5c4u,.65f);}
   if(i<6){zell_actor_pose pose=zell_desktop_pose(s,i);sr_fill_ellipse(c,(float)x,(float)y,23,7,0x071719u,.45f);desktop_art(c,pose.art,x+pose.offset_x,y+pose.offset_y,h);}
-  if(i==13||i==14){desktop_hatch(c,x,y,i==near,i==13?"Command center":"Laundry room");continue;}
-  if(i==12){desktop_shell_switch(c,x,y,i==near);if(i!=near)desktop_label(c,x,y+28,"N-SHELL",0x91e9d8u);}
+  if(i==13||i==14){desktop_hatch(c,p->art,x,y,i==near,i==13?"Command center":"Laundry room");continue;}
+  if(i==12){desktop_art(c,ZELL_ART_SWITCH,x,y+22,62);if(i!=near)desktop_label(c,x,y+28,"N-SHELL",0x91e9d8u);}
   if(i==6||i==7)desktop_label(c,x,y+8,i==6?"TUI":"SHELL",0x91e9d8u);
   if(i==near)desktop_label(c,x,y+(i==12?28:8),p->name,0xb9f8dbu);
  }
@@ -158,7 +143,7 @@ static void desktop_base(const zell_scene *s,sr_canvas *c){
   sr_fill_circle(c,(float)(mx+4)+s->x/ZELL_WORLD_W*120,(float)(my+4)+s->y/ZELL_WORLD_H*80,3,0x8af8d4u,1);
  }
  sr_fill_rect(c,0,0,(float)c->w,30,0x0c1921u,.97f);
- sr_text(c,12,7,s->room==1?"ZELL / COMMAND":s->room==2?"ZELL / LAUNDRY":"ZELL / 0.1.0",0xf0d69bu,1,1);
+ sr_text(c,12,7,s->room==1?"ZELL / COMMAND":s->room==2?"ZELL / LAUNDRY":"ZELL / " ZELL_VERSION,0xf0d69bu,1,1);
  char status[100];time_t now=time(NULL);struct tm local;localtime_r(&now,&local);
  snprintf(status,sizeof status,"%02d:%02d  %d fps",local.tm_hour,local.tm_min,s->frame_rate);
  int sw=sr_text_width_in(SR_FONT_FIXED_8X16,status,1);sr_text(c,(float)(c->w-sw-12),7,status,0xa6d9ccu,1,1);
@@ -182,7 +167,7 @@ static void desktop_panel(const zell_scene *s,sr_canvas *c){
  sr_fill_rect(c,0,30,(float)c->w,(float)(c->h-60),0x061017u,.68f);
  sr_fill_rect(c,(float)x,(float)y,(float)width,(float)height,0x10232cu,.98f);
  sr_stroke_rect(c,(float)x,(float)y,(float)width,(float)height,1,0x5b9989u,1);
- desktop_text(c,x+18,y+14,launch?"THE CAVE / QUICK LAUNCH":zell_stations[s->station].name,0xf0d69bu,width-36);
+ desktop_text(c,x+18,y+14,launch?(s->room==1?"COMMAND CENTER / STATIONS":s->room==2?"LAUNDRY / STATIONS":"THE CAVE / QUICK LAUNCH"):zell_stations[s->station].name,0xf0d69bu,width-36);
  char warning[120];snprintf(warning,sizeof warning,"OS upgrade overdue: health %d%%. Choose Update OS.",s->hp);
  desktop_text(c,x+18,y+36,(!launch&&s->station==2&&s->hp>=0&&s->hp<100)?warning:launch?"Every station, without the walk":zell_stations[s->station].role,0x89aaa9u,width-36);
  for(int r=0;r<rows;r++){int i=r+first,yy=y+56+r*26;bool selected=i==s->menu_index;
@@ -247,7 +232,7 @@ static void desktop_terminal_tab(const zell_scene *s,sr_canvas *c){
  sr_stroke_rect(c,(float)l.tab.x,(float)l.tab.y,(float)l.tab.w,(float)l.tab.h,2,0x74b8a9u,1);
  /* A blinking lamp says the command is still running behind the button. */
  sr_fill_rect(c,(float)(l.tab.x+8),(float)(l.tab.y+9),8,8,(s->flame_tick/16)%2?0x7bd88fu:0x2f6b45u,1);
- desktop_text(c,l.tab.x+24,l.tab.y+5,"Neuronte terminal: click",hover?0xf4ffe9u:0xe5cf98u,l.tab.w-30);
+ desktop_text(c,l.tab.x+24,l.tab.y+5,s->terminal_private?"Key Master: click":"Neuronte terminal: click",hover?0xf4ffe9u:0xe5cf98u,l.tab.w-30);
 }
 /* The scene keeps animating beneath every station conversation. */
 static void desktop_service(const zell_scene *s,sr_canvas *c){
@@ -259,10 +244,10 @@ static void desktop_service(const zell_scene *s,sr_canvas *c){
    sr_fill_rect(c,(float)l.frame.x,(float)l.frame.y,(float)l.frame.w,(float)l.frame.h,0x10232cu,1);
    sr_stroke_rect(c,(float)l.frame.x,(float)l.frame.y,(float)l.frame.w,(float)l.frame.h,2,0x74b8a9u,1);
    sr_canvas frame;sr_canvas_wrap(&frame,s->terminal_pixels,w,h);sr_blit_scaled(c,&frame,x,y,w,h,1);
-   desktop_text(c,x,y-23,"ADMIN / INTERACTIVE NEURONTE TERMINAL",0xe5cf98u,w-72);
+   desktop_text(c,x,y-23,s->terminal_private?"KEY MASTER / PRIVATE VAULT":"ADMIN / INTERACTIVE NEURONTE TERMINAL",0xe5cf98u,w-72);
    desktop_button(s,c,&l.minimize,0);
    desktop_button(s,c,&l.maximize,s->terminal_maximized?2:1);
-   desktop_text(c,x,y+h+7,"Type here for sudo | Ctrl-C interrupts command",0xabc8c0u,w);
+   desktop_text(c,x,y+h+7,s->terminal_private?"Hidden secret input | Ctrl-C cancels":"Type here for sudo | Ctrl-C interrupts command",0xabc8c0u,w);
   }else desktop_label(c,c->w/2,c->h/2,"Opening Neuronte terminal...",0xc9e4d5u);
   return;
  }

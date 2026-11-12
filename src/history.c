@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 static int usable_question(const char *text)
@@ -118,6 +119,47 @@ static const char *after_key(const char *text, const char *key)
         found += 1;
     }
     return found;
+}
+
+static void conversation_string(FILE *stream,const char *text)
+{
+    fputc('"',stream);
+    for(const unsigned char *p=(const unsigned char *)text;*p;p++){
+        if(*p=='"'||*p=='\\')fputc('\\',stream);
+        if(*p<32)fprintf(stream,"\\u%04x",(unsigned)*p);
+        else fputc(*p,stream);
+    }
+    fputc('"',stream);
+}
+
+int zell_conversation_save(const char *question,const char *answer)
+{
+    char path[512],settings[128];
+    snprintf(path,sizeof path,"%s",zell_history_state_path());
+    char *name=strrchr(path,'/');name=name?name+1:path;
+    size_t left=sizeof path-(size_t)(name-path);
+    snprintf(name,left,"conversation-settings.json");
+    int fd=open(path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC);
+    if(fd<0)return 0;
+    ssize_t n=read(fd,settings,sizeof settings-1);close(fd);
+    if(n<=0)return 0;
+    settings[n]=0;const char *enabled=after_key(settings,"enabled");
+    if(!enabled||strncmp(enabled,"true",4))return 0;
+    snprintf(name,left,"wizard-conversations.jsonl");
+    fd=open(path,O_WRONLY|O_CREAT|O_APPEND|O_NOFOLLOW|O_CLOEXEC,0600);
+    if(fd<0)return -1;
+    struct stat st;
+    if(fstat(fd,&st)||!S_ISREG(st.st_mode)||st.st_uid!=getuid()||fchmod(fd,0600)){
+        close(fd);return -1;
+    }
+    /* Bounded private journal. Retain the newest cycle at the size limit. */
+    if(st.st_size>1024*1024&&ftruncate(fd,0)){close(fd);return -1;}
+    FILE *stream=fdopen(fd,"a");if(!stream){close(fd);return -1;}
+    fprintf(stream,"{\"station\":10,\"time\":%lld,\"role\":\"wizard\",\"question\":",(long long)time(NULL));
+    conversation_string(stream,question?question:"");
+    fputs(",\"text\":",stream);conversation_string(stream,answer?answer:"");
+    fputs("}\n",stream);
+    return fclose(stream)==0?1:-1;
 }
 
 int zell_history_parse(const char *text, int *enabled,

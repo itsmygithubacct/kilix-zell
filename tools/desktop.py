@@ -351,6 +351,12 @@ def library(action):
         if result.returncode:print(f'Speech failed (status {result.returncode}).')
 
 def notes(action):
+    if action==3:
+        from zell_journal import tasks
+        return tasks(sys.modules[__name__])
+    if action==4:
+        from zell_journal import conversations
+        return conversations(sys.modules[__name__])
     BASE.mkdir(parents=True,exist_ok=True,mode=0o700);path=BASE/'notebook.txt'
     if action==0:return page_text(path.read_text() if path.exists() else 'Your notebook is empty.')
     if action==1:
@@ -382,22 +388,17 @@ def applications():
     if choice:run(['gio','launch',str(choice)])
 
 def neuronte_shell():
-    override=os.environ.get('KILIX_ZELL_NEURONTE_DISPLAY')
-    root=Path(os.environ.get('GPU_TERMINAL_HOME',Path.home()/'.local/gpu_terminal'))
-    candidates=[Path(override).expanduser()] if override else [
-        Path(__file__).resolve().parents[3]/'kilix-modules/neuronte-display/neuronte_display.py',
-        root/'kilix-modules/neuronte-display/neuronte_display.py',
-        Path(os.environ.get('GPU_TERMINAL_SOURCE_HOME',Path.home()/'gpu_terminal'))/'kilix-modules/neuronte-display/neuronte_display.py',
-        Path.home()/'gpu_terminal/kilix-modules/neuronte-display/neuronte_display.py']
-    script=next((p for p in candidates if p.is_file() and (p.parent/'build/libneuronte-display.so').is_file()),None)
-    if script is None or not (script.parent/'build/libneuronte-display.so').is_file():
-        print('Neuronte terminal is unavailable. Build kilix-modules/neuronte-display, '
-              'or set KILIX_ZELL_NEURONTE_DISPLAY to its neuronte_display.py.');return
+    try:
+        display=zell_terminal.load_display()
+        if not (Path(display.__file__).parent/'build/libneuronte-display.so').is_file():
+            raise RuntimeError('Neuronte presenter is missing.')
+    except (RuntimeError, ImportError, OSError):
+        return page_text('Neuronte terminal is unavailable. Install the complete Zell runtime payload.')
     shell=os.environ.get('SHELL') or '/bin/bash'
     if not Path(shell).is_file() or not os.access(shell,os.X_OK):shell='/bin/sh'
     print('Neuronte shell: Ctrl-A then q exits; Ctrl-A then n opens a terminal tab. '
           'Return to the cave tab to continue walking.')
-    return open_tab([sys.executable,str(script),'--',shell,'-i'],title='Zell / Neuronte shell')
+    return open_tab([sys.executable,str(Path(__file__).with_name('zell_shell.py')),'--',shell,'-i'],title='Zell / Neuronte shell')
 
 
 LAST_VITALS=None
@@ -420,6 +421,9 @@ def vitals_snapshot():
 
 
 def desktop(station,action):
+    if station==31:
+        from zell_secrets import hub
+        return hub(sys.modules[__name__])
     if station==-1:
         ui=sys.modules[__name__]
         while True:
@@ -432,6 +436,8 @@ def desktop(station,action):
                 used=disk.get('used_percent');percent=round(used) if isinstance(used,(int,float)) else -1
                 label=disk['label'] if index<7 or len(drives)<=8 else 'More drives (Enter)'
                 DIALOGUE.send('B',f'{percent} {label}')
+            for index,screen in enumerate(zell_rooms.previews(ui)):
+                DIALOGUE.send('S',f"{index} {screen['status']}\n{screen['text']}")
             time.sleep(5)
     if station==29:return zell_projects.hub(sys.modules[__name__])
     if station==30:return zell_rooms.pilot(sys.modules[__name__])
@@ -474,8 +480,11 @@ if __name__=='__main__':
         DIALOGUE=Dialogue();DIALOGUE.install()
     try:
         station,action=map(int,sys.argv[1:3])
+        if DIALOGUE:
+            from zell_journal import recorder
+            DIALOGUE.record=recorder(sys.modules[__name__],station)
         zell_debug.log('helper.start',station=station,action=action,dialogue=bool(DIALOGUE))
-        if not DIALOGUE:print('\033[2J\033[H'+'ZELL NEURONTE 0.1.0 / DESKTOP SERVICES\n')
+        if not DIALOGUE:print('\033[2J\033[H'+'ZELL NEURONTE 0.1.1 / DESKTOP SERVICES\n')
         desktop(station,action)
         zell_debug.log('helper.done')
     except (EOFError,KeyboardInterrupt):zell_debug.log('helper.cancelled')

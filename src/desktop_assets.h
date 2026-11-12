@@ -1,7 +1,15 @@
 #ifndef ZELL_DESKTOP_ASSETS_H
 #define ZELL_DESKTOP_ASSETS_H
 #include <stdint.h>
-#define ZELL_ART_COUNT 33
+enum {
+ ZELL_ART_COMMAND_ROOM=33, ZELL_ART_LAUNDRY_ROOM,
+ ZELL_ART_COMMAND_HATCH, ZELL_ART_LAUNDRY_HATCH,
+ ZELL_ART_COMMAND_STAIRS, ZELL_ART_LAUNDRY_STAIRS,
+ ZELL_ART_CONTROLLER, ZELL_ART_WORKER, ZELL_ART_BIN, ZELL_ART_SWITCH,
+ ZELL_ART_GIT_IDLE, ZELL_ART_PILOT_IDLE=ZELL_ART_GIT_IDLE+4,
+ ZELL_ART_KEY_MASTER_IDLE=ZELL_ART_PILOT_IDLE+4,
+ ZELL_ART_COUNT=ZELL_ART_KEY_MASTER_IDLE+4
+};
 /* Premultiplied ARGB, already filtered to the fixed world display size. */
 typedef struct { int width, height; uint32_t *pixels; } zell_art;
 const zell_art *zell_art_get(int id);

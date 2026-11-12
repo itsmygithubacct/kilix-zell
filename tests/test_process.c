@@ -74,6 +74,20 @@ static void test_terminal_transport(zell_scene *scene){
     service_stop(&service);
     assert(read(ready[0],&mark,1)==1&&mark=='G');close(ready[0]);
     assert(waitpid(child,NULL,WNOHANG)==-1&&errno==ECHILD);
+
+    /* Navigating through a hatch while minimized must not lose the private
+     * terminal's cleanup policy when the original station ID changes. */
+    int output[2];assert(pipe(output)==0);
+    child=fork();assert(child>=0);
+    if(!child){close(output[0]);close(output[1]);_exit(0);}
+    close(output[1]);fcntl(output[0],F_SETFL,O_NONBLOCK);
+    service=(desktop_service){.pid=child,.in_fd=-1,.out_fd=output[0],.frame_fd=-1,.sensitive=true};
+    scene->station=13;scene->terminal_private=true;scene->terminal_minimized=true;
+    scene->terminal_pixels=calloc(1200u*640u,4);assert(scene->terminal_pixels);
+    strcpy(scene->service_reply,"K6162\n");strcpy(scene->service_input,"synthetic");
+    for(int attempt=0;attempt<100&&service.pid>0;attempt++){service_pump(&service,scene);usleep(10000);}
+    assert(service.pid==0&&!scene->terminal_pixels&&!scene->terminal_minimized);
+    assert(!scene->service_reply[0]&&!scene->service_input[0]);
 }
 
 int main(void)

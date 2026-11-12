@@ -14,8 +14,8 @@ MODEL = 'gpt-6-astra'
 PROMPT_LIMIT = 1024  # kilix agent-control: 1-1024 UTF-8 bytes, one line
 
 
-def _command(args):
-    result = subprocess.run(['kilix', *args], capture_output=True, text=True, timeout=45)
+def _command(args, timeout=45):
+    result = subprocess.run(['kilix', *args], capture_output=True, text=True, timeout=timeout)
     if result.returncode:
         raise RuntimeError((result.stderr or result.stdout or 'Kilix request failed').strip()[:4000])
     return result.stdout
@@ -30,6 +30,50 @@ def _control(*args):
 
 def _snapshot():
     return _control('list')
+
+
+def previews(ui):
+    """Bounded, read-only previews of receipt-bound coding sessions.
+
+    Never persist screen text or infer that a quiet agent has completed work.
+    Revalidate identity after capture before returning anything to the room.
+    """
+    state = _state(ui)
+    rows = [dict(status='No assigned session', text='Click to start a session') for _ in range(5)]
+    if not state['screens']:
+        return rows
+    try:
+        snapshot = json.loads(_command(['agent-control', 'list'], timeout=2))
+        if not isinstance(snapshot, dict):
+            raise ValueError('Invalid session snapshot')
+        captured = []
+        for i in range(5):
+            pane = _live(state['screens'].get(str(i)), snapshot)
+            if not pane:
+                rows[i] = dict(status='Session closed', text='Click to start a new session')
+                continue
+            if pane.get('agent') != 'codex':
+                rows[i] = dict(status='Client not verified', text='Focus the tab to inspect it')
+                continue
+            try:
+                output = _command(['agent-control', 'dump', str(pane['pane_id']), '--lines', '8'], timeout=2)
+                text = '\n'.join(''.join(c for c in line if c.isprintable())[:100]
+                                 for line in output.splitlines()[-6:])[:1100]
+                captured.append((i, pane, text))
+            except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired):
+                rows[i] = dict(status='Preview unavailable', text='Click to inspect the session')
+        fresh = json.loads(_command(['agent-control', 'list'], timeout=2))
+        if not isinstance(fresh, dict):
+            raise ValueError('Invalid session snapshot')
+        for i, pane, text in captured:
+            current = _live(pane, fresh)
+            if current and current.get('agent') == 'codex':
+                rows[i] = dict(status=f"Tab {pane['tab_id']} / live screen", text=text)
+            else:
+                rows[i] = dict(status='Session changed', text='Refresh before opening this session')
+    except (OSError, RuntimeError, ValueError, TypeError, subprocess.TimeoutExpired):
+        rows = [dict(status='Preview unavailable', text='Click to inspect the session') for _ in range(5)]
+    return rows
 
 
 def _identity(pane):
@@ -249,7 +293,7 @@ def screen(ui, index):
         options = [('Focus session', 'focus')] if pane else [('Start Codex session', 'start')]
         options += [('Session status', 'status')]
         if index == 0:
-            options += [('List four workers', 'workers'), ('Send a task to a worker', 'dispatch')]
+            options += [('List four workers', 'workers'), ('Send a task to a worker', 'dispatch'), ('Task board', 'tasks')]
         action = ui.choose(f'{title} — {status}', options)
         if action == 'start':
             _start(ui, index, state, snapshot)
@@ -266,6 +310,9 @@ def screen(ui, index):
                  if (p := _live(state['screens'].get(str(i)), snapshot)) else 'not running') for i in range(1, 5)))
         elif action == 'dispatch':
             _dispatch(ui, state)
+        elif action == 'tasks':
+            from zell_journal import tasks
+            tasks(ui)
     except (OSError, RuntimeError, ValueError, TypeError, subprocess.TimeoutExpired) as error:
         ui.page_text(f'Command Center: {error}\nNo automatic retry was attempted.')
 

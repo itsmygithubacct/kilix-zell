@@ -24,6 +24,29 @@ class RoomsTests(unittest.TestCase):
         self.run_patch.start()
         self.addCleanup(self.run_patch.stop)
 
+    def test_live_preview_is_bounded_and_receipt_revalidated(self):
+        self.ui.state_read.return_value = {'screens': {'0': pane(2)}}
+        snapshot = json.dumps({'panes': [pane(2)]})
+        with patch.object(rooms, '_command', side_effect=[snapshot, 'x'*10000, snapshot]) as command:
+            rows = rooms.previews(self.ui)
+        self.assertIn('live screen', rows[0]['status'])
+        self.assertLessEqual(len(rows[0]['text']), 1100)
+        self.assertTrue(all(c.kwargs['timeout'] == 2 for c in command.call_args_list))
+        self.ui.state_write.assert_not_called()
+        changed = json.dumps({'panes': [dict(pane(2), broker='recycled') ]})
+        with patch.object(rooms, '_command', side_effect=[snapshot, 'screen contents', changed]):
+            rows = rooms.previews(self.ui)
+        self.assertEqual(rows[0]['status'], 'Session changed')
+        self.assertNotIn('screen contents', str(rows))
+
+    def test_unverified_clients_are_never_captured(self):
+        self.ui.state_read.return_value = {'screens': {'0': pane(2)}}
+        snapshot = json.dumps({'panes': [pane(2, 'shell')]})
+        with patch.object(rooms, '_command', return_value=snapshot) as command:
+            rows = rooms.previews(self.ui)
+        self.assertEqual(rows[0]['status'], 'Client not verified')
+        self.assertFalse(any('dump' in c.args[0] for c in command.call_args_list))
+
     def test_launch_saves_exact_receipt_and_uses_own_tab(self):
         self.ui.choose.return_value = 'start'
         responses = [dict(caller_pane=1, panes=[pane(1)]), dict(status='created', pane=pane(8))]

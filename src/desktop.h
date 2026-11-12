@@ -1,10 +1,10 @@
 #ifndef ZELL_DESKTOP_H
 #define ZELL_DESKTOP_H
 #include "scene.h"
-#define ZELL_VERSION "0.1.0"
+#define ZELL_VERSION "0.1.1"
 #define ZELL_WORLD_W 1536
 #define ZELL_WORLD_H 1024
-#define ZELL_STATIONS 31
+#define ZELL_STATIONS 32
 #define ZELL_CAVE_STATIONS 15
 #define ZELL_RUN_CHARGE_TICKS 24
 #define ZELL_WALK_SPEED 3.5f
@@ -14,7 +14,7 @@
 #define ZELL_MODE_SERVICE 8
 typedef struct { const char *name, *role; float x,y; int art; } zell_station;
 typedef struct { int art, offset_x, offset_y; } zell_actor_pose;
-/* actor -1 is Kilix; 0..5 are the staff. Shadows remain floor-anchored. */
+/* actor -1 is Kilix; 0..5 are cave staff, 6/7 Git Wizard/Pilot. */
 zell_actor_pose zell_desktop_pose(const zell_scene *s, int actor);
 extern const zell_station zell_stations[ZELL_STATIONS];
 void zell_desktop_camera(const zell_scene *s, int *x, int *y);
@@ -28,6 +28,9 @@ int zell_desktop_launcher_station(const zell_scene *s,int index);
 int zell_desktop_actions(int station);
 /* Floating terminal window. The same rectangles are drawn and hit-tested. */
 typedef struct { int x, y, w, h; } zell_rect;
+/* World-space monitor geometry shared by drawing, collision and picking. */
+void zell_monitor_layout(int screen,zell_rect *frame,zell_rect *display);
+bool zell_desktop_click(zell_scene *s);
 typedef struct { zell_rect frame, image, minimize, maximize, tab; } zell_terminal_layout;
 void zell_terminal_layout_for(const zell_scene *s,int width,int height,zell_terminal_layout *out);
 void zell_terminal_cells(const zell_scene *s,int *cols,int *rows);

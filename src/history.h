@@ -14,6 +14,8 @@ typedef struct zell_history_call {
 } zell_history_call;
 
 const char *zell_history_state_path(void);
+/* Full replies are stored only after the notebook's separate opt-in. */
+int zell_conversation_save(const char *question, const char *answer);
 
 /* 1 when the file was read, 0 when it is missing, -1 when it is unusable.
  * Missing and unusable leave enabled off and count at 0. */

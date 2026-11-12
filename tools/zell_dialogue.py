@@ -9,6 +9,7 @@ class Dialogue:
         self.reader=reader or sys.stdin
         self.writer=writer or sys.stdout
         self.pending_output=False
+        self.record=None
 
     def send(self, kind, text=''):
         # Keep terminal controls out of the renderer and bound every wire frame.
@@ -25,9 +26,11 @@ class Dialogue:
         self.send('P',prompt)
         reply=self.reply()
         if reply=='\x1b':raise KeyboardInterrupt
+        if self.record:self.record('reply',str(prompt)+'\n'+reply)
         return reply
 
     def page(self, text):
+        if self.record:self.record('report',text)
         self.send('C')
         # Reports use the same bounded history as command output.
         text=str(text)
@@ -65,7 +68,9 @@ class Dialogue:
             if reply=='\x1b':return None
             try:operation,value=options[int(reply)][1]
             except (ValueError,IndexError):continue
-            if operation=='item':return value
+            if operation=='item':
+                if self.record:self.record('choice',title+' / '+options[int(reply)][0])
+                return value
             if operation=='next':page+=32
             elif operation=='previous':page=max(0,page-32)
             else:
