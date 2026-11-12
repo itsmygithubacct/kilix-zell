@@ -236,7 +236,8 @@ library; `KILIX_ZELL_NEURONTE_DISPLAY` and `ZELL_NEURONTE_LIBRARY` can select th
 
 ### Downstairs rooms
 
-Two floor hatches lead to the **Command Center** and **Laundry**. Enter interacts;
+Four floor hatches lead to the **Command Center**, **Laundry**, **Vault**, and
+**Workshop**. Enter interacts;
 the downstairs stair hatch returns to the cave. Tab lists the current room's
 stations. Five command-center screens bind to real Kilix coding tabs, with exact
 broker identities saved after successful creation. Interacting opens/focuses the
@@ -306,10 +307,74 @@ contents are always excluded. Tasks and history use owner-only files in Zell's
 state directory. Reports can include personal information.
 
 The Neuronte shell follows later pane resizes and preserves its running PTYs.
-Generated Command Center/Laundry backgrounds, hatches, stairs, monitor frames,
-drive bins and animated Git Wizard, Pilot and Key Master sprites are under
+Generated room backgrounds, hatches, stairs, monitor frames, drive bins and
+four-frame character animations are under
 `assets/v0.1.1/`, with their image-generation prompts. `tools/compile_desktop.py`
 compiles premultiplied cutouts for both renderers.
+
+### Operating-system staff
+
+| Character | Tasks |
+|---|---|
+| Gatekeeper | Lock, suspend, restart, shutdown, logout, battery, inhibitors, restart checks and power profiles |
+| Signalman | Wi-Fi, VPN, Bluetooth, connection tests, radio control, listening ports and saved SSH hosts |
+| Porter | Copy/move, rename, folders, trash/restore, archives, file searches, duplicates, permissions and default applications |
+| Laundress | Attached drives, mount/unmount/eject, SMART health, removable image writing, formatting and folder usage |
+| Merchant | Debian packages, previews, holds, Kilix applications, model inventory/download/removal and package history |
+| Herald | Notices, running jobs, cancellation, attention reports and quiet hours |
+| Timekeeper | Timers, alarms, reminders, persistent user timers, time zones and clock synchronization |
+| Sentinel | Password changes, logins, security updates, automatic upgrades, firewall reports, public SSH keys and exposed files |
+| Vault Keeper | Folder backups, checksum verification, restore, settings export/import and scheduled backups |
+| Tinkerer | Displays, sound devices, microphone checks, printers, keyboard, sensors, webcam, screenshots and brightness |
+
+Administrator owns system and user services, language/region and font settings;
+Housekeeper also handles process stopping and startup applications. Noticeboard
+offers explicit clipboard capture into the encrypted vault. It does not watch
+or retain the clipboard automatically. Wizard offers a first-run tour.
+
+Press Tab and type an action name to search across every room. New system tasks
+run in private floating terminals. Commands use argument lists; secrets stay
+out of station history. Changes show their targets and require a typed word.
+Missing programs name the package to install using Merchant. Password and
+privileged tools keep their normal interactive authentication prompts.
+
+Wi-Fi credentials are saved through Key Master, then supplied to NetworkManager
+in a sealed memory descriptor. Zell-created profiles do not save passwords;
+reconnect through Signalman with a vault record. The Wi-Fi form supports WPA2,
+WPA3 personal and open networks; enterprise authentication needs NetworkManager.
+The protocol follows the [NetworkManager CLI](https://networkmanager.pages.freedesktop.org/NetworkManager/NetworkManager/nmcli.html).
+
+Backups create a new snapshot on each run, keep previous copies, and verify
+source/destination contents with checksums. Schedules record the source and
+destination filesystem identities and refuse a missing or replaced drive.
+Restore uses a new destination. Archive extraction refuses traversal,
+links and special files, and only writes into a new folder. Drive destruction
+requires an unmounted removable/USB disk with a stable serial identity; the
+device is rechecked in the privileged worker. Display changes revert after 20
+seconds unless kept. The Health bar flags pending kernel or NVIDIA-module restarts.
+
+Timekeeper uses persistent [systemd user timers](https://www.freedesktop.org/software/systemd/man/latest/systemd.timer.html).
+They run while the user service manager is available and catch up missed times
+at login. Scheduled command arguments are explicit; shell expansion is disabled.
+Herald retains 200 notices and verifies process identity before cancelling a job.
+The RC9 image includes the station tools; additional direct dependencies are
+`upower`, `bluez`, `scrot`, `brightnessctl`, `power-profiles-daemon`, `nftables`
+and `wtmpdb`. Existing audio uses PulseAudio-compatible device controls.
+
+### Three audio switches
+
+Click the three levers below the map: **Voice**, **Dictation**, **Music**.
+Voice enables Wizard speech. Dictation records one utterance through Kilix;
+click again to finish, then edit the recognized words and press Enter to send.
+It never submits automatically. Green indicators show the active states.
+
+The music switch pauses/resumes music. DJ playback pauses Zell's background
+track and clears mute, including Play in the DJ's player window. Muting pauses
+the DJ; unmuting resumes it. When the DJ stops, background music resumes unless
+muted. The DJ has a dedicated Amp service, so these controls do not affect other
+players or system volume. Choose a local background track under DJ > Zell
+background music; no track is selected by default. Speech and dictation are
+independent of music mute.
 
 ### Weather on the wall map
 

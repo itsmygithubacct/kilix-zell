@@ -2,6 +2,7 @@
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
+#include <ctype.h>
 #include "draw.h"
 #include "desktop_assets.h"
 const zell_station zell_stations[ZELL_STATIONS]={
@@ -15,7 +16,7 @@ const zell_station zell_stations[ZELL_STATIONS]={
  {"Kilix shell","A full interactive shell",.90f,.53f,12},
  {"Wall map","Applications and places",.10f,.32f,14},
  {"Noticeboard","Notes and tasks",.90f,.40f,15},
- {"Voice","Toggle the wizard's voice",.10f,.39f,16},
+ {"Voice switch","Toggle the wizard's spoken answers",.064f,.34f,16},
  {"Wall clock","Time and system health",.88f,.32f,13},
  {"Neuronte shell switch","Neural terminal / behind the shell computer",.90f,.42f,ZELL_ART_SWITCH},
  {"Command center hatch","Five connected coding screens downstairs",.30f,.65f,ZELL_ART_COMMAND_HATCH},
@@ -36,18 +37,32 @@ const zell_station zell_stations[ZELL_STATIONS]={
  {"Stairs to the cave","Return upstairs",.50f,.91f,ZELL_ART_COMMAND_STAIRS},
  {"Git Wizard","Projects, changes and health watches",.36f,.72f,ZELL_ART_GIT_IDLE},
  {"Pilot","Project fleets and session arrangements",.64f,.72f,ZELL_ART_PILOT_IDLE},
- {"Key Master","API keys, logins and encrypted secrets",.50f,.72f,ZELL_ART_KEY_MASTER_IDLE}
+ {"Key Master","API keys, logins and encrypted secrets",.50f,.72f,ZELL_ART_KEY_MASTER_IDLE},
+ {"Gatekeeper","Power, sessions and restart checks",.41f,.88f,ZELL_ART_CIVIC_IDLE},
+ {"Signalman","Wi-Fi, connections and Bluetooth",.20f,.51f,ZELL_ART_CIVIC_IDLE+4},
+ {"Porter","Files, trash and archives",.36f,.86f,ZELL_ART_CRAFT_IDLE},
+ {"Laundress","Drives, removable media and health",.64f,.86f,ZELL_ART_CRAFT_IDLE+4},
+ {"Merchant","Packages, Kilix apps and local models",.36f,.43f,ZELL_ART_CIVIC_IDLE+8},
+ {"Herald","Notices, jobs and attention",.80f,.49f,ZELL_ART_CIVIC_IDLE+12},
+ {"Timekeeper","Timers, reminders and scheduled work",.81f,.34f,ZELL_ART_CRAFT_IDLE+8},
+ {"Sentinel","Accounts, updates and security",.59f,.88f,ZELL_ART_CIVIC_IDLE+16},
+ {"Vault Keeper","Backups, verification and restore",.50f,.55f,ZELL_ART_CRAFT_IDLE+12},
+ {"Tinkerer","Displays, sound, printers and devices",.50f,.55f,ZELL_ART_CRAFT_IDLE+16},
+ {"Vault hatch","Backups and restore downstairs",.38f,.73f,ZELL_ART_VAULT_HATCH},
+ {"Workshop hatch","Device workshop downstairs",.62f,.62f,ZELL_ART_WORKSHOP_HATCH},
+ {"Dictation switch","Listen once; review words before sending",.078f,.34f,16},
+ {"Music mute switch","Pause or resume the DJ and room music",.092f,.34f,16}
 };
-static const char *const actions[ZELL_STATIONS][9]={
- {"Ask the wizard",NULL},
+static const char *const actions[ZELL_STATIONS][17]={
+ {"Ask the wizard","First-run tour of Zell",NULL},
  {"System journal","User service journal","Boot warnings","Browse agent rollouts","Browse Kilix transcripts","Search a log","Open another log",NULL},
- {"Kilix settings","Install a package","Installed packages","Services","Network status","GPU and model settings","Update OS in floating terminal","Health, fatigue and mana",NULL},
- {"System health report","Disk usage","Largest home folders","Preview and clean old thumbnails","Process monitor","Clean downloaded package cache",NULL},
- {"Open Kilix Amp","Play a file or URL","Playlists and creators","Follow a creator or playlist","Volume controls","Transcribe media","Transcripts and jobs","Music library on disk",NULL},
+ {"Kilix settings","Software and models (Merchant)","Language, region and font size","System and user services","Connections (Signalman)","GPU and model settings","Update OS in floating terminal","Health, fatigue and mana",NULL},
+ {"System health report","Disk usage","Largest home folders","Preview and clean old thumbnails","Process monitor","Clean downloaded package cache","Stop one of my processes","Startup applications",NULL},
+ {"Open Kilix Amp","Play a file or URL","Playlists and creators","Follow a creator or playlist","Volume controls","Transcribe media","Transcripts and jobs","Music library on disk","Zell background music",NULL},
  {"Books and documents library","Find a document","OCR an image","OCR a PDF","Read text aloud","Document converter","Export a text audiobook","How to find and add files",NULL},
  {"Open Kilix TUI",NULL}, {"Open Kilix shell",NULL},
- {"Application launcher","Home folder","Downloads","Web browser","Weather on the map",NULL},
- {"Read notebook","Add a note","Edit notebook","Task board","Station conversations",NULL},
+ {"Application launcher","Home folder","Downloads","Web browser","Weather on the map","Screenshot or screen region capture",NULL},
+ {"Read notebook","Add a note","Edit notebook","Task board","Station conversations","Encrypted clipboard history",NULL},
  {"Toggle voice",NULL}, {"Time and calendar","System health report","Check coding-token mana",NULL},
  {"Switch to Neuronte shell",NULL},
  {"Go down to command center",NULL}, {"Go down to laundry room",NULL},
@@ -56,26 +71,51 @@ static const char *const actions[ZELL_STATIONS][9]={
  {"Dig through drive",NULL}, {"Dig through drive",NULL}, {"Dig through drive",NULL}, {"Dig through drive",NULL},
  {"Return to the cave",NULL},
  {"Projects and Git health",NULL}, {"Launch a project fleet",NULL},
- {"Open the secret vault",NULL}
+ {"Open the secret vault",NULL},
+#include "os_tasks.inc"
+ [42]={"Go down to the Vault",NULL}, [43]={"Go down to the Workshop",NULL},
+ [44]={"Start / finish dictation",NULL}, [45]={"Pause / resume music",NULL}
 };
 int zell_desktop_actions(int station){int n=0;
  if(station<0||station>=ZELL_STATIONS)return 0;
- while(n<8&&actions[station][n])n++;
+ while(n<16&&actions[station][n])n++;
  return n;}
 const char *zell_desktop_action(int station,int index){return index>=0&&index<zell_desktop_actions(station)?actions[station][index]:"";}
 void zell_desktop_init(zell_scene *s){s->desktop=true;s->x=(float)ZELL_WORLD_W*.51f;s->y=(float)ZELL_WORLD_H*.48f;s->station=0;s->desktop_launch=false;s->hp=100;s->max_hp=100;s->fatigue=100;s->mana=-1;s->update_age_days=-1;s->mana_age=-1;s->os_health=-1;s->dirty_files=0;}
 bool zell_desktop_station_visible(const zell_scene *s,int station){
- if(s->room==0)return station<ZELL_CAVE_STATIONS;
+ if(s->room==0)return station<ZELL_CAVE_STATIONS||station==32||station==33||(station>=36&&station<=39)||station>=42;
  if(station==28)return true;
- return s->room==1?((station>=15&&station<=19)||station>=29):(station>=20&&station<20+s->disk_count);
+ if(s->room==1)return (station>=15&&station<=19)||(station>=29&&station<=31);
+ if(s->room==2)return (station>=20&&station<20+s->disk_count)||station==34||station==35;
+ return (s->room==3&&station==40)||(s->room==4&&station==41);
+}
+static bool contains_folded(const char *haystack,const char *needle){
+ for(;*haystack;haystack++){size_t i=0;while(needle[i]&&haystack[i]&&tolower((unsigned char)haystack[i])==tolower((unsigned char)needle[i]))i++;if(!needle[i])return true;}
+ return !*needle;
+}
+static int launcher_entry(const zell_scene *s,int index,int *action){
+ bool search=s->launcher_query[0]!=0;int count=0;
+ for(int station=0;station<ZELL_STATIONS;station++){
+  if(!search){if(!zell_desktop_station_visible(s,station))continue;if(count++==index){if(action)*action=-1;return station;}continue;}
+  for(int a=0;a<zell_desktop_actions(station);a++){
+   if(!contains_folded(zell_stations[station].name,s->launcher_query)&&!contains_folded(actions[station][a],s->launcher_query))continue;
+   if(count++==index){if(action)*action=a;return station;}
+  }
+ }
+ return index<0?count:-1;
 }
 int zell_desktop_launcher_count(const zell_scene *s){
- int count=0;for(int i=0;i<ZELL_STATIONS;i++)if(zell_desktop_station_visible(s,i))count++;
- return count;
+ return launcher_entry(s,-1,NULL);
 }
 int zell_desktop_launcher_station(const zell_scene *s,int index){
- for(int i=0;i<ZELL_STATIONS;i++)if(zell_desktop_station_visible(s,i)&&index--==0)return i;
- return 0;
+ return launcher_entry(s,index,NULL);
+}
+int zell_desktop_launcher_action(const zell_scene *s,int index){int action=-1;launcher_entry(s,index,&action);return action;}
+void zell_desktop_launcher_label(const zell_scene *s,int index,char *text,size_t capacity){
+ int action=-1,station=launcher_entry(s,index,&action);
+ if(station<0){snprintf(text,capacity,"No matching actions");return;}
+ if(action<0)snprintf(text,capacity,"%s",zell_stations[station].name);
+ else snprintf(text,capacity,"%s / %s",zell_stations[station].name,actions[station][action]);
 }
 float zell_desktop_speed_factor(const zell_scene *s){
  int reserve=s->hp<0?100:s->hp;
@@ -96,12 +136,14 @@ int zell_desktop_near(const zell_scene *s) {
  return best;
 }
 static void open_station(zell_scene *s,int n){s->running=false;s->run_charge=0;s->run_blocked=true;s->station=n;s->menu_index=0;s->menu_hold=0;
- if(n==13||n==14||n==28){
-  if(n==28){int hatch=s->room==1?13:14;s->room=0;s->x=zell_stations[hatch].x*ZELL_WORLD_W;s->y=zell_stations[hatch].y*ZELL_WORLD_H+50;}
-  else {s->room=n==13?1:2;s->x=ZELL_WORLD_W*.50f;s->y=ZELL_WORLD_H*.80f;}
+ if(n==13||n==14||n==28||n==42||n==43){
+  if(n==28){int hatch=s->room==1?13:s->room==2?14:s->room==3?42:43;s->room=0;s->x=zell_stations[hatch].x*ZELL_WORLD_W;s->y=zell_stations[hatch].y*ZELL_WORLD_H+50;}
+  else {s->room=n==13?1:n==14?2:n==42?3:4;s->x=ZELL_WORLD_W*.50f;s->y=ZELL_WORLD_H*.80f;}
   s->mode=ZELL_MODE_WALK;s->step_ticks=0;s->desktop_launch=false;return;
  }
- if(n==0){s->mode=ZELL_MODE_QUESTION;s->question_len=0;s->question[0]=0;}else if(n==10){s->voice_on=!s->voice_on;s->voice_changed=true;s->mode=ZELL_MODE_WALK;}else {s->mode=ZELL_MODE_DESK;if(n==12||n>=15)s->desktop_launch=true;}}
+ if(n==10){s->voice_on=!s->voice_on;s->voice_changed=true;s->mode=ZELL_MODE_WALK;}
+ else if(n==44){s->dictation_on=!s->dictation_on;s->dictation_changed=true;s->mode=ZELL_MODE_WALK;}
+ else {s->mode=ZELL_MODE_DESK;if(n==12||(n>=15&&n<=31)||n==45)s->desktop_launch=true;}}
 int zell_desktop_tick(zell_scene *s,const zell_controls *c){
  if(!s->desktop)return 0;
  if(!c->run){s->running=false;s->run_charge=0;s->run_blocked=false;}
@@ -132,7 +174,7 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
   }
   return 1;
  }
- if(c->launcher&&s->mode!=ZELL_MODE_WAIT){s->running=false;s->run_charge=0;s->run_blocked=c->run;s->mode=s->mode==ZELL_MODE_LAUNCHER?ZELL_MODE_WALK:ZELL_MODE_LAUNCHER;s->menu_index=0;s->menu_hold=0;return 1;}
+ if(c->launcher&&s->mode!=ZELL_MODE_WAIT){s->running=false;s->run_charge=0;s->run_blocked=c->run;s->mode=s->mode==ZELL_MODE_LAUNCHER?ZELL_MODE_WALK:ZELL_MODE_LAUNCHER;s->menu_index=0;s->menu_hold=0;s->launcher_query[0]=0;return 1;}
  if(s->mode==ZELL_MODE_WALK){
   float dx=(float)c->move_x,dy=(float)c->move_y;
   float d=sqrtf(dx*dx+dy*dy),speed=ZELL_WALK_SPEED;
@@ -166,8 +208,8 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
     if(nx>.865f){s->x=(float)ZELL_WORLD_W*.865f;blocked=true;}
     if(ny<.32f){s->y=(float)ZELL_WORLD_H*.32f;blocked=true;}
     if(ny>.91f&&(s->room!=0||nx<.44f||nx>.56f)){s->y=(float)ZELL_WORLD_H*.91f;blocked=true;}
-    for(int i=0;i<(s->room==0?6:ZELL_STATIONS);i++){
-     if(s->room!=0&&(!zell_desktop_station_visible(s,i)||i==28))continue;
+    for(int i=0;i<ZELL_STATIONS;i++){
+     if(!zell_desktop_station_visible(s,i)||i==28||(s->room==0&&i>=6&&!(i>=32&&i<=41)))continue;
      float ax=s->x-zell_stations[i].x*ZELL_WORLD_W,ay=s->y-zell_stations[i].y*ZELL_WORLD_H;
      if(ax*ax+ay*ay<26*26){s->x=oldx;s->y=oldy;blocked=true;break;}
     }
@@ -188,10 +230,20 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
   return 1;
  }
  if(s->mode!=ZELL_MODE_DESK&&s->mode!=ZELL_MODE_LAUNCHER)return 0;
+ if(s->mode==ZELL_MODE_LAUNCHER){
+  size_t len=strlen(s->launcher_query);bool changed=false;
+  if(c->backspace&&len){s->launcher_query[--len]=0;changed=true;}
+  if(c->character>=32&&c->character<=126&&len+1<sizeof s->launcher_query){s->launcher_query[len]=(char)c->character;s->launcher_query[len+1]=0;changed=true;}
+  if(changed)s->menu_index=0;
+ }
  int count=s->mode==ZELL_MODE_LAUNCHER?zell_desktop_launcher_count(s):zell_desktop_actions(s->station);
  if(c->cancel){s->mode=ZELL_MODE_WALK;return 1;}
- if(c->move_y&&s->menu_hold==0){s->menu_index=(s->menu_index+c->move_y+count)%count;s->menu_hold=9;}else if(s->menu_hold>0)s->menu_hold--;
- if(c->confirm){if(s->mode==ZELL_MODE_LAUNCHER)open_station(s,zell_desktop_launcher_station(s,s->menu_index));else s->desktop_launch=true;}
+ if(c->move_y&&s->menu_hold==0&&count){s->menu_index=(s->menu_index+c->move_y+count)%count;s->menu_hold=9;}else if(s->menu_hold>0)s->menu_hold--;
+ if(c->confirm&&count){
+  if(s->mode==ZELL_MODE_LAUNCHER){int a=zell_desktop_launcher_action(s,s->menu_index),station=zell_desktop_launcher_station(s,s->menu_index);open_station(s,station);if(a>=0&&s->mode==ZELL_MODE_DESK){s->menu_index=a;s->desktop_launch=true;}}
+  else s->desktop_launch=true;
+  if(s->station==0&&s->menu_index==0&&s->desktop_launch){s->desktop_launch=false;s->mode=ZELL_MODE_QUESTION;s->question_len=0;s->question[0]=0;}
+ }
  return 1;
 }
 
@@ -262,8 +314,13 @@ void zell_monitor_layout(int screen,zell_rect *frame,zell_rect *display){
  *display=(zell_rect){frame->x+w*11/100,frame->y+h*(screen==0?26:15)/100,w*78/100,h*(screen==0?52:62)/100};
 }
 bool zell_desktop_click(zell_scene *s){
- if(!s->desktop||!s->mouse_valid||!s->mouse_click||s->mode!=ZELL_MODE_WALK||s->room!=1)return false;
+ if(!s->desktop||!s->mouse_valid||!s->mouse_click||s->mode!=ZELL_MODE_WALK)return false;
  int cx,cy;zell_desktop_camera(s,&cx,&cy);
+ if(s->room==0){
+  const int ids[3]={10,44,45};
+  for(int i=0;i<3;i++){zell_rect hit={88+i*21-cx,298-cy,21,77};if(rect_holds(&hit,s->mouse_x,s->mouse_y)){s->mouse_click=false;open_station(s,ids[i]);return true;}}
+ }
+ if(s->room!=1)return false;
  for(int i=0;i<5;i++){
   zell_rect frame,display;zell_monitor_layout(i,&frame,&display);
   if(rect_holds(&frame,s->mouse_x+cx,s->mouse_y+cy)){s->mouse_click=false;open_station(s,15+i);return true;}

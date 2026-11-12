@@ -29,6 +29,9 @@ static void service_frame(zell_scene *s,char *frame){
         if(c>=32||c=='\n'||c=='\t')decoded[n++]=(char)c;
     }
     decoded[n]=0;
+    if(kind=='J'){s->restart_needed=decoded[0]=='1';return;}
+    if(kind=='N'){int count=0;if(sscanf(decoded,"%d",&count)==1&&count>=0&&count<=200){s->notice_count=count;char *text=strchr(decoded,' ');snprintf(s->notice_text,sizeof s->notice_text,"%.319s",text?text+1:"");}return;}
+    if(kind=='A'){int muted,active;if(sscanf(decoded,"%d %d",&muted,&active)==2){s->music_muted=muted==1;s->dj_active=active==1;}return;}
     if(kind=='W'){
         /* Each reading replaces the previous one, including location removal. */
         s->weather_state=0;s->weather_temperature[0]=s->weather_place[0]=s->weather_condition[0]=0;
@@ -124,13 +127,14 @@ static void terminal_frame(desktop_service *p,zell_scene *s){
 static void service_start_mode(desktop_service *p,zell_scene *s,bool monitor){
     service_stop(p);
     p->monitor=monitor;
-    p->sensitive=!monitor&&s->station==31;
+    p->sensitive=!monitor&&(s->station==0||s->station==2||s->station==3||s->station==8||s->station==9||s->station>=31);
     if(!monitor){
     if(s->terminal_pixels){explicit_bzero(s->terminal_pixels,1200u*640u*4u);free(s->terminal_pixels);}
     s->terminal_pixels=NULL;s->terminal_width=s->terminal_height=0;
     s->desktop_launch=false;s->mode=ZELL_MODE_SERVICE;s->service_phase=0;
     s->terminal_maximized=s->terminal_minimized=false;
     s->terminal_private=p->sensitive;
+    snprintf(s->terminal_title,sizeof s->terminal_title,"%s",zell_stations[s->station].name);
     s->service_text[0]=s->service_title[0]=s->service_input[0]=0;
     s->service_scroll=0;s->service_send=s->service_cancel=false;
     }
@@ -142,7 +146,7 @@ static void service_start_mode(desktop_service *p,zell_scene *s,bool monitor){
     snprintf(station,sizeof station,"%d",monitor?-1:s->station);snprintf(action,sizeof action,"%d",s->menu_index);
     if(pipe(to_child)!=0)goto failed;
     if(pipe(from_child)!=0){close(to_child[0]);close(to_child[1]);goto failed;}
-    if(!monitor&&((s->station==2&&s->menu_index==6)||s->station==31)){
+    if(!monitor&&p->sensitive){
         p->frame_fd=(int)syscall(SYS_memfd_create,"zell-terminal",0);
         if(p->frame_fd>=0&&ftruncate(p->frame_fd,(off_t)ZELL_TERMINAL_BYTES)==0){
             p->frame_map=mmap(NULL,ZELL_TERMINAL_BYTES,PROT_READ|PROT_WRITE,MAP_SHARED,p->frame_fd,0);
@@ -197,7 +201,7 @@ static void service_pump(desktop_service *p,zell_scene *s){
     for(int batch=0;batch<8;batch++){
         count=read(p->out_fd,bytes,sizeof bytes);if(count<=0)break;
         for(ssize_t i=0;i<count;i++){
-            if(bytes[i]=='\n'){p->frame[p->length]=0;if(p->length&&(!p->monitor||strchr("VDBSW",p->frame[0])))service_frame(s,p->frame);p->length=0;}
+            if(bytes[i]=='\n'){p->frame[p->length]=0;if(p->length&&(!p->monitor||strchr("VDBSWJNA",p->frame[0])))service_frame(s,p->frame);p->length=0;}
             else if(p->length+1<sizeof p->frame)p->frame[p->length++]=bytes[i];
         }
     }
@@ -211,6 +215,7 @@ static void service_pump(desktop_service *p,zell_scene *s){
         else if(!s->service_text[0])service_append(s,"Done.");
         bool sensitive=p->sensitive;
         service_stop(p);zell_terminal_restore(s);s->service_phase=4;s->service_scroll=0;
+        if(s->station==45&&WIFEXITED(status)&&WEXITSTATUS(status)==0)s->mode=ZELL_MODE_WALK;
         if(sensitive){
             if(s->terminal_pixels){explicit_bzero(s->terminal_pixels,1200u*640u*4u);free(s->terminal_pixels);s->terminal_pixels=NULL;s->terminal_width=s->terminal_height=0;}
             explicit_bzero(s->service_reply,sizeof s->service_reply);

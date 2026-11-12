@@ -48,7 +48,7 @@ def tasks(ui):
 def recorder(ui, station):
     # Key Master is excluded regardless of the history setting. Monitor and
     # notebook views are excluded to avoid recording vault metadata or history.
-    if station in {-1, 9, 31}:
+    if station in {-1, 9, 31} or station>=32:
         return None
     settings = ui.state_read(SETTINGS, {})
     if not isinstance(settings, dict) or settings.get('enabled') is not True:

@@ -85,6 +85,21 @@ def load_images():
         for col in range(4):
             images.append(cutout(sheet.crop((col*sheet.width//4, row*sheet.height//2,
                                             (col+1)*sheet.width//4, (row+1)*sheet.height//2))))
+    for name in ('civic-staff-clean.png','craft-staff.png'):
+        sheet=Image.open(ROOM_ASSETS/name).convert('RGBA')
+        for row in range(5):
+            cells=[sheet.crop((col*sheet.width//4,row*sheet.height//5,(col+1)*sheet.width//4,(row+1)*sheet.height//5)) for col in range(4)]
+            boxes=[]
+            for cell in cells:
+                cell.putalpha(cell.getchannel('A').point(lambda a:0 if a<=3 else a))
+                boxes.append(cell.getchannel('A').point(lambda a:255 if a>32 else 0).getbbox())
+            if any(b is None for b in boxes):raise ValueError('Missing OS staff frame')
+            bounds=(min(b[0] for b in boxes),min(b[1] for b in boxes),max(b[2] for b in boxes),max(b[3] for b in boxes))
+            images.extend(cell.crop(bounds) for cell in cells)
+    images.extend(Image.open(ROOM_ASSETS/name).convert('RGBA') for name in ('vault.png','workshop.png'))
+    sheet=Image.open(ROOM_ASSETS/'extra-room-props.png').convert('RGBA')
+    for row in range(2):
+        for col in range(2):images.append(cutout(sheet.crop((col*sheet.width//2,row*sheet.height//2,(col+1)*sheet.width//2,(row+1)*sheet.height//2))))
     return images
 
 
@@ -92,6 +107,7 @@ def main():
     heights = [None] + [84] * 4 + [112] * 6 + [84] * 22
     heights += [None, None, 76, 76, 142, 142, 310, 235, 164, 62] + [128] * 12
     heights += [88] * 8
+    heights += [112]*40+[None,None,76,76,142,142]
     images = load_images()
     if len(images) != len(heights):
         raise ValueError('Asset dimensions do not match the atlas')

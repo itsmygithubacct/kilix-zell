@@ -1,6 +1,7 @@
 """Bounded line protocol between station helpers and the cave's native panels."""
 import builtins
 import sys
+import threading
 
 TITLE_WIDTH=40  # a menu title is one line of about (pane width - 56) / 8 columns
 
@@ -10,12 +11,14 @@ class Dialogue:
         self.writer=writer or sys.stdout
         self.pending_output=False
         self.record=None
+        self.send_lock=threading.Lock()
 
     def send(self, kind, text=''):
         # Keep terminal controls out of the renderer and bound every wire frame.
         text=''.join(c for c in str(text) if c.isprintable() or c in '\n\t')
-        self.writer.write(kind+text.encode('utf-8')[:3500].hex()+'\n')
-        self.writer.flush()
+        with self.send_lock:
+            self.writer.write(kind+text.encode('utf-8')[:3500].hex()+'\n')
+            self.writer.flush()
 
     def reply(self):
         line=self.reader.readline()

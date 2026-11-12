@@ -186,6 +186,20 @@ def save_form(kind):
         os.close(fd)
 
 
+def save_bytes(label, record_type, field, value):
+    """Private consumers (Wi-Fi and clipboard) share the vault's fd-only path."""
+    if not value or len(value)>65536 or len(label.encode())>160:
+        raise ValueError('Secret or label exceeds the vault limit.')
+    fd=os.memfd_create('zell-vault-input',os.MFD_CLOEXEC|os.MFD_ALLOW_SEALING)
+    try:
+        os.write(fd,value);os.lseek(fd,0,os.SEEK_SET)
+        fcntl.fcntl(fd,fcntl.F_ADD_SEALS,fcntl.F_SEAL_WRITE|fcntl.F_SEAL_GROW|fcntl.F_SEAL_SHRINK|fcntl.F_SEAL_SEAL)
+        result=subprocess.run(command('add','--type',record_type,'--label',label,'--field',field,'--secret-fd',str(fd)),
+                              pass_fds=(fd,),capture_output=True,timeout=20)
+        if result.returncode:raise RuntimeError('Unlock and prepare Key Master first; the secret was not saved.')
+    finally:os.close(fd)
+
+
 def read_descriptor():
     fd = int(os.environ.pop('KILIX_SECRET_FD'))
     try:

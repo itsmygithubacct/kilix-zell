@@ -129,6 +129,9 @@ class RealVaultTests(unittest.TestCase):
                 with patch.dict(os.environ, env):
                     self.assertEqual(vault.fields(identity), ['api-key'])
                     self.assertNotIn(SYNTHETIC.decode(), str(vault.records()))
+                    for kind,field in [('wifi','password'),('clipboard','value')]:
+                        vault.save_bytes('Synthetic '+kind,kind,field,SYNTHETIC)
+                    self.assertEqual(len(vault.records()),3)
                 result = subprocess.run([sys.executable, vault.HERE, 'token', identity], capture_output=True, env=env)
                 self.assertEqual(result.returncode, 0)
                 self.assertEqual(result.stdout, SYNTHETIC)

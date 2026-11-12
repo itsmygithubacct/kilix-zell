@@ -112,13 +112,18 @@ def run_to_completion(command):
 
 
 def main():
+    from zell_schedule import job_start,job_finish
+    job=job_start('admin.update','Operating-system update')
     print('$ ' + COMMAND, flush=True)
     result = run_to_completion(COMMAND)
+    job_finish(job,'completed' if result==0 else 'failed')
     if result == 0:
         try:
             record_success()
             zell_debug.log('update.recorded_success')
             print('\nOS update completed successfully.', flush=True)
+            from zell_system import restart_status
+            print(restart_status()['text'],flush=True)
         except OSError:
             zell_debug.error('update.record_failed')
             print('\nOS update completed, but its completion time could not be saved.', flush=True)

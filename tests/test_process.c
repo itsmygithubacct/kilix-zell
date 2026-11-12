@@ -12,6 +12,19 @@ static void graceful_exit(int signum){
 }
 
 static void test_terminal_transport(zell_scene *scene){
+    char restart[]="J31",notice[]="N32204a6f622066696e6973686564",audio[]="A312031";
+    service_frame(scene,restart);service_frame(scene,notice);service_frame(scene,audio);
+    assert(scene->restart_needed&&scene->notice_count==2&&!strcmp(scene->notice_text,"Job finished"));
+    assert(scene->music_muted&&scene->dj_active);
+    int dictpipe[2];assert(pipe(dictpipe)==0);
+    pid_t dictchild=fork();assert(dictchild>=0);
+    if(!dictchild){close(dictpipe[0]);assert(write(dictpipe[1],"Review these words\n",19)==19);close(dictpipe[1]);_exit(0);}
+    close(dictpipe[1]);fcntl(dictpipe[0],F_SETFL,O_NONBLOCK);
+    desktop_dictation dict={.pid=dictchild,.fd=dictpipe[0],.started=now_ms()};
+    scene->mode=ZELL_MODE_WALK;scene->request_ready=false;
+    for(int attempt=0;attempt<100&&dict.pid>0;attempt++){dictation_sync(&dict,scene);usleep(1000);}
+    assert(dict.pid==0&&scene->mode==ZELL_MODE_QUESTION&&!scene->request_ready);
+    assert(!strcmp(scene->question,"Review these words"));dictation_stop(&dict);
     char weather[]="W31203320343720460a4578616d706c650a5261696e";
     service_frame(scene,weather);
     assert(scene->weather_state==1&&scene->weather_icon==3);

@@ -153,11 +153,11 @@ class Library:
         self.save()
 
 
-def popup(ui, argv, name):
+def popup(ui, argv, name, env=None):
     if not shutil.which(argv[0]):print(f'{argv[0]} is not installed.');return False
     ui.BASE.mkdir(parents=True,exist_ok=True,mode=0o700)
     with (ui.BASE/'media-player.log').open('ab') as log:
-        process=subprocess.Popen(argv,stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True)
+        process=subprocess.Popen(argv,stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True,**({'env':env} if env else {}))
     try:status=process.wait(timeout=.25)
     except subprocess.TimeoutExpired:
         print(name+' opened.');return True
@@ -190,7 +190,10 @@ def amp(ui, target=None):
     except (OSError,RuntimeError,subprocess.TimeoutExpired) as error:
         print('Could not prepare audio: '+str(error));return False
     argv=['kilix-amp']+([str(target)] if target else [])
-    return popup(ui,argv,'Kilix Amp')
+    import zell_audio
+    opened=popup(ui,argv,'Kilix Amp',env=zell_audio.amp_environment())
+    if opened and target:zell_audio.dj_started()
+    return opened
 
 
 def play(ui, target, listen=False):
@@ -244,6 +247,8 @@ def start_transcript(ui, source):
 
 def transcribe_worker(job):
     record=json.loads((job/'job.json').read_text());record.update(status='running',pid=os.getpid())
+    from zell_schedule import process_identity
+    record['process_identity']=process_identity(os.getpid())
     atomic_json(job/'job.json',record)
     def interrupted(_signal,_frame):raise KeyboardInterrupt
     signal.signal(signal.SIGTERM,interrupted)

@@ -4,7 +4,7 @@
 #define ZELL_VERSION "0.1.1"
 #define ZELL_WORLD_W 1536
 #define ZELL_WORLD_H 1024
-#define ZELL_STATIONS 32
+#define ZELL_STATIONS 46
 #define ZELL_CAVE_STATIONS 15
 /* Where the Neuronte lever is drawn, relative to its floor interaction point. */
 #define ZELL_SWITCH_WALL_DX 104
@@ -28,6 +28,8 @@ bool zell_desktop_station_visible(const zell_scene *s,int station);
 float zell_desktop_speed_factor(const zell_scene *s);
 int zell_desktop_launcher_count(const zell_scene *s);
 int zell_desktop_launcher_station(const zell_scene *s,int index);
+int zell_desktop_launcher_action(const zell_scene *s,int index);
+void zell_desktop_launcher_label(const zell_scene *s,int index,char *text,size_t capacity);
 int zell_desktop_actions(int station);
 /* Floating terminal window. The same rectangles are drawn and hit-tested. */
 typedef struct { int x, y, w, h; } zell_rect;

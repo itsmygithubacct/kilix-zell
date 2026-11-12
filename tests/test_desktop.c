@@ -33,7 +33,7 @@ int main(void) {
     zell_scene_tick(&s,&c);assert(s.desktop_launch);
     s.desktop_launch=false;s.mode=ZELL_MODE_WALK;
     bool voice=s.voice_on;
-    s.x=zell_stations[10].x*ZELL_WORLD_W+40;s.y=zell_stations[10].y*ZELL_WORLD_H;
+    s.x=zell_stations[10].x*ZELL_WORLD_W;s.y=zell_stations[10].y*ZELL_WORLD_H;
     assert(zell_desktop_near(&s)==10);
     zell_scene_tick(&s,&c);assert(s.voice_on!=voice&&s.voice_changed);
     s.mode=ZELL_MODE_WALK;s.x=ZELL_WORLD_W*.5f;s.y=ZELL_WORLD_H*.98f;
@@ -163,9 +163,29 @@ int main(void) {
     zell_scene_tick(&s,&c);assert(s.room==0);
     s.x=zell_stations[14].x*ZELL_WORLD_W;s.y=zell_stations[14].y*ZELL_WORLD_H;
     zell_scene_tick(&s,&c);assert(s.room==2);
-    s.disk_count=3;assert(zell_desktop_launcher_count(&s)==4);
+    s.disk_count=3;assert(zell_desktop_launcher_count(&s)==6);
     assert(zell_desktop_launcher_station(&s,3)==28);
     assert(!zell_desktop_station_visible(&s,23));
+    assert(zell_desktop_station_visible(&s,34)&&zell_desktop_station_visible(&s,35));
+    s.room=3;assert(zell_desktop_station_visible(&s,40)&&!zell_desktop_station_visible(&s,41));
+    s.room=4;assert(zell_desktop_station_visible(&s,41)&&!zell_desktop_station_visible(&s,40));
+    strcpy(s.launcher_query,"checksum");
+    assert(zell_desktop_launcher_count(&s)==2);
+    assert(zell_desktop_launcher_station(&s,0)==34);
+    assert(zell_desktop_launcher_station(&s,1)==40);
+    strcpy(s.launcher_query,"no-matching-action-123");assert(zell_desktop_launcher_count(&s)==0);
+    s.launcher_query[0]=0;s.room=0;s.mode=ZELL_MODE_WALK;
+    s.width=1536;s.height=1024;s.mouse_valid=true;
+    s.mouse_x=119;s.mouse_y=330;s.mouse_click=true;
+    assert(zell_desktop_click(&s)&&s.dictation_on&&s.dictation_changed);
+    s.mouse_click=true;assert(zell_desktop_click(&s)&&!s.dictation_on);
+    s.mouse_x=140;s.mouse_click=true;assert(zell_desktop_click(&s)&&s.station==45&&s.desktop_launch);
+    for(int station=32;station<42;station++){
+        const zell_art *a=zell_art_get(zell_stations[station].art),*b=zell_art_get(zell_stations[station].art+1);
+        assert(a&&b&&a->height==112&&b->height==112);
+        assert(a->width==b->width);
+        assert(memcmp(a->pixels,b->pixels,(size_t)a->width*(size_t)a->height*4)!=0);
+    }
     s.hp=10;s.fatigue=100;assert(zell_desktop_speed_factor(&s)<.5f);
     s.hp=100;s.fatigue=0;assert(zell_desktop_speed_factor(&s)==.35f);
     s.hp=-1;s.fatigue=-1;assert(zell_desktop_speed_factor(&s)==1.0f);

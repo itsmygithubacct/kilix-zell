@@ -90,7 +90,12 @@ typedef struct zell_scene {
     int station;
     int mouse_x, mouse_y;
     bool mouse_valid;
-    int room; /* cave, command center, laundry */
+    int room; /* cave, command center, laundry, vault, workshop */
+    char launcher_query[64];
+    bool restart_needed, music_muted, dj_active;
+    bool dictation_on, dictation_changed;
+    int notice_count;
+    char notice_text[320];
     int fatigue, mana, update_age_days, mana_age;
     int os_health, dirty_files;
     bool disks_ready;
@@ -105,6 +110,7 @@ typedef struct zell_scene {
     /* Floating terminal window state. Minimized, its command keeps running
      * and Kilix walks freely; a button on the bottom bar reopens it. */
     bool terminal_maximized, terminal_minimized, terminal_private;
+    char terminal_title[96];
     bool mouse_click; /* an unconsumed left press at mouse_x, mouse_y */
     /* Native station dialogue. Helpers exchange bounded frames over pipes. */
     int service_phase; /* 0 working, 1 text, 2 choices, 3 report, 4 finished */

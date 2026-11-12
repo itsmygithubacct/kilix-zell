@@ -842,7 +842,7 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
     kittykb_event event;
 
     memset(controls, 0, sizeof *controls);
-    bool typing = scene->mode == ZELL_MODE_QUESTION || scene->mode == ZELL_MODE_TYPE ||
+    bool typing = scene->mode == ZELL_MODE_QUESTION || scene->mode == ZELL_MODE_TYPE || scene->mode==ZELL_MODE_LAUNCHER ||
                   (scene->mode == ZELL_MODE_SERVICE && scene->service_phase == 1);
 
     controls->run = !typing &&
@@ -951,6 +951,7 @@ static bool present_scene(zell_scene *scene, sr_canvas *canvas, uint8_t **rgba,
 }
 
 #include "desktop_service.inc"
+#include "desktop_dictation.inc"
 
 static int run_scene(void)
 {
@@ -962,6 +963,7 @@ static int run_scene(void)
     zell_speech speech;
     desktop_service service={.in_fd=-1,.out_fd=-1,.frame_fd=-1};
     desktop_service vitals={.in_fd=-1,.out_fd=-1,.frame_fd=-1};
+    desktop_dictation dictation={.fd=-1};
     unsigned spoken = 0;
     sr_canvas canvas;
     uint8_t *rgba = NULL;
@@ -1068,6 +1070,7 @@ static int run_scene(void)
             pump(&proc, &turn, &scene);
         }
         sync_voice(&scene, &speech, &spoken);
+        dictation_sync(&dictation,&scene);
         sync_history(&scene);
         if (!present_scene(&scene, &canvas, &rgba, &rgba_bytes)) {
             break;
@@ -1075,6 +1078,7 @@ static int run_scene(void)
         note_frame(&scene);
     }
 
+    dictation_stop(&dictation);
     service_stop(&vitals);
     service_stop(&service);
     free(scene.terminal_pixels);

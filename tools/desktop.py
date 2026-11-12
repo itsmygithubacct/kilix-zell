@@ -29,6 +29,8 @@ import zell_rooms
 import zell_terminal
 import zell_projects
 import zell_weather
+import zell_os
+import zell_audio
 from zell_dialogue import Dialogue
 DIALOGUE = None
 
@@ -289,6 +291,7 @@ def play(target):
     return zell_media.play(media_ui(),str(target))
 
 def music(action):
+    if action==8:return zell_audio.configure(sys.modules[__name__])
     if action==7:return zell_library.hub(sys.modules[__name__],'music')
     ui=media_ui()
     if action==0:return zell_media.amp(ui)
@@ -406,6 +409,11 @@ LAST_VITALS=None
 def vitals_snapshot():
     ui=sys.modules[__name__]
     status=zell_vitals.snapshot(ui)
+    from zell_system import restart_status
+    restart=restart_status()
+    status['restart_needed']=int(restart['needed'])
+    status['details']+='\n\n'+restart['text']
+    if restart['needed']:status['health']=min(status['health'] if status['health']>=0 else 100,85)
     watched=zell_projects.dirty_summary(ui)
     base=status['health'];count=watched['count']
     status['os_health']=base
@@ -422,14 +430,51 @@ def vitals_snapshot():
 
 
 def desktop(station,action):
+    ui=sys.modules.get(__name__) or SimpleNamespace(**globals())
+    if station in zell_os.STATIONS:return zell_os.hub(ui,zell_os.STATIONS[station],action)
+    if station==45:
+        muted=zell_audio.toggle_mute()
+        if DIALOGUE:DIALOGUE.send('A',str(int(muted))+' '+str(int(zell_audio.state().get('dj_active',False))))
+        return
+    if station==0:return zell_os.hub(ui,'wizard',0)
+    if station==2:
+        if action==1:return zell_os.hub(ui,'merchant')
+        if action==2:return zell_os.hub(ui,'admin',1)
+        if action==3:return zell_os.hub(ui,'admin',0)
+        if action==4:return zell_os.hub(ui,'signalman')
+    if station==3 and action>=6:return zell_os.hub(ui,'housekeeper',action-6)
+    if station==9 and action==5:return zell_os.hub(ui,'notices',0)
+    if station==8 and action==5:
+        return zell_os.hub(ui,'tinkerer',8)
     if station==31:
         from zell_secrets import hub
         return hub(sys.modules[__name__])
     if station==-1:
         ui=sys.modules[__name__]
+        audio_monitor=zell_audio.MusicMonitor()
+        import atexit,threading
+        atexit.register(audio_monitor.close)
+        audio_stop=threading.Event()
+        def audio_updates():
+            previous=None
+            while not audio_stop.is_set():
+                try:
+                    audio=audio_monitor.poll()
+                    value=str(int(audio.get('muted',False)))+' '+str(int(audio.get('dj_active',False)))
+                    if value!=previous:DIALOGUE.send('A',value);previous=value
+                except (OSError,ValueError,RuntimeError,subprocess.SubprocessError):pass
+                audio_stop.wait(.25)
+        audio_thread=threading.Thread(target=audio_updates,daemon=True);audio_thread.start()
+        def stop_monitor(_signum,_frame):
+            audio_stop.set();audio_thread.join(timeout=1);audio_monitor.close();raise SystemExit(0)
+        signal.signal(signal.SIGTERM,stop_monitor)
+        signal.signal(signal.SIGHUP,stop_monitor)
         while True:
             status=vitals_snapshot()
             DIALOGUE.send('V',' '.join(str(status[k]) for k in ('health','fatigue','mana','age_days','mana_age','os_health','dirty_files')))
+            DIALOGUE.send('J',str(status['restart_needed']))
+            from zell_schedule import aggregate
+            notices=aggregate();DIALOGUE.send('N',str(notices['count'])+' '+notices['text'])
             weather=zell_weather.snapshot()
             DIALOGUE.send('W',f"{weather['state']} {weather['icon']} {weather['temperature']}\n{weather['place']}\n{weather['condition']}")
             try:drives=zell_rooms.disks()

@@ -23,6 +23,10 @@ from zell_dialogue import Dialogue
 
 
 class UpdateTests(unittest.TestCase):
+    def setUp(self):
+        quiet=patch('zell_schedule.quiet_now',return_value=True)
+        quiet.start();self.addCleanup(quiet.stop)
+
     def test_success_exact_command_private_atomic_stamp(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, KILIX_ZELL_STATE=directory), \
                 patch.object(update, 'run_to_completion', return_value=0) as run, \
@@ -32,7 +36,10 @@ class UpdateTests(unittest.TestCase):
             path = Path(directory)/'os-update.json'
             self.assertLess(abs(json.loads(path.read_text())['completed_at'] - time.time()), 5)
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-            self.assertEqual(list(Path(directory).iterdir()), [path])
+            self.assertEqual({p.name for p in Path(directory).iterdir()},
+                             {'os-update.json','os-jobs.json','notices.json','.os.lock'})
+            jobs=json.loads((Path(directory)/'os-jobs.json').read_text())
+            self.assertEqual(next(iter(jobs.values()))['status'],'completed')
 
     def test_failure_and_interrupt_do_not_stamp(self):
         # -2 is a shell killed by the terminal's Ctrl-C.

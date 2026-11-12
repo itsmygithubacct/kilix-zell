@@ -103,6 +103,8 @@ int main(int argc, char **argv)
         strcpy(scene.disk_labels[1],"nvme1n1p1 /work");scene.disk_used[1]=78;
         strcpy(scene.disk_labels[2],"sda1 /archive");scene.disk_used[2]=93;
         failed+=shot(&scene,&canvas,argv[1],"laundry");
+        scene.room=3;failed+=shot(&scene,&canvas,argv[1],"vault");
+        scene.room=4;failed+=shot(&scene,&canvas,argv[1],"workshop");
         scene.room=0;scene.hp=57;scene.os_health=70;scene.dirty_files=13;scene.update_age_days=3;
         scene.mouse_valid=true;scene.mouse_x=32;scene.mouse_y=50;
         failed+=shot(&scene,&canvas,argv[1],"health-hover");scene.mouse_valid=false;
