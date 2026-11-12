@@ -12,6 +12,12 @@ static void graceful_exit(int signum){
 }
 
 static void test_terminal_transport(zell_scene *scene){
+    char weather[]="W31203320343720460a4578616d706c650a5261696e";
+    service_frame(scene,weather);
+    assert(scene->weather_state==1&&scene->weather_icon==3);
+    assert(!strcmp(scene->weather_temperature,"47 F")&&!strcmp(scene->weather_place,"Example"));
+    char removed[]="W302037200a0a";service_frame(scene,removed);
+    assert(scene->weather_state==0&&!scene->weather_place[0]);
     unsigned char bytes[TERMINAL_KEY_BYTES];
     kittykb_event event={.action=KITTYKB_ACTION_PRESS,.key='e',.text_length=3,.text={0xe9,0x1f642,'x'}};
     const unsigned char expected[]={0xc3,0xa9,0xf0,0x9f,0x99,0x82,'x'};

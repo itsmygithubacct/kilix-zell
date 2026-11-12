@@ -99,6 +99,17 @@ static void desktop_vitals(const zell_scene *s,sr_canvas *c){
   draw_wrapped(c,24,117,tw-24,tip,0xf0e5cdu,0,lines);
  }
 }
+static void desktop_weather(const zell_scene *s,sr_canvas *c,int cx,int cy){
+ if(s->room!=0||!s->weather_state)return;
+ int x=157-cx,y=244-cy;
+ int art=s->weather_icon>=0&&s->weather_icon<8?s->weather_icon:7;
+ sr_fill_ellipse(c,(float)x,(float)(y-40),54,39,0x133a43u,.35f);
+ desktop_art(c,ZELL_ART_WEATHER+art,x,y,s->weather_state==1?88:64);
+ char label[96];
+ if(s->weather_state==1)snprintf(label,sizeof label,"%s / %s",s->weather_temperature,s->weather_condition);
+ else snprintf(label,sizeof label,"%s",s->weather_condition);
+ desktop_label(c,x,y+6,label,0xffe7a6u);
+}
 static void desktop_base(const zell_scene *s,sr_canvas *c){
  static sr_canvas backgrounds[3];
  int room=s->room>=0&&s->room<3?s->room:0;
@@ -108,6 +119,7 @@ static void desktop_base(const zell_scene *s,sr_canvas *c){
  int cx,cy;zell_desktop_camera(s,&cx,&cy);sr_clear(c,0x081319u);
  if(background->px){for(int y=0;y<c->h&&y+cy<ZELL_WORLD_H;y++){int w=c->w;if(w+cx>ZELL_WORLD_W)w=ZELL_WORLD_W-cx;memcpy(c->px+(size_t)y*(size_t)c->w,background->px+(size_t)(y+cy)*ZELL_WORLD_W+(size_t)cx,(size_t)w*4);}}
  if(s->room)desktop_room(s,c,cx,cy);
+ desktop_weather(s,c,cx,cy);
  int near=zell_desktop_near(s);int height=112;
  for(int i=0;i<ZELL_CAVE_STATIONS&&s->room==0;i++){
   const zell_station *p=&zell_stations[i];int x=(int)(p->x*(float)ZELL_WORLD_W),y=(int)(p->y*(float)ZELL_WORLD_H);

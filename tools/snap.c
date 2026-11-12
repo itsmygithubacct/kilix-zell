@@ -92,6 +92,10 @@ int main(int argc, char **argv)
         scene.running=false;scene.step_ticks=0;
         scene.x=ZELL_WORLD_W*.865f;scene.y=zell_stations[12].y*ZELL_WORLD_H;
         failed+=shot(&scene,&canvas,argv[1],"shell-switch");
+        scene.x=ZELL_WORLD_W*.5f;scene.y=ZELL_WORLD_H*.5f;
+        scene.weather_state=1;scene.weather_icon=3;
+        strcpy(scene.weather_temperature,"47 F");strcpy(scene.weather_place,"Example location");strcpy(scene.weather_condition,"Rain showers");
+        failed+=shot(&scene,&canvas,argv[1],"weather-map");scene.weather_state=0;
         scene.mode=ZELL_MODE_WALK;scene.room=1;scene.x=ZELL_WORLD_W*.50f;scene.y=ZELL_WORLD_H*.55f;
         failed+=shot(&scene,&canvas,argv[1],"command-center");
         scene.room=2;scene.disk_count=3;scene.disks_ready=true;

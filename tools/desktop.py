@@ -28,6 +28,7 @@ import termios
 import zell_rooms
 import zell_terminal
 import zell_projects
+import zell_weather
 from zell_dialogue import Dialogue
 DIALOGUE = None
 
@@ -214,7 +215,7 @@ def admin(action):
     elif action==4:run(['ip','-brief','address'])
     elif action==5:
         print('Current Zell settings:',state_read('model.json',{'model':'auto','device':'auto'}))
-        model=choose('Model',[('Automatic (Ask first, 10 second larger-model limit)','auto'),('Qwen 3.5 0.8B','qwen3.5-0.8b'),('Qwen 3.5 4B','qwen3.5-4b')])
+        model=choose('Model',[('Automatic (Ask first, 10 second larger-model limit)','auto'),('Qwen 3.5 0.8B no-loop','qwen-0.8b-no-loop-02'),('Qwen 3.5 4B','qwen3.5-4b')])
         if model is None:return
         run(['kilix-llm','devices'],pause=False)
         device=input('Device (auto or VulkanN; Enter=auto): ').strip() or 'auto'
@@ -429,6 +430,8 @@ def desktop(station,action):
         while True:
             status=vitals_snapshot()
             DIALOGUE.send('V',' '.join(str(status[k]) for k in ('health','fatigue','mana','age_days','mana_age','os_health','dirty_files')))
+            weather=zell_weather.snapshot()
+            DIALOGUE.send('W',f"{weather['state']} {weather['icon']} {weather['temperature']}\n{weather['place']}\n{weather['condition']}")
             try:drives=zell_rooms.disks()
             except OSError:drives=[]
             DIALOGUE.send('D')
@@ -452,6 +455,7 @@ def desktop(station,action):
     if station==6:return run(['kilix-tui'],pause=False)
     if station==7:return run(['kilix','shell'],pause=False)
     if station==8:
+        if action==4:return zell_weather.report(sys.modules[__name__])
         if action==0:return applications()
         if action==1:return open_file(file_pick(Path.home()))
         if action==2:return open_file(file_pick(Path.home()/'Downloads'))

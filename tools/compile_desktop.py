@@ -80,12 +80,18 @@ def load_images():
         bounds = (min(b[0] for b in boxes), min(b[1] for b in boxes),
                   max(b[2] for b in boxes), max(b[3] for b in boxes))
         images.extend(cell.crop(bounds) for cell in cells)
+    sheet = Image.open(ROOM_ASSETS/'weather.png').convert('RGBA')
+    for row in range(2):
+        for col in range(4):
+            images.append(cutout(sheet.crop((col*sheet.width//4, row*sheet.height//2,
+                                            (col+1)*sheet.width//4, (row+1)*sheet.height//2))))
     return images
 
 
 def main():
     heights = [None] + [84] * 4 + [112] * 6 + [84] * 22
     heights += [None, None, 76, 76, 142, 142, 310, 235, 164, 62] + [128] * 12
+    heights += [88] * 8
     images = load_images()
     if len(images) != len(heights):
         raise ValueError('Asset dimensions do not match the atlas')

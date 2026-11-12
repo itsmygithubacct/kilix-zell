@@ -5,7 +5,8 @@
 #include <string.h>
 #include <sys/stat.h>
 
-/* Best model first. The two 0.8B files are the fallback, not upgrades. */
+/* Best model first. Slot 2 recognizes retired stock weights but is never routed.
+ * The supported no-loop 0.8B entry is the fallback, not an upgrade. */
 static const struct zell_weight {
     const char *id;
     const char *file;
@@ -101,7 +102,6 @@ int zell_router_fill(const int ready[ZELL_ROUTER_SLOTS],
 {
     int index;
     int count = 0;
-    int fallback = 2;
 
     if (ready == NULL || out == NULL || capacity < 1) {
         return 0;
@@ -111,10 +111,11 @@ int zell_router_fill(const int ready[ZELL_ROUTER_SLOTS],
             add_slot(out, capacity, &count, WEIGHTS[index].id, 1);
         }
     }
-    if (ready[3] && !ready[2]) {
-        fallback = 3;
+    /* The stock 0.8B catalog alias was retired by the installed runtime.
+     * Never abandon an installed model for a missing or retired fallback. */
+    if (ready[3] || count == 0) {
+        add_slot(out, capacity, &count, WEIGHTS[3].id, 0);
     }
-    add_slot(out, capacity, &count, WEIGHTS[fallback].id, 0);
     return count;
 }
 

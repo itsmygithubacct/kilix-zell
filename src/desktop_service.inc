@@ -29,6 +29,20 @@ static void service_frame(zell_scene *s,char *frame){
         if(c>=32||c=='\n'||c=='\t')decoded[n++]=(char)c;
     }
     decoded[n]=0;
+    if(kind=='W'){
+        /* Each reading replaces the previous one, including location removal. */
+        s->weather_state=0;s->weather_temperature[0]=s->weather_place[0]=s->weather_condition[0]=0;
+        int state,icon;
+        if(sscanf(decoded,"%d %d",&state,&icon)!=2||state<0||state>2||icon<0||icon>7)return;
+        char *place=strchr(decoded,'\n');if(!place)return;*place++=0;
+        char *condition=strchr(place,'\n');if(!condition)return;*condition++=0;
+        char *temperature=strchr(decoded,' ');if(temperature)temperature=strchr(temperature+1,' ');
+        if(!temperature)return;
+        s->weather_state=state;s->weather_icon=icon;
+        snprintf(s->weather_temperature,sizeof s->weather_temperature,"%.23s",temperature+1);
+        snprintf(s->weather_place,sizeof s->weather_place,"%.95s",place);
+        snprintf(s->weather_condition,sizeof s->weather_condition,"%.63s",condition);return;
+    }
     if(kind=='S'){
         if(n<2||decoded[0]<'0'||decoded[0]>'4'||decoded[1]!=' ')return;
         int i=decoded[0]-'0';char *body=strchr(decoded+2,'\n');
@@ -183,7 +197,7 @@ static void service_pump(desktop_service *p,zell_scene *s){
     for(int batch=0;batch<8;batch++){
         count=read(p->out_fd,bytes,sizeof bytes);if(count<=0)break;
         for(ssize_t i=0;i<count;i++){
-            if(bytes[i]=='\n'){p->frame[p->length]=0;if(p->length&&(!p->monitor||strchr("VDBS",p->frame[0])))service_frame(s,p->frame);p->length=0;}
+            if(bytes[i]=='\n'){p->frame[p->length]=0;if(p->length&&(!p->monitor||strchr("VDBSW",p->frame[0])))service_frame(s,p->frame);p->length=0;}
             else if(p->length+1<sizeof p->frame)p->frame[p->length++]=bytes[i];
         }
     }
@@ -191,7 +205,7 @@ static void service_pump(desktop_service *p,zell_scene *s){
     int status=0;pid_t ended=waitpid(p->pid,&status,WNOHANG);
     if(ended==p->pid){
         p->pid=0;
-        if(p->monitor){s->fatigue=-1;s->screens_ready=false;memset(s->screen_preview,0,sizeof s->screen_preview);service_stop(p);return;}
+        if(p->monitor){s->fatigue=-1;s->screens_ready=false;s->weather_state=0;memset(s->screen_preview,0,sizeof s->screen_preview);service_stop(p);return;}
         if(p->cancelled)service_append(s,"\nCancelled.");
         else if(!WIFEXITED(status)||WEXITSTATUS(status)!=0)service_append(s,"\nThe station helper failed. Please try again.");
         else if(!s->service_text[0])service_append(s,"Done.");

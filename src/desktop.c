@@ -46,7 +46,7 @@ static const char *const actions[ZELL_STATIONS][9]={
  {"Open Kilix Amp","Play a file or URL","Playlists and creators","Follow a creator or playlist","Volume controls","Transcribe media","Transcripts and jobs","Music library on disk",NULL},
  {"Books and documents library","Find a document","OCR an image","OCR a PDF","Read text aloud","Document converter","Export a text audiobook","How to find and add files",NULL},
  {"Open Kilix TUI",NULL}, {"Open Kilix shell",NULL},
- {"Application launcher","Home folder","Downloads","Web browser",NULL},
+ {"Application launcher","Home folder","Downloads","Web browser","Weather on the map",NULL},
  {"Read notebook","Add a note","Edit notebook","Task board","Station conversations",NULL},
  {"Toggle voice",NULL}, {"Time and calendar","System health report","Check coding-token mana",NULL},
  {"Switch to Neuronte shell",NULL},

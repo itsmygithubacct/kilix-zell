@@ -310,3 +310,19 @@ Generated Command Center/Laundry backgrounds, hatches, stairs, monitor frames,
 drive bins and animated Git Wizard, Pilot and Key Master sprites are under
 `assets/v0.1.1/`, with their image-generation prompts. `tools/compile_desktop.py`
 compiles premultiplied cutouts for both renderers.
+
+### Weather on the wall map
+
+When the Kilix weather widget has a location, the cave's world map shows an
+illustrated weather emblem, temperature and conditions from the same reading.
+The overlay follows the widget's Celsius/Fahrenheit setting and refreshes from
+its cache every five seconds. It makes no additional network requests. Remove
+the widget's location to restore the plain map. A missing, mismatched or stale
+reading shows a refresh notice rather than claiming current conditions.
+The map's **Weather on the map** menu gives the location, conditions and source
+attribution: Open-Meteo (CC BY 4.0), location data from GeoNames.
+
+Automatic local-model routing uses installed supported model IDs. The current
+runtime's Qwen 0.8B fallback is `qwen-0.8b-no-loop-02`; the retired stock 0.8B
+alias is not selected. An installed 4B model remains available when that
+fallback is absent. Install additional models through the Kilix model wizard.

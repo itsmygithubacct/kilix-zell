@@ -259,6 +259,7 @@ test-desktop: $(BUILD)/test-desktop
 	python3 $(ROOT)/tests/test_secrets.py
 	python3 $(ROOT)/tests/test_journal.py
 	python3 $(ROOT)/tests/test_shell.py
+	python3 $(ROOT)/tests/test_weather.py
 
 $(BUILD)/test_process.o $(BUILD)/test_desktop.o: $(ROOT)/src/scene.h $(ROOT)/src/desktop.h
 

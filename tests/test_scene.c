@@ -324,14 +324,13 @@ static void test_router_prefers_a_fast_model(void)
 
     memset(ready, 0, sizeof ready);
     count = zell_router_fill(ready, slots, ZELL_ROUTER_SLOTS);
-    expect(count == 1, "no weights still names the stock 0.8B");
-    expect_slot(&slots[0], "qwen3.5-0.8b", 0, "the floor model is not superior");
+    expect(count == 1, "no weights names the current 0.8B catalog entry");
+    expect_slot(&slots[0], "qwen-0.8b-no-loop-02", 0, "the floor model is not superior");
 
     ready[1] = 1;
     count = zell_router_fill(ready, slots, ZELL_ROUTER_SLOTS);
-    expect(count == 2, "an installed 4B is tried before the 0.8B");
+    expect(count == 1, "only the installed 4B is tried when the current fallback is missing");
     expect_slot(&slots[0], "qwen3.5-4b", 1, "the 4B is superior");
-    expect_slot(&slots[1], "qwen3.5-0.8b", 0, "the 0.8B remains the floor");
 
     ready[0] = 1;
     ready[2] = 1;
@@ -340,7 +339,7 @@ static void test_router_prefers_a_fast_model(void)
     expect(count == 3, "27B then 4B then one 0.8B");
     expect_slot(&slots[0], "qwen3.8-27b", 1, "27B is first");
     expect_slot(&slots[1], "qwen3.5-4b", 1, "4B is second");
-    expect_slot(&slots[2], "qwen3.5-0.8b", 0, "stock 0.8B wins over no-loop");
+    expect_slot(&slots[2], "qwen-0.8b-no-loop-02", 0, "the supported no-loop model is the floor");
 
     memset(ready, 0, sizeof ready);
     ready[3] = 1;
@@ -384,8 +383,8 @@ static void test_router_prefers_a_fast_model(void)
         return;
     }
     count = zell_router_prepare(directory, slots, ZELL_ROUTER_SLOTS);
-    expect(count == 1, "an empty directory still names the stock 0.8B");
-    expect_slot(&slots[0], "qwen3.5-0.8b", 0, "the empty directory is not superior");
+    expect(count == 1, "an empty directory names the current 0.8B catalog entry");
+    expect_slot(&slots[0], "qwen-0.8b-no-loop-02", 0, "the empty directory is not superior");
     rmdir(directory);
 }
 
@@ -408,7 +407,7 @@ static void test_model_file_pins_the_router(void)
     ready[1] = 1;
     ready[2] = 1;
     count = zell_router_fill(ready, slots, ZELL_ROUTER_SLOTS);
-    expect(zell_router_pin(slots, count, "auto") == 3, "auto keeps the router");
+    expect(zell_router_pin(slots, count, "auto") == 2, "auto keeps the installed supported models");
     count = zell_router_pin(slots, count, "qwen3.5-4b");
     expect(count == 1, "a chosen model is the only slot");
     expect_slot(&slots[0], "qwen3.5-4b", 0,
