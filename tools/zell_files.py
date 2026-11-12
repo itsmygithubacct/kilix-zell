@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from zell_paths import archive_only_root
 import time
 import uuid
 import zipfile
@@ -18,8 +19,9 @@ from zell_os import task, ask, pick, confirm, run, path_input, positive, read_st
 
 def active_path(path):
     path=Path(path).expanduser().resolve()
-    if path==Path('/mnt/22tb') or Path('/mnt/22tb') in path.parents:
-        raise ValueError('/mnt/22tb is reserved for compressed archives; choose another disk for active files.')
+    reserved=archive_only_root(path)
+    if reserved:
+        raise ValueError(f'{reserved} is reserved for archives on this machine; choose another disk for active files.')
     return path
 
 def target_new(prompt):

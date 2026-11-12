@@ -137,7 +137,9 @@ class SafetyTests(unittest.TestCase):
             before=(dest/'file').stat();(dest/'file').write_text('other');os.utime(dest/'file',ns=(before.st_atime_ns,before.st_mtime_ns))
             with self.assertRaises(RuntimeError):files.verify_backup(source,dest)
             with self.assertRaises(ValueError):files.backup_copy(source,source/'recursive')
-            with self.assertRaises(ValueError):files.active_path('/mnt/22tb/live')
+            with patch.dict(os.environ,{'KILIX_ZELL_ARCHIVE_ONLY':tmp+'/archive','KILIX_ZELL_STATE':tmp}):
+                with self.assertRaises(ValueError):files.active_path(tmp+'/archive/live')
+                self.assertEqual(files.active_path(tmp+'/elsewhere'),Path(tmp).resolve()/'elsewhere')
 
     def test_backup_snapshots_keep_prior_versions_and_refuse_missing_drive(self):
         with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,{'KILIX_ZELL_STATE':tmp+'/state'}),redirect_stdout(io.StringIO()):

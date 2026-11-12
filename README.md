@@ -111,6 +111,11 @@ model if it starts answering within 10 seconds, otherwise Qwen 3.5 0.8B. A
 saved model is used by itself. Each call uses `kilix-llm run` and unloads after
 the answer; no resident server is started. Esc cancels. Paradee voice is optional.
 
+To keep a disk for archives only, list its folder in `archive-only-paths` in
+the state directory, one absolute path per line (or set
+`KILIX_ZELL_ARCHIVE_ONLY`, colon-separated). Zell then refuses to start coding
+sessions or copy, move and back up active files there. Nothing is reserved by default.
+
 ## Tests and artwork
 
 Sibling libraries: `kitty-framebuffer`, `kitty-input`, `soft-raster`. Neuronte

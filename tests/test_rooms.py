@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -72,10 +73,23 @@ class RoomsTests(unittest.TestCase):
         self.ui.state_write.assert_not_called()
 
     def test_archive_disk_cannot_be_working_directory(self):
-        with patch('builtins.input', return_value='/mnt/22tb/projects'), patch.object(rooms, '_control') as control:
-            with self.assertRaisesRegex(ValueError, 'archive storage'):
-                rooms._start(self.ui, 0, {'screens': {}}, dict(caller_pane=1, panes=[pane(1)]))
-        control.assert_not_called()
+        with tempfile.TemporaryDirectory() as tmp:
+            archive=Path(tmp).resolve()/'archive';(archive/'projects').mkdir(parents=True)
+            with patch.dict(os.environ, {'KILIX_ZELL_ARCHIVE_ONLY': str(archive), 'KILIX_ZELL_STATE': tmp}), \
+                    patch('builtins.input', return_value=str(archive/'projects')), patch.object(rooms, '_control') as control:
+                with self.assertRaisesRegex(ValueError, 'archive storage'):
+                    rooms._start(self.ui, 0, {'screens': {}}, dict(caller_pane=1, panes=[pane(1)]))
+            control.assert_not_called()
+
+    def test_no_folder_is_reserved_unless_this_machine_lists_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project=Path(tmp).resolve()/'archive/projects';project.mkdir(parents=True)
+            with patch.dict(os.environ, {'KILIX_ZELL_STATE': tmp}):
+                os.environ.pop('KILIX_ZELL_ARCHIVE_ONLY', None)
+                self.assertEqual(rooms._project_path(project), project)
+                (Path(tmp)/'archive-only-paths').write_text('# archives\n'+str(project.parent)+'\n')
+                with self.assertRaisesRegex(ValueError, 'archive storage'):
+                    rooms._project_path(project)
 
     def test_recycled_pane_id_cannot_be_focused(self):
         self.ui.state_read.return_value = {'screens': {'1': pane(2)}}

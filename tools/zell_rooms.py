@@ -9,6 +9,8 @@ import stat
 import subprocess
 import uuid
 
+from zell_paths import archive_only_root
+
 STATE = 'rooms.json'
 MODEL = 'gpt-6-astra'
 PROMPT_LIMIT = 1024  # kilix agent-control: 1-1024 UTF-8 bytes, one line
@@ -101,8 +103,9 @@ def _state(ui):
 
 def _project_path(path):
     cwd = Path(path).expanduser().resolve()
-    if cwd == Path('/mnt/22tb') or Path('/mnt/22tb') in cwd.parents:
-        raise ValueError('/mnt/22tb is archive storage; choose another disk for coding.')
+    reserved = archive_only_root(cwd)
+    if reserved:
+        raise ValueError(f'{reserved} is archive storage on this machine; choose another disk for coding.')
     if not cwd.is_dir():
         raise ValueError('Choose an existing project directory.')
     return cwd
