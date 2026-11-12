@@ -14,4 +14,6 @@ int zell_answer_scroll_limit(int width, int height, const char *text);
 void zell_campfire_rect(int canvas_w, int canvas_h, int index,
                         int *x, int *y, int *width, int *height);
 
+int zell_service_scroll_limit(const zell_scene *scene);
+
 #endif

@@ -137,6 +137,27 @@ int zell_router_should_switch(int superior, int stdout_bytes,
            elapsed_ms > ZELL_MODEL_START_MS && more;
 }
 
+int zell_router_pin(zell_router_slot *slots, int count, const char *model_id)
+{
+    int index;
+
+    if (slots == NULL || count < 1 || model_id == NULL || model_id[0] == '\0' ||
+        strcmp(model_id, "auto") == 0) {
+        return count;
+    }
+    for (index = 0; index < count; index++) {
+        if (strcmp(slots[index].id, model_id) != 0) {
+            continue;
+        }
+        if (index != 0) {
+            slots[0] = slots[index];
+        }
+        slots[0].superior = 0;
+        return 1;
+    }
+    return count;
+}
+
 int zell_ask_succeeded(int status, const char *text)
 {
     if (status != 0 || text == NULL) {

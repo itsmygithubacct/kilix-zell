@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "draw.h"
+#include "desktop.h"
 #include "scene.h"
 #include "soft_raster.h"
 
@@ -56,7 +57,12 @@ int main(int argc, char **argv)
 #endif
 
     zell_scene_init(&scene, width, height);
+#ifdef ZELL_RENDER_NEURONTE
+    zell_desktop_init(&scene);
+#endif
     failed += shot(&scene, &canvas, argv[1], "walk");
+    scene.mode=ZELL_MODE_LAUNCHER;
+    failed += shot(&scene, &canvas, argv[1], "launcher");
 
     scene.mode = ZELL_MODE_QUESTION;
     scene.menu_index = 2;
@@ -80,6 +86,40 @@ int main(int argc, char **argv)
              "Ctrl+Shift+W. 0123456789 {}[]()<>|/\\ ~!@#$%%^&*_+-=");
     failed += shot(&scene, &canvas, argv[1], "answer");
 
+    if(scene.desktop){
+        scene.mode=ZELL_MODE_WALK;scene.running=true;scene.direction=ZELL_DIR_RIGHT;scene.step_ticks=8;
+        failed+=shot(&scene,&canvas,argv[1],"dash");
+        scene.running=false;scene.step_ticks=0;
+        scene.x=ZELL_WORLD_W*.865f;scene.y=zell_stations[12].y*ZELL_WORLD_H;
+        failed+=shot(&scene,&canvas,argv[1],"shell-switch");
+        scene.mode=ZELL_MODE_WALK;scene.room=1;scene.x=ZELL_WORLD_W*.50f;scene.y=ZELL_WORLD_H*.55f;
+        failed+=shot(&scene,&canvas,argv[1],"command-center");
+        scene.room=2;scene.disk_count=3;scene.disks_ready=true;
+        strcpy(scene.disk_labels[0],"nvme0n1p2 /system");scene.disk_used[0]=42;
+        strcpy(scene.disk_labels[1],"nvme1n1p1 /work");scene.disk_used[1]=78;
+        strcpy(scene.disk_labels[2],"sda1 /archive");scene.disk_used[2]=93;
+        failed+=shot(&scene,&canvas,argv[1],"laundry");
+        scene.room=0;scene.hp=57;scene.os_health=70;scene.dirty_files=13;scene.update_age_days=3;
+        scene.mouse_valid=true;scene.mouse_x=32;scene.mouse_y=50;
+        failed+=shot(&scene,&canvas,argv[1],"health-hover");scene.mouse_valid=false;
+        scene.mode=ZELL_MODE_SERVICE;scene.station=4;scene.service_phase=2;
+        strcpy(scene.service_title,"YouTube / playlists and creators");
+        scene.service_count=5;scene.service_index=1;
+        strcpy(scene.service_choices[0],"New content (12)");
+        strcpy(scene.service_choices[1],"Refresh followed sources");
+        strcpy(scene.service_choices[2],"All recent content");
+        strcpy(scene.service_choices[3],"Follow a creator or playlist");
+        strcpy(scene.service_choices[4],"Transcripts and jobs");
+        failed+=shot(&scene,&canvas,argv[1],"station-menu");
+        scene.station=3;scene.service_phase=3;
+        strcpy(scene.service_text,"System health report\n\nMemory available: 21.4 GiB\nSystem disk: 186.2 GiB free\nUptime: 4.2 hours\n\nReports stay here in the cave.\nFull interactive tools open in a Kilix tab.");
+        failed+=shot(&scene,&canvas,argv[1],"station-report");
+        scene.station=9;scene.service_phase=1;
+        strcpy(scene.service_title,"Add a note:");
+        strcpy(scene.service_text,"Keep a reminder on the cave noticeboard.");
+        strcpy(scene.service_input,"Read the new archive entries");
+        failed+=shot(&scene,&canvas,argv[1],"station-input");
+    }
     sr_canvas_free(&canvas);
 #ifdef ZELL_RENDER_NEURONTE
     zell_neuronte_close();

@@ -161,6 +161,28 @@ static void test_tiles_are_pixel_exact(void)
     }
 }
 
+/* The Neuronte build paints the measured frame rate in the top right
+ * and leaves the rest of the picture alone. */
+static void test_framerate_is_shown(void)
+{
+    zell_scene scene;
+    sr_canvas off;
+    sr_canvas on;
+
+    expect(sr_canvas_init(&off, 320, 240) && sr_canvas_init(&on, 320, 240),
+           "framerate canvases allocate");
+    zell_scene_init(&scene, 320, 240);
+    zell_draw(&scene, &off);
+    scene.frame_rate = 60;
+    zell_draw(&scene, &on);
+    expect(differs(&off, &on, 240, 0, 320, 28) > 20,
+           "the frame rate is in the top right");
+    expect(differs(&off, &on, 0, 40, 320, 240) == 0,
+           "the frame rate stays in the corner");
+    sr_canvas_free(&off);
+    sr_canvas_free(&on);
+}
+
 /* Every screen draws, and the same scene gives the same frame twice. */
 static void test_screens_repeat(void)
 {
@@ -196,6 +218,7 @@ int main(void)
     test_untrained_and_utf8();
     test_sign_reads_voice();
     test_tiles_are_pixel_exact();
+    test_framerate_is_shown();
     test_screens_repeat();
     zell_neuronte_close();
     if (failures) {

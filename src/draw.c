@@ -151,6 +151,15 @@ int zell_answer_scroll_limit(int width, int height, const char *text)
     return total - rows;
 }
 
+int zell_service_scroll_limit(const zell_scene *s)
+{
+    int width=s->width-32;if(width>900)width=900;if(width<64)width=64;
+    int reserved=s->service_phase==1?100:32;
+    int rows=(s->height-44-44-28-reserved)/18;if(rows<1)rows=1;
+    int total=wrap_count(s->service_text,width-24);
+    return total>rows?total-rows:0;
+}
+
 static void draw_wrapped(sr_canvas *canvas, int x, int y, int max_width,
                          const char *text, uint32_t color, int skip, int max_rows)
 {
@@ -599,6 +608,32 @@ static void draw_burn(const zell_scene *scene, sr_canvas *canvas, int kilix_scal
     }
 }
 
+static void draw_framerate(const zell_scene *scene, sr_canvas *canvas)
+{
+#ifdef ZELL_RENDER_NEURONTE
+    char label[16];
+    int width;
+    int wrote;
+
+    if (scene->frame_rate < 1) {
+        return;
+    }
+    wrote = snprintf(label, sizeof label, "%d fps", scene->frame_rate);
+    if (wrote < 1 || (size_t)wrote >= sizeof label) {
+        return;
+    }
+    width = sr_text_width_in(SR_FONT_FIXED_8X16, label, 1);
+    if (width > canvas->w - 8) {
+        return;
+    }
+    sr_text_outlined(canvas, (float)(canvas->w - width - 6), 6.0f,
+                     label, 0xf4f1e8u, 1.0f, 1);
+#else
+    (void)scene;
+    (void)canvas;
+#endif
+}
+
 static void draw_hearts(const zell_scene *scene, sr_canvas *canvas)
 {
     int count = scene->max_hp;
@@ -624,6 +659,26 @@ static void draw_hearts(const zell_scene *scene, sr_canvas *canvas)
         blit_at(canvas, zell_heart(), edge, edge,
                 6 + index * step, 4, size, size, alpha);
     }
+}
+
+static void draw_history_switch(const zell_scene *scene, sr_canvas *canvas, int rows)
+{
+    float x;
+    float y;
+    uint32_t lever = scene->history_on ? 0xf2c14eu : 0x6a6458u;
+    uint32_t edge = scene->menu_index == rows ? 0xf2c14eu : 0xc8c2b4u;
+
+    zell_history_switch_point(canvas->w, canvas->h, rows, &x, &y);
+    sr_fill_rect(canvas, x - 7.0f, y - 11.0f, 14.0f, 22.0f, 0x1c1814u, 1.0f);
+    sr_stroke_rect(canvas, x - 7.0f, y - 11.0f, 14.0f, 22.0f, 1.0f,
+                   edge, 1.0f);
+    if (scene->history_on) {
+        sr_fill_rect(canvas, x - 1.0f, y - 9.0f, 3.0f, 10.0f, lever, 1.0f);
+    } else {
+        sr_fill_rect(canvas, x - 1.0f, y + 1.0f, 3.0f, 10.0f, lever, 1.0f);
+    }
+    sr_fill_circle(canvas, x, y, 2.5f, lever, 1.0f);
+    sr_text(canvas, x + 12.0f, y - 8.0f, "history", 0xf4f1e8u, 1.0f, 1);
 }
 
 static void choice(sr_canvas *canvas, int x, int y, const char *label, bool selected)
@@ -677,6 +732,9 @@ static void input_field(sr_canvas *canvas, int x, int y, int width,
                  1.0f, 16.0f, 0xf2c14eu, 1.0f);
 }
 
+
+#include "desktop_draw.inc"
+
 void zell_draw(const zell_scene *scene, sr_canvas *canvas)
 {
     int index;
@@ -687,6 +745,13 @@ void zell_draw(const zell_scene *scene, sr_canvas *canvas)
     const char *hint;
     int hint_w;
 
+    if (scene->desktop) {
+        desktop_base(scene, canvas);
+        if (scene->mode == ZELL_MODE_SERVICE) {desktop_service(scene, canvas);return;}
+        if (scene->mode == ZELL_MODE_DESK || scene->mode == ZELL_MODE_LAUNCHER) {desktop_panel(scene, canvas);return;}
+        if (scene->mode == ZELL_MODE_WALK) return;
+        desktop_dialogue(scene, canvas);return;
+    } else {
     sr_clear(canvas, 0x100e14u);
     draw_room(canvas);
     draw_voice_sign(canvas);
@@ -704,6 +769,7 @@ void zell_draw(const zell_scene *scene, sr_canvas *canvas)
     title_w = sr_text_width_in(SR_FONT_FIXED_8X16, "Zell", 1);
     title_x = (float)(canvas->w - title_w) / 2.0f;
     sr_text_outlined(canvas, title_x, 6.0f, "Zell", 0xf4f1e8u, 1.0f, 1);
+    }
     if (scene->mode == ZELL_MODE_WALK) {
         if (zell_near_switch(scene)) {
             hint = scene->voice_on ? "Enter  turn voice off"
@@ -717,6 +783,7 @@ void zell_draw(const zell_scene *scene, sr_canvas *canvas)
         sr_text_outlined(canvas, (float)(canvas->w - hint_w) / 2.0f,
                          (float)(canvas->h - 20),
                          hint, 0xd8d4c8u, 1.0f, 1);
+        draw_framerate(scene, canvas);
         return;
     }
 
@@ -745,6 +812,7 @@ void zell_draw(const zell_scene *scene, sr_canvas *canvas)
         hint_w = sr_text_width_in(SR_FONT_FIXED_8X16, hint, 1);
         sr_text(canvas, (float)(canvas->w - hint_w) / 2.0f,
                 (float)(canvas->h - 28), hint, 0xa8b0bdu, 1.0f, 1);
+        draw_framerate(scene, canvas);
         return;
     }
     if (scene->mode == ZELL_MODE_QUESTION) {
@@ -759,18 +827,28 @@ void zell_draw(const zell_scene *scene, sr_canvas *canvas)
         input_field(canvas, 20, top + 40, canvas->w - 40,
                     scene->question, scene->question_len);
         if (scene->mode == ZELL_MODE_QUESTION) {
-            for (index = 0; index < ZELL_PRESET_COUNT; index++) {
+            int rows = zell_scene_choice_rows(scene);
+
+            for (index = 0; index < rows; index++) {
                 choice(canvas, 20, top + 70 + index * 18,
-                       zell_question_label(index),
+                       zell_scene_choice(scene, index),
                        scene->menu_index == index);
             }
-            sr_text(canvas, 20.0f, (float)(canvas->h - 28),
-                    "Type in the field    Enter asks    Esc back",
-                    0xa8b0bdu, 1.0f, 1);
+            draw_history_switch(scene, canvas, rows);
+            if (scene->menu_index == rows) {
+                hint = scene->history_on ? "Enter  turn history off"
+                                         : "Enter  turn history on";
+            } else {
+                hint = "Type in the field    Enter asks    Esc back";
+            }
+            hint_w = sr_text_width_in(SR_FONT_FIXED_8X16, hint, 1);
+            sr_text(canvas, (float)(canvas->w - hint_w) / 2.0f,
+                    (float)(canvas->h - 28), hint, 0xa8b0bdu, 1.0f, 1);
         } else {
             sr_text(canvas, 20.0f, (float)(canvas->h - 28),
                     "Enter asks    Esc back", 0xa8b0bdu, 1.0f, 1);
         }
+        draw_framerate(scene, canvas);
         return;
     }
     if (scene->mode == ZELL_MODE_WAIT) {
@@ -780,6 +858,7 @@ void zell_draw(const zell_scene *scene, sr_canvas *canvas)
         sr_text(canvas, 20.0f, (float)top, line, 0xf4f1e8u, 1.0f, 1);
         sr_text(canvas, 20.0f, (float)(top + 22), "Esc cancels",
                 0xa8b0bdu, 1.0f, 1);
+        draw_framerate(scene, canvas);
         return;
     }
 }

@@ -20,6 +20,10 @@ int zell_router_prepare(const char *models_dir,
 
 int zell_router_should_switch(int superior, int stdout_bytes,
                               long elapsed_ms, int more);
+
+/* Keep one named model and take it off the 10 second clock.
+ * auto, empty, and an id that is not in the list leave the slots alone. */
+int zell_router_pin(zell_router_slot *slots, int count, const char *model_id);
 int zell_ask_succeeded(int status, const char *text);
 
 #endif

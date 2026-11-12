@@ -1,0 +1,20 @@
+#!/bin/sh
+# Stable command name for Zell Neuronte (Plebian-OS RC9 and later).
+set -eu
+runtime_root=${GPU_TERMINAL_HOME:-"$HOME/.local/gpu_terminal"}
+source_root=${GPU_TERMINAL_SOURCE_HOME:-"$HOME/gpu_terminal"}
+for app in "${ZELL_NEURONTE_HOME:-}" \
+    "$runtime_root/kilix/data/desktop-apps/kilix-zell" \
+    "$source_root/kilix-apps/kilix-zell"
+do
+    [ -n "$app" ] || continue
+    if [ -x "$app/zell-neuronte" ]; then
+        if [ -z "${ZELL_NEURONTE_WEIGHTS:-}" ] && [ -f "$app/weights/neuronte-split-v4.nrt" ]; then
+            ZELL_NEURONTE_WEIGHTS="$app/weights/neuronte-split-v4.nrt"
+            export ZELL_NEURONTE_WEIGHTS
+        fi
+        exec "$app/zell-neuronte" "$@"
+    fi
+done
+printf '%s\n' 'Zell Neuronte is not installed. Build kilix-apps/kilix-zell and run make install, or set ZELL_NEURONTE_HOME to its installed directory.' >&2
+exit 127

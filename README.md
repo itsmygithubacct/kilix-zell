@@ -1,104 +1,249 @@
-# kilix-zell
+# Zell Neuronte 0.1.0
 
-Walk Kilix, the firekitten, up to the Old Wizard in the current Kilix pane
-and ask a question. Kilix Ask answers when it can. Otherwise an installed
-model does. Kilix is the legend-cast walk pair from Kilix Land. Walking off
-the bottom of the frame returns to the shell.
+A walkable Kilix desktop inside a terminal pane. Kilix is an orange firekitten
+in a green adventurer outfit. Six staff members help with questions, logs,
+settings, system health, media, and documents.
 
-This is an unpinned RC8 candidate. It is not in a Plebian-OS release
-manifest, and it does not add a `kilix` launcher verb.
+The cave is a fixed **1536×1024 world**. Characters and furniture keep their
+size. The camera follows Kilix; smaller panes show less of the room. Work
+areas sit along the walls, leaving the central floor open.
 
-## Run
-
-```sh
-make
-~/gpu_terminal/kilix-apps/kilix-zell/zell
-```
-
-An interactive shell can use:
+## Start
 
 ```sh
-alias zell="$HOME/gpu_terminal/kilix-apps/kilix-zell/zell"
+make neuronte
+./zell-neuronte
+./zell-neuronte --version
+make install
+zell --version
 ```
 
-The program must be started on a terminal. Arrow keys or WASD walk. Enter
-beside the wizard opens Ask. A blank field sits under that word. Type a
-question there, or choose one with the arrow keys. Enter asks, and Esc steps
-back. Esc does not leave the walk. Ctrl-C does. Rock walls and the
-dark alcove block the walk. Walking through a campfire sets Kilix on fire for
-a moment and spends hearts. At zero hearts Kilix returns to the start of the
-cave. The documented way back to the shell is to walk off the bottom through
-the stairs.
+Requires Kitty graphics, C11, zlib, libm and Python 3. The default Neuronte
+dependency is `~/projects/neuronte`, with its library already built and
+`weights/neuronte-split-v4.nrt` present. `NEURONTE` and `NEURONTE_WEIGHTS`
+override build paths. `ZELL_NEURONTE_WEIGHTS` overrides the runtime weight file.
+The build does not modify that dependency.
 
-Kilix Ask is tried first: `kilix ask -- <question>` with no `--yes`. If that
-does not answer, a larger installed model is used when it starts to respond
-within 10 seconds. Otherwise Qwen3.5 0.8B answers. The model command is
-`kilix-llm run --model-id <id> -n 160`. Ask waits up to 45 seconds. A model
-waits up to 180 seconds. Esc during the wait cancels it.
+`make` also builds the original `zell` scene. The new desktop is in
+`zell-neuronte`. This is a local RC9 candidate, not a Plebian-OS release pin.
 
-The answer fills the pane. Up and Down scroll it when the reply is longer
-than the box, and Enter closes it. Paradee 8M reads the whole reply, in
-`bm_fable`.
+## Controls
 
-A switch on the back-left wall turns that voice on or off. A wooden sign
-above it reads "voice". Stand in front of the switch and press Enter.
-Voice starts on. The switch is saved at
-`~/.local/gpu_terminal/kilix-zell/state/voice.json`, or under
-`GPU_TERMINAL_HOME` when that is set. A missing Paradee runtime leaves the
-switch working and stays quiet.
+| Key | Action |
+| --- | --- |
+| Arrow keys / WASD | Walk; Up/Down select menu rows |
+| Hold Shift | Charge briefly, then dash straight ahead; release to stop |
+| Enter | Interact with a nearby character or object; open an action |
+| Tab | Open/close the quick launcher |
+| Esc | Back from menus; cancel questions; open launcher while walking |
+| Up / Down in an answer | Scroll the reply |
+| Ctrl-C | Exit Zell |
+| South doorway | Walk back to the launching shell |
 
-Preset questions:
+The minimap shows Kilix, stations and viewport. The launcher reaches all
+stations without walking. Menus scroll on smaller panes.
 
-- What time is it?
-- How much disk is free?
-- What is three times five?
-- How do I list panes?
-- What's the weather in Tokyo?
+## Work areas
 
-Your own question goes in the blank field under Ask.
+| Station | Actions |
+| --- | --- |
+| Wizard | Kilix Ask, then a local model; typed questions and ranked history |
+| Archivist | System/user journals, boot warnings, agent rollouts, Kilix transcripts, literal log search and other log files |
+| Administrator | Kilix settings, preview/install Debian packages, installed packages, user-service status/start/restart/stop, network status, GPU/model selection |
+| Housekeeper | Memory/load/uptime/GPU reports, free space, home-folder usage, processes, old thumbnail cleanup and package-cache cleanup |
+| DJ | Kilix Amp, files/URLs, creator feeds, playlists, transcription and volume controls |
+| Librarian | Books/documents, filename search, image OCR, searchable PDFs, read aloud, document conversion and text audiobook export |
 
-## Build
+The **TUI computer** runs `kilix-tui`; the **shell computer** runs `kilix shell`.
+Station dialogues stay inside the cave: choices, file browsing, text entry,
+confirmation prompts, reports, log previews, creator feeds and transcription jobs.
+Use arrows and Enter to choose, type into input fields, and Escape to go back or
+cancel work. Reports scroll with Up/Down. The helper runs separately so the cave
+keeps rendering while commands work. Long output is a bounded preview.
 
-C11, `libz`, and `libm`. The default `MODULES` path is the sibling
-`kilix-modules` tree (`kitty-framebuffer`, `kitty_keyboard`, and
-`soft-raster`).
+Full interactive tools (shell, TUI, editors, process monitor, volume mixer and
+privileged installation) open a separate Kilix tab. Return to the cave tab when
+ready; position and station context are preserved. Amp/video use their own windows.
+A failed tab launch is reported in the station window.
+
+The **wall map** opens applications, home, Downloads or a web URL. The
+**noticeboard** stores timestamped notes and opens an editor. The **voice
+lever** toggles wizard speech. The **wall clock** shows the calendar and health.
+The top bar shows local time and presentation FPS.
+
+## Existing tools
+
+Stations invoke programs with argument lists; user input is not inserted into
+shell commands. Missing tools are reported when selected.
+
+- Logs: `journalctl`, `less`; searches stop after 500 matching lines.
+- Administration: Kilix, `apt-get`, `sudo`, `dpkg-query`, `systemctl`, `ip`.
+- Media: `kilix-amp`, `kilix-mpv` or `mpv`, `yt-dlp`, `ffmpeg`, `alsamixer`.
+  Refresh followed sources to fetch uploads; following does not schedule downloads.
+- Documents: `kilix-pdf-conversion` for image OCR/conversion, `ocrmypdf` for
+  searchable PDFs, `kilix-tts` for reading/export and `xdg-open` for readers.
+- Applications: `kilix-launcher`, or XDG entries opened with `gio`.
+
+Optional OCR engines/readers may need installation. Package installation shows
+an apt simulation and asks for confirmation. Service changes and cleanup also
+require an explicit choice. Thumbnail cleanup selects regular files older than
+30 days under `~/.cache/thumbnails`, excluding symlinks. Package-cache cleanup
+uses `apt-get clean`, preserving installed software. Existing OCR/audiobook
+outputs are not overwritten.
+
+## State and models
+
+Zell stores state in `~/.local/gpu_terminal/kilix-zell/state`:
+
+- `model.json`: GPU/model selection, schema `kilix.zell.model/v1`, shared with Kilix 95.
+- `voice.json`: wizard speech toggle.
+- `history.json`: question history/ranking.
+- `media.json`: followed creators/playlists, cached uploads and seen markers (imports legacy `playlists.json`).
+- `transcripts/`: background job status and saved text.
+- `media-cache/`: downloaded MP3 audio for Kilix Amp; removable when no longer needed.
+- `notebook.txt`: notes.
+
+`KILIX_ZELL_STATE` overrides the state directory; `GPU_TERMINAL_HOME` overrides
+the shared root. Existing tools retain their own configuration locations.
+
+The wizard tries `kilix ask` first. Automatic routing tries a larger installed
+model if it starts answering within 10 seconds, otherwise Qwen 3.5 0.8B. A
+saved model is used by itself. Each call uses `kilix-llm run` and unloads after
+the answer; no resident server is started. Esc cancels. Paradee voice is optional.
+
+## Tests and artwork
+
+Sibling libraries: `kitty-framebuffer`, `kitty-input`, `soft-raster`. Neuronte
+provides text, shape and sprite rendering. The background is cached after its
+first Neuronte render.
 
 ```sh
-make test
-make
+make all neuronte
+make test test-neuronte
+make snap
+build/snap-neuronte /tmp/zell-preview 960 640
 ```
 
-### The Neuronte renderer
+Tests cover scene behavior, routing, output capture under a controlling
+terminal, cancellation, camera/resize, launcher, model schema, command/URL
+validation and cleanup boundaries. Tests do not install packages, delete real
+caches, play media or run OCR.
 
-`make RENDER=neuronte` builds a second program, `zell-neuronte`, beside
-`zell`. In it Neuronte nets draw the frame: the text, the outlines (thin
-block characters), the switch knob and Kilix's shadow (the circle
-character), and the sprites and tiles, whose every pixel goes through
-2 by 4 octant cells. Flat rectangle fills stay plain code. The layout is
-shared with `zell`: `src/draw_neuronte.c` gives the soft-raster calls a
-Neuronte body and includes `src/draw.c`.
+Original PNGs are in `assets/v0.1.0/`; prompts are in
+`assets/v0.1.0/prompts.json`. `tools/compile_desktop.py` uses Pillow to compile
+compressed embedded premultiplied ARGB data in `src/desktop_assets.c`. Normal builds do not
+regenerate assets or call an image service. Cutouts are filtered once to their
+fixed world size. Staff and Kilix animate while idle, with staggered timing. Legacy notices: `THIRD-PARTY.md`.
 
-It needs a Neuronte checkout with `make` run in it, at `NEURONTE`
-(default `~/projects/neuronte`), and loads `neuronte-split-v4.nrt` from
-there. `ZELL_NEURONTE_WEIGHTS` names another weight file at run time.
-`make test-neuronte` runs the scene tests against this renderer and its
-own checks, which are skipped when the weight file is absent. `make snap`
-builds `build/snap` and `build/snap-neuronte`, which write a picture of
-each screen without opening a pane.
+### DJ feeds, playback and transcripts
 
-`make test` checks the walk, the questions, the command arguments, the
-model router, the voice switch, and that the cave tiles, both sprites, and
-the campfires land on the frame. It does not open a pane, launch a model,
-or play audio. `src/sprites.c` and `src/room.c` are generated input.
-From `kilix-apps/kilix-zell`:
+Open music launches a separate Kilix Amp window. Listening to a URL first
+caches its audio as MP3; local audio opens directly. Video opens in Kilix MPV.
+Follow YouTube creator URLs, @handles or playlists, then use **Refresh followed
+sources** to fetch recent videos, Shorts and streams. Cached items remain new
+until opened or marked seen. Subscriptions are local to Zell.
 
-```sh
-python3 tools/paint_kilix.py
-python3 tools/paint_room.py
-```
+Choose **Watch and transcribe** or **Listen and transcribe** to start a background
+transcription alongside playback. **Transcripts and jobs** shows progress, partial
+text, completed transcripts and cancellation. Transcription processes the selected
+file or URL, not microphone/system audio, using the installed Kilix Whisper English
+model on CPU in one-minute chunks. Each chunk unloads its model; temporary audio
+is removed after completion or cancellation. Remote downloads require yt-dlp;
+conversion requires ffmpeg. Runtime/model overrides are `KILIX_ZELL_WHISPER` and
+`KILIX_ZELL_WHISPER_MODEL`. Live streams are not a continuous captioning service.
 
-The first crops Kilix Land's `legend-player.png` and refreshes the wizard
-from Shellda. The second copies Shellda's cave tiles and Legend of Kilix's
-campfire. A normal build does not run either command.
-`tools/extract_sprites.py` writes Clink's old frames and an API this tree
-no longer uses.
+The brass-and-teal **Neuronte shell switch** sits on the wall behind (above) the
+shell computer. Walk up to it and press Enter, or select it from Tab's station
+list. It opens the existing `neuronte-display` terminal with your interactive
+shell in a separate Kilix tab. Ctrl-A then q exits the Neuronte terminal.
+The normal shell computer remains available. The display module must be built;
+`KILIX_ZELL_NEURONTE_DISPLAY` can override the path to `neuronte_display.py`.
+
+### Local books, documents and music
+
+Librarian > Books and documents library and DJ > Music library on disk provide
+in-game instructions, file/folder import, search, refresh and removal. Adding a
+folder indexes supported files recursively without moving originals. Default
+places include Books, Documents, Downloads and Music under your home directory;
+you can also specify an external drive path. Scans skip symlinks, hidden folders
+and build/cache directories, and report a 10,000-entry scan limit. Saved folders
+refresh on request. Missing files stay listed so disconnected disks are visible.
+Removing a library reference never deletes its file; refreshing a saved folder
+can rediscover that file. Metadata lives in `library-documents.json` and
+`library-music.json` under Zell's state directory.
+
+`make install` installs the Neuronte executable, helper scripts, font weights and
+`~/.local/bin/zell`. The installed `zell` command always selects `zell-neuronte`,
+not the legacy raster scene. `ZELL_NEURONTE_HOME` overrides its application path.
+`DESTDIR`, `ZELL_INSTALL_DIR` and `ZELL_BIN_DIR` support packaging/staging.
+The RC9 OS candidate provisioner also installs this command in `/usr/local/bin`;
+the application payload must be included separately in the release image.
+
+### Running
+
+Hold either Shift key to charge a dash in place (24 simulation ticks, about
+0.4 seconds at 60 fps), then run at 9 world pixels per tick versus 3.5 walking.
+Choose a direction when charging, or use the direction Kilix is facing. The dash
+commits to that cardinal direction; release Shift to stop or turn. Walls and
+staff stop the dash with a brief bump; release Shift before charging again.
+A small bar shows the charge, and faster steps plus dust indicate running.
+Opening a station/menu cancels the dash. Shift still types normally in text fields.
+
+### Vitals and health hover
+
+The HUD shows Health, Mana and Fatigue. Hover the health bar for the OS-age and
+watched-project reasons behind the current value. A completed OS upgrade keeps
+OS health at 100% for 24 hours, then costs 10 percentage points per elapsed day,
+with a 10% floor. Successful upgrade history/stamps and Zell's completed-update
+record are local evidence; missing history is shown as unknown. `apt update`
+alone does not reset the age.
+
+Git Wizard in the Command Center registers project folders. Health watching is
+separate and off by default. Each staged, unstaged or untracked dirty file in a
+watched repository costs one percentage point, down to a combined 1% floor.
+Staged-plus-unstaged changes to one path count once; a rename counts once. Local
+Git scans refresh at most once per minute; missing repositories show errors.
+Nothing is automatically staged, committed, reset, cleaned or pushed.
+
+Fatigue represents remaining resource headroom: the smaller of CPU idle percent
+and available-memory percent, smoothed over samples. Lower health or headroom
+reduces walking and running speed, with a 35% speed floor. Mana averages the
+known Codex/Claude/Grok remaining percentages, using each provider's most
+restrictive unexpired window. Unknown providers remain unknown; stale values
+are marked. Wall clock > Check coding-token mana is the explicit refresh action.
+It reuses Claudex's shared `.loop/usage-pages.json`; a provider checked within the
+last hour is not contacted again. Opening Zell and its local monitor never
+initiates a provider check. Zell requests serialize; independent external
+Claudex writers retain their existing cache behavior.
+
+Administrator > Update OS in floating terminal runs exactly
+`sudo apt update && sudo apt -y upgrade` after an in-game confirmation. A real
+PTY renders through Neuronte in a floating panel above the room, including sudo's
+interactive prompt. Password input goes to the PTY; frames stay in anonymous
+shared memory. The completion record updates only when both commands succeed.
+Ctrl-C interrupts the command; press Enter at its final prompt to return. The
+terminal requires the existing neuronte-display module and Neuronte shared
+library; `KILIX_ZELL_NEURONTE_DISPLAY` and `ZELL_NEURONTE_LIBRARY` can select them.
+
+### Downstairs rooms
+
+Two floor hatches lead to the **Command Center** and **Laundry**. Enter interacts;
+the downstairs stair hatch returns to the cave. Tab lists the current room's
+stations. Five command-center screens bind to real Kilix coding tabs, with exact
+broker identities saved after successful creation. Interacting opens/focuses the
+session; monitor artwork is a portal, not a live video feed of hidden tabs.
+The controller can explicitly dispatch tasks to verified workers.
+
+**Git Wizard** can register projects, inspect changes, enable health watches and
+open project coding sessions on a screen or regular tab. **Pilot** previews
+project session arrangements (single, review pair, or coordinator and workers),
+then creates GPT-6 Astra sessions after your Launch choice. Successful receipts
+are saved individually; partial failure stops without retrying uncertain launches.
+Reassigning occupied screens retains earlier identities and asks first.
+
+Laundry bins represent mounted disk filesystems with source/mount labels and
+fill levels. Enter shows capacity and a read-only file browser. The eighth bin
+opens overflow disks if needed. Disconnected or inaccessible disks are reported;
+no cleanup or deletion is performed by digging through a bin.
+
+New work is on RC9 branches. Frozen RC8 release refs are unchanged.

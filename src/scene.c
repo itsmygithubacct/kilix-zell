@@ -1,6 +1,8 @@
 #include "scene.h"
+#include "desktop.h"
 #include "room.h"
 #include "draw.h"
+#include "history.h"
 #include "sprites.h"
 
 #include <math.h>
@@ -79,6 +81,8 @@ static void clamp_actor(zell_scene *scene)
 
 void zell_scene_init(zell_scene *scene, int width, int height)
 {
+    int index;
+
     memset(scene, 0, sizeof *scene);
     if (width < 32) {
         width = 32;
@@ -95,13 +99,19 @@ void zell_scene_init(zell_scene *scene, int width, int height)
     scene->hp = scene->max_hp;
     scene->route = ZELL_ROUTE_ASK;
     scene->voice_on = true;
+    scene->frame_rate = 0;
     memcpy(scene->answerer, "Kilix Ask", sizeof "Kilix Ask");
+    for (index = 0; index < ZELL_PRESET_COUNT; index++) {
+        zell_history_remember(scene->calls, &scene->call_count,
+                              ZELL_HISTORY_CAP, PRESETS[index], 0);
+    }
     place_wizard(scene);
     clamp_actor(scene);
 }
 
 void zell_scene_resize(zell_scene *scene, int width, int height)
 {
+    if (scene->desktop) { scene->width=width<32?32:width;scene->height=height<32?32:height;return; }
     float rx = scene->width > 0 ? scene->x / (float)scene->width : 0.5f;
     float ry = scene->height > 0 ? scene->y / (float)scene->height : 0.72f;
 
@@ -246,8 +256,60 @@ static void copy_text(char *destination, size_t capacity, const char *source)
     destination[length] = '\0';
 }
 
+static int is_preset_text(const char *text)
+{
+    int index;
+
+    for (index = 0; index < ZELL_PRESET_COUNT; index++) {
+        if (strcmp(PRESETS[index], text) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int lowest_custom(const zell_scene *scene)
+{
+    int index;
+    int lowest = -1;
+
+    for (index = 0; index < scene->call_count; index++) {
+        if (is_preset_text(scene->calls[index].text)) {
+            continue;
+        }
+        if (lowest < 0 ||
+            scene->calls[index].count < scene->calls[lowest].count) {
+            lowest = index;
+        }
+    }
+    return lowest;
+}
+
+static void note_call(zell_scene *scene, const char *question)
+{
+    int slot;
+    int lowest;
+
+    slot = zell_history_remember(scene->calls, &scene->call_count,
+                                 ZELL_HISTORY_CAP, question, 1);
+    if (slot >= 0) {
+        scene->history_changed = true;
+        return;
+    }
+    lowest = lowest_custom(scene);
+    if (lowest < 0) {
+        return;
+    }
+    memset(scene->calls[lowest].text, 0, sizeof scene->calls[lowest].text);
+    copy_text(scene->calls[lowest].text, sizeof scene->calls[lowest].text,
+              question);
+    scene->calls[lowest].count = 1;
+    scene->history_changed = true;
+}
+
 static void begin_request(zell_scene *scene, const char *question)
 {
+    note_call(scene, question);
     copy_text(scene->question, sizeof scene->question, question);
     scene->question_len = (int)strlen(scene->question);
     scene->answer[0] = '\0';
@@ -302,10 +364,105 @@ static void walk(zell_scene *scene, const zell_controls *controls)
     }
 }
 
+static int ask_top(int height)
+{
+    int top = height / 2;
+    int fitted = height - 220;
+
+    if (top > fitted) {
+        top = fitted;
+    }
+    if (top < 8) {
+        top = 8;
+    }
+    return top;
+}
+
+int zell_scene_choice_rows(const zell_scene *scene)
+{
+    int wanted;
+    int room;
+    int rows;
+
+    if (scene == NULL) {
+        return 0;
+    }
+    wanted = scene->history_on ? scene->call_count : ZELL_PRESET_COUNT;
+    if (wanted < 0) {
+        wanted = 0;
+    }
+    room = (scene->height - 28) - (ask_top(scene->height) + 70) - 30;
+    rows = room / 18;
+    if (rows < 1) {
+        rows = 1;
+    }
+    if (rows > wanted) {
+        rows = wanted;
+    }
+    if (rows > ZELL_HISTORY_CAP) {
+        rows = ZELL_HISTORY_CAP;
+    }
+    return rows;
+}
+
+const char *zell_scene_choice(const zell_scene *scene, int index)
+{
+    int order[ZELL_HISTORY_CAP];
+    int slot;
+
+    if (scene == NULL || index < 0 || index >= zell_scene_choice_rows(scene)) {
+        return "";
+    }
+    if (!scene->history_on) {
+        return zell_question_label(index);
+    }
+    zell_history_order(scene->calls, scene->call_count, order);
+    slot = order[index];
+    if (slot < 0 || slot >= scene->call_count) {
+        return "";
+    }
+    return scene->calls[slot].text;
+}
+
+void zell_history_switch_point(int width, int height, int rows,
+                               float *x, float *y)
+{
+    int list_bottom;
+    int gap_top;
+    int gap_bottom;
+    int center_y;
+
+    if (width < 1) {
+        width = 1;
+    }
+    if (height < 1) {
+        height = 1;
+    }
+    if (rows < 0) {
+        rows = 0;
+    }
+    list_bottom = ask_top(height) + 70 + rows * 18;
+    gap_top = list_bottom + 6;
+    gap_bottom = height - 32;
+    center_y = gap_top + 11;
+    if (gap_bottom - gap_top >= 22) {
+        center_y = (gap_top + gap_bottom) / 2;
+    }
+    if (center_y < list_bottom + 11) {
+        center_y = list_bottom + 11;
+    }
+    if (x != NULL) {
+        *x = (float)width * 0.5f;
+    }
+    if (y != NULL) {
+        *y = (float)center_y;
+    }
+}
+
 static int menu_limit(const zell_scene *scene)
 {
     if (scene->mode == ZELL_MODE_QUESTION) {
-        return ZELL_PRESET_COUNT;
+        return zell_scene_choice_rows(scene) + 1;
     }
     return 1;
 }
@@ -429,7 +586,7 @@ static void apply_burn(zell_scene *scene)
 
 static bool end_tick(zell_scene *scene)
 {
-    apply_burn(scene);
+    if (!scene->desktop) apply_burn(scene);
     return scene->leave;
 }
 
@@ -442,6 +599,7 @@ bool zell_scene_tick(zell_scene *scene, const zell_controls *controls)
     if (scene->leave) {
         return true;
     }
+    if (zell_desktop_tick(scene, controls)) return scene->leave;
     if (scene->mode == ZELL_MODE_WALK) {
         walk(scene, controls);
         if (scene->leave) {
@@ -477,7 +635,7 @@ bool zell_scene_tick(zell_scene *scene, const zell_controls *controls)
         return end_tick(scene);
     }
     if (scene->mode == ZELL_MODE_ANSWER) {
-        int limit = zell_answer_scroll_limit(scene->width, scene->height,
+        int limit = zell_answer_scroll_limit(scene->width, scene->height - (scene->desktop ? 42 : 0),
                                              scene->answer);
 
         if (scene->answer_scroll > limit) {
@@ -535,11 +693,18 @@ bool zell_scene_tick(zell_scene *scene, const zell_controls *controls)
         return end_tick(scene);
     }
     if (scene->mode == ZELL_MODE_QUESTION) {
+        int rows = zell_scene_choice_rows(scene);
+
         if (scene->question_len > 0) {
             begin_request(scene, scene->question);
-        } else if (scene->menu_index >= 0 &&
-                   scene->menu_index < ZELL_PRESET_COUNT) {
-            begin_request(scene, zell_question_label(scene->menu_index));
+        } else if (scene->menu_index == rows) {
+            scene->history_on = !scene->history_on;
+            scene->history_changed = true;
+            if (scene->menu_index > zell_scene_choice_rows(scene)) {
+                scene->menu_index = zell_scene_choice_rows(scene);
+            }
+        } else if (scene->menu_index >= 0 && scene->menu_index < rows) {
+            begin_request(scene, zell_scene_choice(scene, scene->menu_index));
         }
         return end_tick(scene);
     }
@@ -554,6 +719,7 @@ bool zell_scene_take_request(zell_scene *scene, zell_request *request)
     scene->request_ready = false;
     request->route = scene->route;
     request->model[0] = '\0';
+    request->device[0] = '\0';
     copy_text(request->question, sizeof request->question, scene->question);
     return request->question[0] != '\0';
 }
@@ -611,6 +777,16 @@ int zell_request_argv(const zell_request *request, const char **argv, int capaci
         argv[3] = request->model;
         argv[4] = "-n";
         argv[5] = "160";
+        if (request->device[0] != '\0') {
+            if (capacity < 10) {
+                return -1;
+            }
+            argv[6] = "--device";
+            argv[7] = request->device;
+            argv[8] = prompt;
+            argv[9] = NULL;
+            return 9;
+        }
         argv[6] = prompt;
         argv[7] = NULL;
         return 7;
@@ -621,4 +797,179 @@ int zell_request_argv(const zell_request *request, const char **argv, int capaci
     argv[3] = request->question;
     argv[4] = NULL;
     return 4;
+}
+
+static int preferred_gpu(const char *description)
+{
+    return strstr(description, "Quadro") != NULL
+        || strstr(description, "GeForce") != NULL
+        || strstr(description, "NVIDIA") != NULL
+        || strstr(description, "RTX") != NULL;
+}
+
+static int copy_vulkan_name(const char *line, char *name, size_t name_len)
+{
+    size_t i = 6;
+
+    if (strncmp(line, "Vulkan", 6) != 0 || name_len < 8) {
+        return 0;
+    }
+    if (line[i] < '0' || line[i] > '9') {
+        return 0;
+    }
+    while (line[i] >= '0' && line[i] <= '9') {
+        i++;
+        if (i + 1 >= name_len || i > 16) {
+            return 0;
+        }
+    }
+    if (line[i] != ':') {
+        return 0;
+    }
+    memcpy(name, line, i);
+    name[i] = '\0';
+    return 1;
+}
+
+int zell_llm_device_from_list(const char *text, char *name, size_t name_len)
+{
+    char best[32];
+    char only[32];
+    int count = 0;
+    int have_best = 0;
+    const char *cursor;
+
+    if (name == NULL || name_len == 0) {
+        return 0;
+    }
+    name[0] = '\0';
+    if (text == NULL || text[0] == '\0') {
+        return 0;
+    }
+    best[0] = '\0';
+    only[0] = '\0';
+    cursor = text;
+    while (*cursor != '\0') {
+        char line[256];
+        char parsed[32];
+        size_t n = 0;
+        const char *desc;
+
+        while (*cursor != '\0' && *cursor != '\n' && n + 1 < sizeof line) {
+            line[n] = *cursor;
+            n++;
+            cursor++;
+        }
+        line[n] = '\0';
+        if (*cursor == '\n') {
+            cursor++;
+        }
+        if (!copy_vulkan_name(line, parsed, sizeof parsed)) {
+            continue;
+        }
+        count++;
+        copy_text(only, sizeof only, parsed);
+        desc = strchr(line, ':');
+        if (desc != NULL && !have_best && preferred_gpu(desc + 1)) {
+            copy_text(best, sizeof best, parsed);
+            have_best = 1;
+        }
+    }
+    if (have_best) {
+        copy_text(name, name_len, best);
+        return name[0] != '\0';
+    }
+    if (count == 1) {
+        copy_text(name, name_len, only);
+        return name[0] != '\0';
+    }
+    return 0;
+}
+
+static const char *transcript_body(const char *text)
+{
+    const char *mark = NULL;
+    const char *p;
+
+    if (text == NULL || text[0] == '\0') {
+        return NULL;
+    }
+    if (text[0] == '>') {
+        mark = text;
+    }
+    p = text;
+    while ((p = strstr(p, "\n> ")) != NULL) {
+        mark = p + 1;
+        p += 3;
+    }
+    if (mark == NULL) {
+        return NULL;
+    }
+    p = strchr(mark, '\n');
+    if (p == NULL) {
+        return NULL;
+    }
+    return p + 1;
+}
+
+static int is_space_byte(char byte)
+{
+    return byte == ' ' || byte == '\t' || byte == '\n' || byte == '\r';
+}
+
+int zell_llm_reply(const char *text, char *out, size_t out_len)
+{
+    const char *body;
+    const char *reply;
+    const char *cut = NULL;
+    const char *prompt_line;
+    const char *exiting;
+    size_t length;
+    size_t skip;
+
+    if (out != NULL && out_len > 0) {
+        out[0] = '\0';
+    }
+    body = transcript_body(text);
+    if (body == NULL) {
+        return -1;
+    }
+    prompt_line = strstr(body, "\n[ Prompt:");
+    exiting = strstr(body, "\nExiting...");
+    if (prompt_line != NULL) {
+        cut = prompt_line;
+    }
+    if (exiting != NULL && (cut == NULL || exiting < cut)) {
+        cut = exiting;
+    }
+    length = cut != NULL ? (size_t)(cut - body) : strlen(body);
+    while (length > 0 && is_space_byte(body[length - 1])) {
+        length--;
+    }
+    skip = 0;
+    while (skip < length && is_space_byte(body[skip])) {
+        skip++;
+    }
+    reply = body + skip;
+    length -= skip;
+    if (length == 0) {
+        return 0;
+    }
+    if (length > 1000000u) {
+        length = 1000000u;
+    }
+    if (out == NULL || out_len == 0) {
+        return (int)length;
+    }
+    if (length >= out_len) {
+        length = out_len - 1;
+    }
+    memcpy(out, reply, length);
+    out[length] = '\0';
+    return (int)length;
+}
+
+int zell_llm_reply_started(const char *text)
+{
+    return zell_llm_reply(text, NULL, 0) > 0;
 }

@@ -1,7 +1,10 @@
 #include "draw.h"
+#include "desktop.h"
 #ifdef ZELL_RENDER_NEURONTE
 #include "draw_neuronte.h"
 #endif
+#include "history.h"
+#include "model.h"
 #include "router.h"
 #include "scene.h"
 #include "voice.h"
@@ -17,6 +20,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <sys/mman.h>
+#include <sys/syscall.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -35,6 +40,37 @@ static int64_t now_ms(void)
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+#include "desktop_input.inc"
+
+/* Samples the present loop twice a second. The first half second stays 0. */
+static void note_frame(zell_scene *scene)
+{
+    static int64_t window_ms;
+    static int frames;
+    int64_t now = now_ms();
+    int64_t elapsed;
+    int rate;
+
+    if (window_ms == 0) {
+        window_ms = now;
+    }
+    frames += 1;
+    elapsed = now - window_ms;
+    if (elapsed < 500) {
+        return;
+    }
+    rate = (int)((int64_t)frames * 1000 / elapsed);
+    if (rate < 1) {
+        rate = 1;
+    }
+    if (rate > 999) {
+        rate = 999;
+    }
+    scene->frame_rate = rate;
+    frames = 0;
+    window_ms = now;
 }
 
 enum { ZELL_PHASE_ASK = 0, ZELL_PHASE_LLM = 1 };
@@ -307,6 +343,46 @@ static void sync_voice(zell_scene *scene, zell_speech *speech, unsigned *spoken)
     speech_poll(speech);
 }
 
+static void sync_history(zell_scene *scene)
+{
+    if (!scene->history_changed) {
+        return;
+    }
+    zell_history_save(zell_history_state_path(), scene->history_on ? 1 : 0,
+                      scene->calls, scene->call_count);
+    scene->history_changed = false;
+}
+
+static void load_history(zell_scene *scene)
+{
+    zell_history_call loaded[ZELL_HISTORY_CAP];
+    int enabled = 0;
+    int count = 0;
+    int status = zell_history_load(zell_history_state_path(), &enabled,
+                                   loaded, ZELL_HISTORY_CAP, &count);
+    int index;
+
+    if (status == 1) {
+        scene->history_on = enabled != 0;
+        scene->call_count = 0;
+        for (index = 0; index < count; index++) {
+            zell_history_remember(scene->calls, &scene->call_count,
+                                  ZELL_HISTORY_CAP, loaded[index].text,
+                                  loaded[index].count);
+        }
+        for (index = 0; index < ZELL_PRESET_COUNT; index++) {
+            zell_history_remember(scene->calls, &scene->call_count,
+                                  ZELL_HISTORY_CAP,
+                                  zell_question_label(index), 0);
+        }
+    }
+    scene->history_changed = false;
+    if (status == 0) {
+        zell_history_save(zell_history_state_path(), 0,
+                          scene->calls, scene->call_count);
+    }
+}
+
 static void load_voice(zell_scene *scene)
 {
     int enabled = 1;
@@ -332,7 +408,6 @@ static void append_out(zell_turn *turn, const char *bytes, size_t count)
     if (count == 0) {
         return;
     }
-    turn->stdout_bytes = 1;
     room = sizeof turn->text - turn->length - 1;
     if (count > room) {
         count = room;
@@ -343,6 +418,11 @@ static void append_out(zell_turn *turn, const char *bytes, size_t count)
     memcpy(turn->text + turn->length, bytes, count);
     turn->length += count;
     turn->text[turn->length] = '\0';
+    /* The llama-cli banner and "Loading model" spinner are not an answer.
+     * The 10 second clock waits until the reply text itself appears. */
+    if (turn->phase == ZELL_PHASE_ASK || zell_llm_reply_started(turn->text)) {
+        turn->stdout_bytes = 1;
+    }
 }
 
 static void append_err(zell_turn *turn, const char *bytes, size_t count)
@@ -390,15 +470,93 @@ static void drain(zell_proc *proc, zell_turn *turn)
     }
 }
 
+static void read_device_list(char *buf, size_t buf_len)
+{
+    int fds[2];
+    pid_t pid;
+    size_t got = 0;
+    ssize_t count;
+    int devnull;
+
+    if (buf_len < 2 || pipe(fds) != 0) {
+        if (buf_len > 0) {
+            buf[0] = '\0';
+        }
+        return;
+    }
+    pid = fork();
+    if (pid < 0) {
+        close(fds[0]);
+        close(fds[1]);
+        buf[0] = '\0';
+        return;
+    }
+    if (pid == 0) {
+        devnull = open("/dev/null", O_RDWR);
+        if (devnull >= 0) {
+            if (dup2(devnull, STDIN_FILENO) < 0 || dup2(devnull, STDERR_FILENO) < 0) {
+                _exit(127);
+            }
+            if (devnull > STDERR_FILENO) {
+                close(devnull);
+            }
+        }
+        if (dup2(fds[1], STDOUT_FILENO) < 0) {
+            _exit(127);
+        }
+        close(fds[0]);
+        close(fds[1]);
+        execlp("kilix-llm", "kilix-llm", "devices", (char *)NULL);
+        _exit(127);
+    }
+    close(fds[1]);
+    while (got + 1 < buf_len) {
+        count = read(fds[0], buf + got, buf_len - 1 - got);
+        if (count <= 0) {
+            break;
+        }
+        got += (size_t)count;
+    }
+    buf[got] = '\0';
+    close(fds[0]);
+    waitpid(pid, NULL, 0);
+}
+
+static void choose_llm_device(char *out, size_t out_len)
+{
+    static int probed;
+    static char automatic[32];
+    const char *env;
+    char configured[32];
+    char list[2048];
+
+    env = getenv("KILIX_ZELL_LLM_DEVICE");
+    if (env != NULL && env[0] != '\0') {
+        copy_text(out, out_len, env);
+        return;
+    }
+    if (zell_model_device(configured, sizeof configured)) {
+        copy_text(out, out_len, configured);
+        return;
+    }
+    if (!probed) {
+        automatic[0] = '\0';
+        read_device_list(list, sizeof list);
+        zell_llm_device_from_list(list, automatic, sizeof automatic);
+        probed = 1;
+    }
+    copy_text(out, out_len, automatic);
+}
+
 static bool proc_start(zell_proc *proc, const zell_request *request, int limit_ms)
 {
     int out_pipe[2];
     int err_pipe[2];
-    const char *argv[8];
+    const char *argv[10];
     pid_t pid;
     int devnull;
 
-    if (zell_request_argv(request, argv, 8) < 0) {
+    if (zell_request_argv(request, argv, 10) < 0) {
         return false;
     }
     if (pipe(out_pipe) != 0) {
@@ -418,7 +576,11 @@ static bool proc_start(zell_proc *proc, const zell_request *request, int limit_m
         return false;
     }
     if (pid == 0) {
-        if (setpgid(0, 0) != 0) {
+        /* llama-cli opens /dev/tty even when stdout is piped. A new
+         * session keeps all question output in our pipes and gives cancellation
+         * its own process group. Do not setpgid in the parent: that would
+         * make the child a group leader before setsid can run. */
+        if (setsid() < 0) {
             _exit(127);
         }
         devnull = open("/dev/null", O_RDONLY);
@@ -438,12 +600,12 @@ static bool proc_start(zell_proc *proc, const zell_request *request, int limit_m
         execvp(argv[0], (char *const *)argv);
         _exit(127);
     }
-    setpgid(pid, pid);
     close(out_pipe[1]);
     close(err_pipe[1]);
     if (!set_nonblock(out_pipe[0]) || !set_nonblock(err_pipe[0])) {
         close(out_pipe[0]);
         close(err_pipe[0]);
+        kill(-pid, SIGKILL);
         kill(pid, SIGKILL);
         waitpid(pid, NULL, 0);
         return false;
@@ -495,6 +657,7 @@ static bool start_llm(zell_proc *proc, zell_turn *turn, zell_scene *scene)
     turn->phase = ZELL_PHASE_LLM;
     turn->request.route = ZELL_ROUTE_LLM;
     copy_text(turn->request.model, sizeof turn->request.model, model_id);
+    choose_llm_device(turn->request.device, sizeof turn->request.device);
     scene->route = ZELL_ROUTE_LLM;
     zell_scene_set_answerer(scene, zell_model_label(model_id));
     return proc_start(proc, &turn->request, 180000);
@@ -508,8 +671,12 @@ static void fail_start(zell_turn *turn, zell_scene *scene)
 
 static void fall_through(zell_proc *proc, zell_turn *turn, zell_scene *scene)
 {
+    char chosen[40];
+
     turn->slot_count = zell_router_prepare(zell_models_dir(), turn->slots,
                                            ZELL_ROUTER_SLOTS);
+    zell_model_id(chosen, sizeof chosen);
+    turn->slot_count = zell_router_pin(turn->slots, turn->slot_count, chosen);
     turn->slot = 0;
     turn_clear_text(turn);
     if (!start_llm(proc, turn, scene)) {
@@ -529,8 +696,12 @@ static void begin_next_model(zell_proc *proc, zell_turn *turn, zell_scene *scene
 static void finish_output(zell_turn *turn, zell_scene *scene, int status)
 {
     char line[80];
+    char reply[6000];
+    int extracted = zell_llm_reply(turn->text, reply, sizeof reply);
 
-    if (turn->length > 0) {
+    if (extracted > 0) {
+        zell_scene_finish_request(scene, reply);
+    } else if (extracted < 0 && turn->length > 0) {
         zell_scene_finish_request(scene, turn->text);
     } else if (zell_ask_succeeded(0, turn->err_text)) {
         zell_scene_finish_request(scene, turn->err_text);
@@ -613,13 +784,82 @@ static unsigned typed_character(const kittykb_event *event)
     return 0;
 }
 
+/* UTF-8 and explicit lengths preserve non-ASCII passwords and NUL controls. */
+static size_t terminal_utf8(uint32_t cp,unsigned char *out){
+    if(cp<=0x7f){out[0]=(unsigned char)cp;return 1;}
+    if(cp<=0x7ff){out[0]=(unsigned char)(0xc0|(cp>>6));out[1]=(unsigned char)(0x80|(cp&63));return 2;}
+    if(cp>=0xd800&&cp<=0xdfff)return 0;
+    if(cp<=0xffff){out[0]=(unsigned char)(0xe0|(cp>>12));out[1]=(unsigned char)(0x80|((cp>>6)&63));out[2]=(unsigned char)(0x80|(cp&63));return 3;}
+    if(cp<=0x10ffff){out[0]=(unsigned char)(0xf0|(cp>>18));out[1]=(unsigned char)(0x80|((cp>>12)&63));out[2]=(unsigned char)(0x80|((cp>>6)&63));out[3]=(unsigned char)(0x80|(cp&63));return 4;}
+    return 0;
+}
+#define TERMINAL_KEY_BYTES (KITTYKB_MAX_TEXT_CODEPOINTS*4u+32u)
+static size_t terminal_key_bytes(const kittykb_event *event,unsigned char *out){
+    if(event->action==KITTYKB_ACTION_RELEASE)return 0;
+    const char *bytes=NULL;size_t n=0;
+    unsigned key=event->key;
+    if(key==KITTYKB_KEY_ENTER)bytes="\r";
+    else if(key==KITTYKB_KEY_BACKSPACE)bytes="\177";
+    else if(key==KITTYKB_KEY_TAB)bytes=(event->modifiers&KITTYKB_MOD_SHIFT)?"\033[Z":"\t";
+    else if(key==KITTYKB_KEY_ESCAPE)bytes="\033";
+    else if(key==KITTYKB_KEY_UP)bytes="\033[A";
+    else if(key==KITTYKB_KEY_DOWN)bytes="\033[B";
+    else if(key==KITTYKB_KEY_RIGHT)bytes="\033[C";
+    else if(key==KITTYKB_KEY_LEFT)bytes="\033[D";
+    else if(key==KITTYKB_KEY_HOME)bytes="\033[H";
+    else if(key==KITTYKB_KEY_END)bytes="\033[F";
+    else if(key==KITTYKB_KEY_INSERT)bytes="\033[2~";
+    else if(key==KITTYKB_KEY_DELETE)bytes="\033[3~";
+    else if(key==KITTYKB_KEY_PAGE_UP)bytes="\033[5~";
+    else if(key==KITTYKB_KEY_PAGE_DOWN)bytes="\033[6~";
+    else if(key>=KITTYKB_KEY_F1&&key<=KITTYKB_KEY_F12){
+        static const char *functions[]={"\033OP","\033OQ","\033OR","\033OS","\033[15~","\033[17~","\033[18~","\033[19~","\033[20~","\033[21~","\033[23~","\033[24~"};
+        bytes=functions[key-KITTYKB_KEY_F1];
+    }
+    if(event->modifiers&KITTYKB_MOD_ALT)out[n++]=27;
+    if(bytes){size_t length=strlen(bytes);memcpy(out+n,bytes,length);return n+length;}
+    if((event->modifiers&KITTYKB_MOD_CTRL)&&
+       (key==32||key==63||(key>=64&&key<=127))){
+        out[n++]=(unsigned char)(key==63?127:key&31u);return n;
+    }
+    if(event->text_length){
+        for(size_t i=0;i<event->text_length&&i<KITTYKB_MAX_TEXT_CODEPOINTS;i++)n+=terminal_utf8(event->text[i],out+n);
+    }else if(key&&!(key>=KITTYKB_KEY_ESCAPE&&key<=KITTYKB_KEY_ISO_LEVEL5_SHIFT)){
+        if((event->modifiers&KITTYKB_MOD_SHIFT)&&event->shifted_key)key=event->shifted_key;
+        n+=terminal_utf8(key,out+n);
+    }else return 0; /* Modifier-only events must not generate an Alt escape. */
+    return n;
+}
+
 static void read_controls(zell_scene *scene, zell_controls *controls)
 {
     kittykb_event event;
 
     memset(controls, 0, sizeof *controls);
-    bool typing = scene->mode == ZELL_MODE_QUESTION || scene->mode == ZELL_MODE_TYPE;
+    bool typing = scene->mode == ZELL_MODE_QUESTION || scene->mode == ZELL_MODE_TYPE ||
+                  (scene->mode == ZELL_MODE_SERVICE && scene->service_phase == 1);
 
+    controls->run = !typing &&
+        (kittykb_input_key_down(&keyboard.input, KITTYKB_KEY_LEFT_SHIFT) ||
+         kittykb_input_key_down(&keyboard.input, KITTYKB_KEY_RIGHT_SHIFT));
+
+    if(scene->mode==ZELL_MODE_SERVICE&&scene->service_phase==5){
+        size_t at=scene->service_send?strlen(scene->service_reply):0;
+        if(at&&scene->service_reply[at-1]=='\n')at--;
+        if(!at)scene->service_reply[at++]='K';
+        controls->run=false;
+        /* Leave queued events untouched until the previous pipe batch can drain. */
+        while(at+2u*TERMINAL_KEY_BYTES+2u<=sizeof scene->service_reply&&
+              kittykb_input_next(&keyboard.input,&event)){
+            unsigned char bytes[TERMINAL_KEY_BYTES];size_t length=terminal_key_bytes(&event,bytes);
+            for(size_t i=0;i<length;i++){
+                unsigned ch=bytes[i];static const char hex[]="0123456789abcdef";
+                scene->service_reply[at++]=hex[ch>>4];scene->service_reply[at++]=hex[ch&15];
+            }
+        }
+        if(at>1){scene->service_reply[at++]='\n';scene->service_reply[at]=0;scene->service_send=true;}
+        return;
+    }
     if (kittykb_input_key_down(&keyboard.input, KITTYKB_KEY_LEFT) ||
         (!typing && (kittykb_input_key_down(&keyboard.input, (uint32_t)'a') ||
                      kittykb_input_key_down(&keyboard.input, (uint32_t)'A')))) {
@@ -644,17 +884,17 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
         if (event.action == KITTYKB_ACTION_RELEASE) {
             continue;
         }
-        if (event.key == KITTYKB_KEY_ESCAPE && event.action == KITTYKB_ACTION_PRESS) {
+        if (event.key == KITTYKB_KEY_TAB && event.action == KITTYKB_ACTION_PRESS) {
+            controls->launcher = true;
+        } else if (event.key == KITTYKB_KEY_ESCAPE && event.action == KITTYKB_ACTION_PRESS) {
             controls->cancel = true;
         } else if (event.key == KITTYKB_KEY_ENTER &&
                    event.action == KITTYKB_ACTION_PRESS) {
             controls->confirm = true;
         } else if (event.key == KITTYKB_KEY_BACKSPACE &&
-                   (scene->mode == ZELL_MODE_TYPE ||
-                    scene->mode == ZELL_MODE_QUESTION)) {
+                   typing) {
             controls->backspace = true;
-        } else if (scene->mode == ZELL_MODE_TYPE ||
-                   scene->mode == ZELL_MODE_QUESTION) {
+        } else if (typing) {
             unsigned character = typed_character(&event);
             if (character != 0) {
                 controls->character = character;
@@ -704,6 +944,8 @@ static bool present_scene(zell_scene *scene, sr_canvas *canvas, uint8_t **rgba,
     return kittyfb_present(&framebuffer, *rgba, width, height);
 }
 
+#include "desktop_service.inc"
+
 static int run_scene(void)
 {
     kittyfb_options fb_options;
@@ -712,6 +954,8 @@ static int run_scene(void)
     zell_proc proc;
     zell_turn turn;
     zell_speech speech;
+    desktop_service service={.in_fd=-1,.out_fd=-1,.frame_fd=-1};
+    desktop_service vitals={.in_fd=-1,.out_fd=-1,.frame_fd=-1};
     unsigned spoken = 0;
     sr_canvas canvas;
     uint8_t *rgba = NULL;
@@ -750,22 +994,35 @@ static int run_scene(void)
     action.sa_handler = on_signal;
     sigaction(SIGINT, &action, NULL);
     sigaction(SIGTERM, &action, NULL);
+    signal(SIGPIPE,SIG_IGN);
     zell_scene_init(&scene, kittyfb_width(&framebuffer),
                     kittyfb_height(&framebuffer));
+#ifdef ZELL_RENDER_NEURONTE
+    zell_desktop_init(&scene);
+#endif
+    if(scene.desktop)service_start_mode(&vitals,&scene,true);
+    if(scene.desktop)desktop_mouse_mode(true);
     load_voice(&scene);
+    load_history(&scene);
 
     while (!stop_requested && !scene.leave) {
         struct pollfd poll_fd = { .fd = STDIN_FILENO, .events = POLLIN };
         zell_controls controls;
 
         poll(&poll_fd, 1, 16);
-        if (kittykb_terminal_read(&keyboard) < 0 && errno != EINTR) {
+        if ((scene.desktop?desktop_input_read(&scene):kittykb_terminal_read(&keyboard)) < 0 && errno != EINTR) {
             break;
         }
         read_controls(&scene, &controls);
         if (zell_scene_tick(&scene, &controls)) {
             break;
         }
+        if (scene.desktop_launch) {
+            speech_stop(&speech);proc_stop(&proc);
+            service_start(&service,&scene);
+        }
+        service_pump(&vitals,&scene);
+        service_pump(&service,&scene);
         if (scene.mode != ZELL_MODE_WAIT) {
             if (proc.active) {
                 proc_stop(&proc);
@@ -793,11 +1050,17 @@ static int run_scene(void)
             pump(&proc, &turn, &scene);
         }
         sync_voice(&scene, &speech, &spoken);
+        sync_history(&scene);
         if (!present_scene(&scene, &canvas, &rgba, &rgba_bytes)) {
             break;
         }
+        note_frame(&scene);
     }
 
+    service_stop(&vitals);
+    service_stop(&service);
+    free(scene.terminal_pixels);
+    if(scene.desktop)desktop_mouse_mode(false);
     speech_stop(&speech);
     proc_stop(&proc);
     free(rgba);
@@ -809,6 +1072,7 @@ static int run_scene(void)
 
 int main(int argc, char **argv)
 {
+    if (argc == 2 && strcmp(argv[1], "--version") == 0) { puts("zell-neuronte " ZELL_VERSION); return 0; }
     if (argc == 2 && strcmp(argv[1], "--selftest") == 0) {
         fputs("zell: run make test\n", stdout);
         return 0;

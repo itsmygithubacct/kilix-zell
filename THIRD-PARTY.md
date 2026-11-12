@@ -78,3 +78,10 @@ Answers are spoken by Paradee 8M, voice `bm_fable`, when
 `/usr/lib/kilix/paradee` and its Python are installed.
 `tools/paradee_speak.py` calls that ONNX. The weights are not in this
 repository. Paradee is Apache-2.0.
+
+## Zell Neuronte 0.1.0 artwork
+
+The cave, cast, workstation sheet and walk atlas were generated for this
+version with the built-in image generation tool. Source PNGs and production
+prompts live under `assets/v0.1.0`. They are compiled separately from the legacy
+Shellda and Kilix Land assets. Kilix wears a green fantasy adventurer outfit.

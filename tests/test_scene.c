@@ -1,4 +1,6 @@
 #include "draw.h"
+#include "history.h"
+#include "model.h"
 #include "room.h"
 #include "router.h"
 #include "scene.h"
@@ -233,6 +235,53 @@ static void test_wizard_question_routes(void)
     for (index = 0; index < argc; index++) {
         expect(strcmp(argv[index], "--yes") != 0, "the model command has no --yes");
     }
+    memcpy(request.device, "Vulkan1", sizeof "Vulkan1");
+    expect(zell_request_argv(&request, argv, 8) < 0,
+           "naming a GPU needs a longer argv");
+    {
+        const char *wide[10];
+        char name[32];
+        char reply[80];
+        const char *transcript =
+            "\n\nLoading model...\n\n"
+            "banner\n"
+            "\n> Answer in a few sentences: What time is it?\n"
+            "Hello! How can I help you today?\n"
+            "\n[ Prompt: 1 t/s | Generation: 1 t/s ]\n"
+            "\nExiting...\n";
+
+        argc = zell_request_argv(&request, wide, 10);
+        expect(argc == 9, "the model command names the GPU");
+        expect(strcmp(wide[6], "--device") == 0 && strcmp(wide[7], "Vulkan1") == 0,
+               "the GPU is one argument");
+        expect(strstr(wide[8], "Answer in a few sentences: What time is it?") != NULL,
+               "the prompt stays after the GPU");
+        expect(wide[9] == NULL, "the GPU command is terminated");
+        expect(zell_llm_device_from_list(
+                   "Vulkan0: Intel(R) UHD Graphics 630 (CFL GT2)\n"
+                   "Vulkan1: Quadro RTX 3000 (6390 MiB, 5985 MiB free)\n",
+                   name, sizeof name) == 1,
+               "the Quadro is chosen over the integrated GPU");
+        expect(strcmp(name, "Vulkan1") == 0, "the Quadro device is Vulkan1");
+        expect(zell_llm_device_from_list("Vulkan0: Intel(R) UHD Graphics\n",
+                                         name, sizeof name) == 1,
+               "a single GPU is used");
+        expect(strcmp(name, "Vulkan0") == 0, "the only device keeps its name");
+        expect(zell_llm_device_from_list(
+                   "Vulkan0: AMD One\nVulkan1: AMD Other\n",
+                   name, sizeof name) == 0,
+               "two unmatched GPUs are not guessed");
+        expect(!zell_llm_reply_started("\n\nLoading model...\n"),
+               "the load spinner is not a reply");
+        expect(zell_llm_reply("\n> Answer in a few sentences: Hi\n\n",
+                              reply, sizeof reply) == 0,
+               "a prompt echo with no reply is not an answer");
+        expect(zell_llm_reply_started(transcript), "a transcript reply has started");
+        expect(zell_llm_reply(transcript, reply, sizeof reply) > 0,
+               "the transcript has a reply");
+        expect(strcmp(reply, "Hello! How can I help you today?") == 0,
+               "the reply drops the banner and the timings");
+    }
     request.model[0] = '\0';
     expect(zell_request_argv(&request, argv, 8) < 0, "an LLM needs a model id");
 
@@ -337,6 +386,88 @@ static void test_router_prefers_a_fast_model(void)
     count = zell_router_prepare(directory, slots, ZELL_ROUTER_SLOTS);
     expect(count == 1, "an empty directory still names the stock 0.8B");
     expect_slot(&slots[0], "qwen3.5-0.8b", 0, "the empty directory is not superior");
+    rmdir(directory);
+}
+
+static void test_model_file_pins_the_router(void)
+{
+    int ready[ZELL_ROUTER_SLOTS];
+    zell_router_slot slots[ZELL_ROUTER_SLOTS];
+    char directory[] = "/tmp/zell-model-XXXXXX";
+    char path[320];
+    char device[32];
+    char model[40];
+    char previous[400];
+    const char *saved;
+    FILE *file;
+    int count;
+    int wrote;
+
+    memset(ready, 0, sizeof ready);
+    ready[0] = 1;
+    ready[1] = 1;
+    ready[2] = 1;
+    count = zell_router_fill(ready, slots, ZELL_ROUTER_SLOTS);
+    expect(zell_router_pin(slots, count, "auto") == 3, "auto keeps the router");
+    count = zell_router_pin(slots, count, "qwen3.5-4b");
+    expect(count == 1, "a chosen model is the only slot");
+    expect_slot(&slots[0], "qwen3.5-4b", 0,
+                "a chosen model is not on the 10 second clock");
+
+    memset(ready, 0, sizeof ready);
+    ready[1] = 1;
+    count = zell_router_fill(ready, slots, ZELL_ROUTER_SLOTS);
+    expect(zell_router_pin(slots, count, "qwen3.8-27b") == count,
+           "a model that is not installed keeps the router");
+
+    expect(zell_model_parse(
+               "{\n  \"schema\": \"kilix.zell.model/v1\",\n"
+               "  \"device\": \"Vulkan1\",\n"
+               "  \"model\": \"qwen3.5-0.8b\"\n}\n",
+               device, sizeof device, model, sizeof model) == 1,
+           "a model file parses");
+    expect(strcmp(device, "Vulkan1") == 0 && strcmp(model, "qwen3.5-0.8b") == 0,
+           "the file names the GPU and the model");
+    expect(zell_model_parse("{", device, sizeof device, model, sizeof model) < 0,
+           "a file without the schema is unusable");
+    expect(strcmp(device, "auto") == 0 && strcmp(model, "auto") == 0,
+           "an unusable file means automatic");
+
+    if (mkdtemp(directory) == NULL) {
+        expect(0, "model state directory");
+        return;
+    }
+    saved = getenv("KILIX_ZELL_STATE");
+    previous[0] = '\0';
+    if (saved != NULL) {
+        wrote = snprintf(previous, sizeof previous, "%s", saved);
+        expect(wrote > 0 && (size_t)wrote < sizeof previous,
+               "the previous state directory fits");
+    }
+    setenv("KILIX_ZELL_STATE", directory, 1);
+    wrote = snprintf(path, sizeof path, "%s/model.json", directory);
+    expect(wrote > 0 && (size_t)wrote < sizeof path, "the model path fits");
+    file = fopen(path, "w");
+    expect(file != NULL, "model file can be written");
+    if (file != NULL) {
+        fputs("{\n  \"schema\": \"kilix.zell.model/v1\",\n"
+              "  \"device\": \"Vulkan1\",\n"
+              "  \"model\": \"qwen3.5-4b\"\n}\n",
+              file);
+        fclose(file);
+    }
+    expect(strcmp(zell_model_state_path(), path) == 0,
+           "model state stays beside the voice file");
+    expect(zell_model_load(device, sizeof device, model, sizeof model) == 1,
+           "the model file loads");
+    expect(strcmp(device, "Vulkan1") == 0, "the loaded GPU is Vulkan1");
+    expect(strcmp(model, "qwen3.5-4b") == 0, "the loaded model is the 4B");
+    unlink(path);
+    if (previous[0] != '\0') {
+        setenv("KILIX_ZELL_STATE", previous, 1);
+    } else {
+        unsetenv("KILIX_ZELL_STATE");
+    }
     rmdir(directory);
 }
 
@@ -660,6 +791,35 @@ static void test_no_magenta_fringe(void)
            "the wizard has no magenta fringe");
 }
 
+static int rgb_box(const sr_canvas *canvas, uint32_t rgb,
+                   int x0, int y0, int x1, int y1)
+{
+    int count = 0;
+    int y;
+    int x;
+
+    if (x0 < 0) {
+        x0 = 0;
+    }
+    if (y0 < 0) {
+        y0 = 0;
+    }
+    if (x1 > canvas->w) {
+        x1 = canvas->w;
+    }
+    if (y1 > canvas->h) {
+        y1 = canvas->h;
+    }
+    for (y = y0; y < y1; y++) {
+        for (x = x0; x < x1; x++) {
+            if ((canvas->px[y * canvas->w + x] & 0x00ffffffu) == rgb) {
+                count += 1;
+            }
+        }
+    }
+    return count;
+}
+
 static int rgb_count(const sr_canvas *canvas, uint32_t rgb, int above_y, int below)
 {
     int count = 0;
@@ -867,6 +1027,206 @@ static void test_draw_places_both_sprites(void)
     sr_canvas_free(&canvas);
 }
 
+static void test_history_switch(void)
+{
+    zell_scene scene;
+    zell_controls talk = controls_of(0, 0, true, false);
+    zell_controls down = controls_of(0, 1, false, false);
+    zell_controls typed = controls_of(0, 0, false, false);
+    sr_canvas canvas;
+    zell_history_call stored[ZELL_HISTORY_CAP];
+    char directory[] = "/tmp/zell-history-state-XXXXXX";
+    char path[360];
+    char saved_env[400];
+    char text[1200];
+    const char *previous;
+    const char *word = "cave map";
+    const char *cursor;
+    struct stat info;
+    float sx;
+    float sy;
+    int rows;
+    int step;
+    int enabled = 1;
+    int count = 4;
+    int had_env = 0;
+    int wrote;
+    int order[ZELL_HISTORY_CAP];
+    FILE *file;
+    size_t got;
+
+    zell_scene_init(&scene, 320, 240);
+    expect(!scene.history_on, "history starts off");
+    expect(scene.call_count == ZELL_PRESET_COUNT, "presets are remembered at zero");
+    expect(strcmp(zell_scene_choice(&scene, 0), "What time is it?") == 0,
+           "history off keeps the first preset first");
+    expect(strcmp(zell_scene_choice(&scene, 1), "How much disk is free?") == 0,
+           "history off keeps the preset order");
+    scene.x = scene.wizard_x;
+    scene.y = scene.wizard_y;
+    zell_scene_tick(&scene, &talk);
+    expect(scene.mode == ZELL_MODE_QUESTION, "enter opens Ask for history");
+    rows = zell_scene_choice_rows(&scene);
+    expect(rows == 5, "five questions fit under the field");
+    for (step = 0; step < rows; step++) {
+        scene.menu_hold = 0;
+        zell_scene_tick(&scene, &down);
+    }
+    expect(scene.menu_index == rows, "down reaches the history switch");
+    expect(scene.mode == ZELL_MODE_QUESTION, "the switch stays on the Ask screen");
+    zell_scene_tick(&scene, &talk);
+    expect(scene.history_on, "enter turns history on");
+    expect(scene.mode == ZELL_MODE_QUESTION, "the switch does not send a question");
+    expect(scene.history_changed, "turning history on is marked to save");
+    expect(zell_history_remember(scene.calls, &scene.call_count, ZELL_HISTORY_CAP,
+                                 "How much disk is free?", 1) >= 0,
+           "a preset use is counted");
+    expect(zell_history_remember(scene.calls, &scene.call_count, ZELL_HISTORY_CAP,
+                                 "What time is it?", 2) >= 0,
+           "the busiest preset is counted");
+    expect(strcmp(zell_scene_choice(&scene, 0), "What time is it?") == 0,
+           "the most used call is first");
+    expect(strcmp(zell_scene_choice(&scene, 1), "How much disk is free?") == 0,
+           "the next most used call follows");
+    scene.history_on = true;
+    zell_scene_resize(&scene, 400, 300);
+    expect(scene.history_on, "resize keeps history on");
+    expect(strcmp(zell_scene_choice(&scene, 0), "What time is it?") == 0,
+           "resize keeps the ranked calls");
+
+    zell_scene_init(&scene, 320, 240);
+    scene.x = scene.wizard_x;
+    scene.y = scene.wizard_y;
+    zell_scene_tick(&scene, &talk);
+    for (cursor = word; *cursor != '\0'; cursor++) {
+        typed.character = (unsigned char)*cursor;
+        zell_scene_tick(&scene, &typed);
+        typed.character = 0;
+    }
+    zell_scene_tick(&scene, &talk);
+    expect(scene.mode == ZELL_MODE_WAIT, "a typed question is sent");
+    expect(!scene.history_on, "sending a question leaves history off");
+    expect(zell_history_find(scene.calls, scene.call_count, word) >= 0,
+           "a typed question is kept while history is off");
+
+    zell_scene_init(&scene, 320, 240);
+    scene.mode = ZELL_MODE_QUESTION;
+    rows = zell_scene_choice_rows(&scene);
+    scene.menu_index = 0;
+    expect(sr_canvas_init(&canvas, 320, 240), "history canvas allocates");
+    zell_draw(&scene, &canvas);
+    zell_history_switch_point(320, 240, rows, &sx, &sy);
+    expect(rgb_box(&canvas, 0x6a6458u,
+                   (int)sx - 12, (int)sy - 14, (int)sx + 12, (int)sy + 14) > 10,
+           "history off draws the lever down");
+    expect(rgb_box(&canvas, 0xf2c14eu,
+                   (int)sx - 12, (int)sy - 14, (int)sx + 12, (int)sy + 14) == 0,
+           "history off keeps the lever dim");
+    scene.history_on = true;
+    zell_draw(&scene, &canvas);
+    expect(rgb_box(&canvas, 0xf2c14eu,
+                   (int)sx - 12, (int)sy - 14, (int)sx + 12, (int)sy + 14) > 10,
+           "history on draws the lever up");
+    expect(rgb_box(&canvas, 0x6a6458u,
+                   (int)sx - 12, (int)sy - 14, (int)sx + 12, (int)sy + 14) == 0,
+           "history on lifts the dim lever");
+#ifndef ZELL_RENDER_NEURONTE
+    expect(rgb_box(&canvas, 0xf4f1e8u,
+                   (int)sx + 10, (int)sy - 12, (int)sx + 80, (int)sy + 12) > 10,
+           "the switch reads history");
+#endif
+    sr_canvas_free(&canvas);
+
+    scene.history_on = true;
+    scene.menu_index = rows;
+    memcpy(scene.question, "a", 2);
+    scene.question_len = 1;
+    zell_scene_tick(&scene, &talk);
+    expect(scene.mode == ZELL_MODE_WAIT, "typed text is asked ahead of the switch");
+    expect(scene.history_on, "typing does not flip the switch");
+
+    enabled = 1;
+    count = 3;
+    expect(zell_history_parse("{\"schema\":\"nope\",\"enabled\":true}",
+                              &enabled, stored, ZELL_HISTORY_CAP, &count) == -1,
+           "a bad history schema is refused");
+    expect(enabled == 0 && count == 0, "a bad history file stays off and empty");
+    expect(zell_history_parse("{\"schema\":\"kilix.zell.history/v1\",\"enabled\":true,"
+                              "\"calls\":[{\"text\":\"\",\"count\":1}]}",
+                              &enabled, stored, ZELL_HISTORY_CAP, &count) == 1,
+           "an empty call is skipped");
+    expect(count == 0, "an empty call is not stored");
+
+    if (mkdtemp(directory) == NULL) {
+        expect(0, "history state directory");
+        return;
+    }
+    previous = getenv("KILIX_ZELL_STATE");
+    if (previous != NULL) {
+        wrote = snprintf(saved_env, sizeof saved_env, "%s", previous);
+        had_env = wrote > 0 && (size_t)wrote < sizeof saved_env;
+    }
+    if (setenv("KILIX_ZELL_STATE", directory, 1) != 0) {
+        expect(0, "history state override");
+        rmdir(directory);
+        return;
+    }
+    wrote = snprintf(path, sizeof path, "%s/history.json", directory);
+    expect(wrote > 0 && (size_t)wrote < sizeof path, "the history path fits");
+    expect(strcmp(zell_history_state_path(), path) == 0,
+           "history uses KILIX_ZELL_STATE");
+    enabled = 1;
+    count = 4;
+    expect(zell_history_load(path, &enabled, stored, ZELL_HISTORY_CAP, &count) == 0,
+           "a missing history file is off");
+    expect(enabled == 0 && count == 0, "a missing history file has no calls");
+    memset(stored, 0, sizeof stored);
+    memcpy(stored[0].text, "What time is it?", sizeof "What time is it?");
+    stored[0].count = 3;
+    stored[1].count = 9;
+    memcpy(stored[2].text, "How much disk is free?", sizeof "How much disk is free?");
+    stored[2].count = 1;
+    expect(zell_history_save(path, 1, NULL, 1) == -1,
+           "history refuses a missing call list");
+    expect(zell_history_save(path, 1, stored, 3) == 0, "history writes the file");
+    expect(stat(path, &info) == 0 && (info.st_mode & 0777) == 0600,
+           "the history file is private");
+    file = fopen(path, "r");
+    expect(file != NULL, "the history file opens");
+    if (file != NULL) {
+        got = fread(text, 1, sizeof text - 1, file);
+        text[got] = '\0';
+        fclose(file);
+        expect(strstr(text, "kilix.zell.history/v1") != NULL,
+               "the history file has its schema");
+        expect(strstr(text, "\"enabled\": true") != NULL, "history on is in the file");
+        expect(strstr(text, ",\n  ]") == NULL, "a skipped call leaves no trailing comma");
+    }
+    enabled = 0;
+    count = 0;
+    expect(zell_history_load(path, &enabled, stored, ZELL_HISTORY_CAP, &count) == 1,
+           "the history file is read back");
+    expect(enabled == 1, "history on is saved");
+    expect(count == 2, "the blank call is left out");
+    expect(strcmp(stored[0].text, "What time is it?") == 0 && stored[0].count == 3,
+           "the first saved call is kept");
+    expect(strcmp(stored[1].text, "How much disk is free?") == 0 && stored[1].count == 1,
+           "the second saved call is kept");
+    zell_history_order(stored, count, order);
+    expect(order[0] == 0 && order[1] == 1, "the busier saved call stays first");
+    stored[1].count = 5;
+    zell_history_order(stored, count, order);
+    expect(order[0] == 1 && order[1] == 0, "the higher count moves first");
+
+    if (had_env) {
+        setenv("KILIX_ZELL_STATE", saved_env, 1);
+    } else {
+        unsetenv("KILIX_ZELL_STATE");
+    }
+    unlink(path);
+    rmdir(directory);
+}
+
 int main(void)
 {
     test_walk_off_the_bottom();
@@ -876,9 +1236,11 @@ int main(void)
     test_up_does_not_leave();
     test_wizard_question_routes();
     test_router_prefers_a_fast_model();
+    test_model_file_pins_the_router();
     test_wall_switch_toggles_voice();
     test_answer_scrolls_in_the_box();
     test_voice_sign_above_the_switch();
+    test_history_switch();
     test_voice_file_and_paradee_argv();
     test_escape_steps_back();
     test_no_magenta_fringe();
