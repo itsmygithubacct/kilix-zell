@@ -9,6 +9,12 @@
 #include <stdio.h>
 #include <string.h>
 
+/* Largest per-channel difference between two pixels. */
+static int pixel_gap(uint32_t a,uint32_t b){
+    int gap=0;
+    for(int shift=0;shift<24;shift+=8){int d=(int)((a>>shift)&255u)-(int)((b>>shift)&255u);if(d<0)d=-d;if(d>gap)gap=d;}
+    return gap;
+}
 int main(void) {
     zell_scene s;
     zell_controls c={0};
@@ -169,6 +175,31 @@ int main(void) {
     assert(zell_desktop_station_visible(&s,34)&&zell_desktop_station_visible(&s,35));
     s.room=3;assert(zell_desktop_station_visible(&s,40)&&!zell_desktop_station_visible(&s,41));
     s.room=4;assert(zell_desktop_station_visible(&s,41)&&!zell_desktop_station_visible(&s,40));
+    /* Stairs at the bottom of every downstairs room are walked onto. */
+    for(int room=1;room<=4;room++){
+        int hatch=room==1?13:room==2?14:room==3?42:43;
+        zell_scene_init(&s,640,400);zell_desktop_init(&s);
+        s.x=zell_stations[hatch].x*ZELL_WORLD_W;s.y=zell_stations[hatch].y*ZELL_WORLD_H;
+        c=(zell_controls){.confirm=true};zell_scene_tick(&s,&c);
+        assert(s.room==room&&!zell_desktop_on_stairs(&s));
+        /* Away from the stairs the bottom edge still stops him. */
+        s.x=ZELL_WORLD_W*.30f;c=(zell_controls){.move_y=1};
+        for(int i=0;i<400;i++)zell_scene_tick(&s,&c);
+        assert(s.room==room&&s.y<=ZELL_WORLD_H*.91f+1);
+        s.x=ZELL_WORLD_W*.50f;s.y=ZELL_WORLD_H*.78f;
+        int ticks=0;while(s.room==room&&ticks<400){zell_scene_tick(&s,&c);ticks++;}
+        assert(s.room==0&&s.mode==ZELL_MODE_WALK&&!s.leave);
+        assert(fabsf(s.x-zell_stations[hatch].x*ZELL_WORLD_W)<1);
+        assert(fabsf(s.y-zell_stations[hatch].y*ZELL_WORLD_H-50)<1);
+    }
+    /* Standing things hide him only when he is further away than their feet. */
+    zell_scene_init(&s,640,400);zell_desktop_init(&s);
+    s.y=zell_stations[0].y*ZELL_WORLD_H-30;assert(zell_desktop_station_in_front(&s,0));
+    s.y=zell_stations[0].y*ZELL_WORLD_H+30;assert(!zell_desktop_station_in_front(&s,0));
+    s.y=0;assert(!zell_desktop_station_in_front(&s,12)&&!zell_desktop_station_in_front(&s,13));
+    s.room=1;assert(zell_desktop_station_in_front(&s,18)&&zell_desktop_station_in_front(&s,31));
+    assert(!zell_desktop_station_in_front(&s,28)&&!zell_desktop_station_in_front(&s,40));
+    s.room=0;
     strcpy(s.launcher_query,"checksum");
     assert(zell_desktop_launcher_count(&s)==2);
     assert(zell_desktop_launcher_station(&s,0)==34);
@@ -262,6 +293,24 @@ int main(void) {
             assert(changes>10);
         }
         assert(before.px[600*ZELL_WORLD_W+500]==after.px[600*ZELL_WORLD_W+500]);
+        /* Draw order: a staff member (Vault Keeper) and a worker screen cover
+         * Kilix when he stands behind them, and he covers them from in front.
+         * Cutouts are a shade translucent, so hidden means within 3 per channel. */
+        for(int pass=0;pass<2;pass++){
+            int station=pass?18:40,top=pass?-140:-60,bottom=pass?-64:-36,behind=pass?-60:-30;
+            int ox=(int)(zell_stations[station].x*ZELL_WORLD_W),oy=(int)(zell_stations[station].y*ZELL_WORLD_H);
+            zell_scene_init(&s,ZELL_WORLD_W,ZELL_WORLD_H);zell_desktop_init(&s);s.room=pass?1:3;
+            s.x=ZELL_WORLD_W*.30f;s.y=ZELL_WORLD_H*.88f;zell_draw(&s,&before);
+            s.x=(float)ox;s.y=(float)(oy+behind);zell_draw(&s,&after);
+            int hidden=0,shown=0;
+            for(int py=oy+top;py<oy+bottom;py++)for(int px=ox-6;px<ox+6;px++)
+                if(pixel_gap(before.px[py*ZELL_WORLD_W+px],after.px[py*ZELL_WORLD_W+px])>3)hidden++;
+            assert(hidden==0);
+            s.y=(float)(oy+30);zell_draw(&s,&after);
+            for(int py=oy-50;py<oy-36;py++)for(int px=ox-6;px<ox+6;px++)
+                if(pixel_gap(before.px[py*ZELL_WORLD_W+px],after.px[py*ZELL_WORLD_W+px])>24)shown++;
+            assert(shown>40);
+        }
         sr_canvas_free(&before);sr_canvas_free(&after);
     }
 #ifdef ZELL_RENDER_NEURONTE

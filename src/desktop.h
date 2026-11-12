@@ -25,6 +25,14 @@ void zell_desktop_init(zell_scene *s);
 int zell_desktop_tick(zell_scene *s,const zell_controls *c);
 int zell_desktop_near(const zell_scene *s);
 bool zell_desktop_station_visible(const zell_scene *s,int station);
+/* Walk-on stairs back to the cave, as fractions of the world. */
+#define ZELL_STAIRS_LEFT .44f
+#define ZELL_STAIRS_RIGHT .56f
+#define ZELL_STAIRS_PAINTED_Y .935f
+#define ZELL_STAIRS_CUTOUT_Y .87f
+#define ZELL_ROOM_ENTRY_Y .78f
+bool zell_desktop_on_stairs(const zell_scene *s);
+bool zell_desktop_station_in_front(const zell_scene *s,int station);
 float zell_desktop_speed_factor(const zell_scene *s);
 int zell_desktop_launcher_count(const zell_scene *s);
 int zell_desktop_launcher_station(const zell_scene *s,int index);

@@ -135,10 +135,25 @@ int zell_desktop_near(const zell_scene *s) {
  }
  return best;
 }
+/* The stairs at the bottom of a downstairs room are walked onto, not opened.
+ * The Vault and Workshop paint theirs into the floor at the room's edge; the
+ * Command Center and Laundry use a stair cutout that reaches further in. */
+bool zell_desktop_on_stairs(const zell_scene *s){
+ if(s->room==0)return false;
+ float nx=s->x/(float)ZELL_WORLD_W,ny=s->y/(float)ZELL_WORLD_H;
+ return nx>=ZELL_STAIRS_LEFT&&nx<=ZELL_STAIRS_RIGHT&&ny>(s->room>=3?ZELL_STAIRS_PAINTED_Y:ZELL_STAIRS_CUTOUT_Y);
+}
+/* Objects standing on the floor hide Kilix when he is further from the viewer
+ * than their feet. Floor and wall fittings never do. */
+bool zell_desktop_station_in_front(const zell_scene *s,int i){
+ if(i<0||i>=ZELL_STATIONS||!zell_desktop_station_visible(s,i))return false;
+ bool stands=s->room==0?(i<6||(i>=32&&i<=41)):(i!=28&&i>=15);
+ return stands&&zell_stations[i].y*(float)ZELL_WORLD_H>s->y;
+}
 static void open_station(zell_scene *s,int n){s->running=false;s->run_charge=0;s->run_blocked=true;s->station=n;s->menu_index=0;s->menu_hold=0;
  if(n==13||n==14||n==28||n==42||n==43){
   if(n==28){int hatch=s->room==1?13:s->room==2?14:s->room==3?42:43;s->room=0;s->x=zell_stations[hatch].x*ZELL_WORLD_W;s->y=zell_stations[hatch].y*ZELL_WORLD_H+50;}
-  else {s->room=n==13?1:n==14?2:n==42?3:4;s->x=ZELL_WORLD_W*.50f;s->y=ZELL_WORLD_H*.80f;}
+  else {s->room=n==13?1:n==14?2:n==42?3:4;s->x=ZELL_WORLD_W*.50f;s->y=ZELL_WORLD_H*ZELL_ROOM_ENTRY_Y;}
   s->mode=ZELL_MODE_WALK;s->step_ticks=0;s->desktop_launch=false;return;
  }
  if(n==10){s->voice_on=!s->voice_on;s->voice_changed=true;s->mode=ZELL_MODE_WALK;}
@@ -207,7 +222,7 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
     if(nx<.135f){s->x=(float)ZELL_WORLD_W*.135f;blocked=true;}
     if(nx>.865f){s->x=(float)ZELL_WORLD_W*.865f;blocked=true;}
     if(ny<.32f){s->y=(float)ZELL_WORLD_H*.32f;blocked=true;}
-    if(ny>.91f&&(s->room!=0||nx<.44f||nx>.56f)){s->y=(float)ZELL_WORLD_H*.91f;blocked=true;}
+    if(ny>.91f&&(nx<ZELL_STAIRS_LEFT||nx>ZELL_STAIRS_RIGHT)){s->y=(float)ZELL_WORLD_H*.91f;blocked=true;}
     for(int i=0;i<ZELL_STATIONS;i++){
      if(!zell_desktop_station_visible(s,i)||i==28||(s->room==0&&i>=6&&!(i>=32&&i<=41)))continue;
      float ax=s->x-zell_stations[i].x*ZELL_WORLD_W,ay=s->y-zell_stations[i].y*ZELL_WORLD_H;
@@ -215,6 +230,7 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
     }
     if(blocked)break;
     if(s->room==0&&s->y/(float)ZELL_WORLD_H>.975f)s->leave=true;
+    if(zell_desktop_on_stairs(s)){open_station(s,28);return 1;}
    }
    s->step_ticks++;s->step=(s->step_ticks/(s->running?3:7))%2;
   }else if(s->run_charge>0&&!s->run_blocked){s->step_ticks++;}

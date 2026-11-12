@@ -56,12 +56,14 @@ static void desktop_monitor(const zell_scene *s,sr_canvas *c,int index,int cx,in
  }
  if(selected)desktop_label(c,frame.x+frame.w/2,frame.y+frame.h+8,"Enter / click: session & tasks",0xa8f3d5u);
 }
-static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy){
+/* Drawn twice: once for what stands behind Kilix, once for what stands in front. */
+static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy,bool front){
  int near=zell_desktop_near(s);
  for(int i=15;i<ZELL_STATIONS;i++){
-  if(!zell_desktop_station_visible(s,i))continue;
+  if(!zell_desktop_station_visible(s,i)||zell_desktop_station_in_front(s,i)!=front)continue;
   int x=(int)(zell_stations[i].x*ZELL_WORLD_W)-cx,y=(int)(zell_stations[i].y*ZELL_WORLD_H)-cy;
-  if(i==28){desktop_hatch(c,s->room==1?ZELL_ART_COMMAND_STAIRS:s->room==2?ZELL_ART_LAUNDRY_STAIRS:s->room==3?ZELL_ART_VAULT_STAIRS:ZELL_ART_WORKSHOP_STAIRS,x,y,i==near,"Up to the cave");continue;}
+  /* The Vault and Workshop floors already end in painted steps. */
+  if(i==28){if(s->room<3)desktop_hatch(c,s->room==1?ZELL_ART_COMMAND_STAIRS:ZELL_ART_LAUNDRY_STAIRS,x,y,false,"");continue;}
   if(i>=29){
    zell_actor_pose staff=i<32?zell_desktop_pose(s,i-23):(zell_actor_pose){zell_stations[i].art+(s->flame_tick/20+i)%4,0,0};
    sr_fill_ellipse(c,(float)x,(float)y,24,7,0x071719u,.45f);
@@ -84,7 +86,7 @@ static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy){
   char label[28];snprintf(label,sizeof label,"%.27s",s->disk_labels[bin]);desktop_label(c,x,y+16,label,color);
   if(i==near)desktop_label(c,x,y+40,"Enter: dig through drive",0xa8f3d5u);
  }
- if(s->room==2&&s->disk_count==0)desktop_label(c,ZELL_WORLD_W/2-cx,ZELL_WORLD_H/2-cy,s->disks_ready?"No eligible mounted disks found":"Reading mounted drives...",0xc9d8d2u);
+ if(!front&&s->room==2&&s->disk_count==0)desktop_label(c,ZELL_WORLD_W/2-cx,ZELL_WORLD_H/2-cy,s->disks_ready?"No eligible mounted disks found":"Reading mounted drives...",0xc9d8d2u);
 }
 static void desktop_vitals(const zell_scene *s,sr_canvas *c){
  int span=c->w-24;if(span>420)span=420;int width=(span-16)/3;
@@ -126,19 +128,10 @@ static void desktop_weather(const zell_scene *s,sr_canvas *c,int cx,int cy){
  else snprintf(label,sizeof label,"%s",s->weather_condition);
  desktop_label(c,x,y+6,label,0xffe7a6u);
 }
-static void desktop_base(const zell_scene *s,sr_canvas *c){
- static sr_canvas backgrounds[5];
- int room=s->room>=0&&s->room<5?s->room:0;
- sr_canvas *background=&backgrounds[room];
- const zell_art *a=zell_art_get(room==1?ZELL_ART_COMMAND_ROOM:room==2?ZELL_ART_LAUNDRY_ROOM:room==3?ZELL_ART_VAULT_ROOM:room==4?ZELL_ART_WORKSHOP_ROOM:0);
- if(!background->px&&a){if(sr_canvas_init(background,ZELL_WORLD_W,ZELL_WORLD_H)){sr_canvas src;sr_canvas_wrap(&src,a->pixels,a->width,a->height);sr_blit_scaled(background,&src,0,0,ZELL_WORLD_W,ZELL_WORLD_H,1);}}
- int cx,cy;zell_desktop_camera(s,&cx,&cy);sr_clear(c,0x081319u);
- if(background->px){for(int y=0;y<c->h&&y+cy<ZELL_WORLD_H;y++){int w=c->w;if(w+cx>ZELL_WORLD_W)w=ZELL_WORLD_W-cx;memcpy(c->px+(size_t)y*(size_t)c->w,background->px+(size_t)(y+cy)*ZELL_WORLD_W+(size_t)cx,(size_t)w*4);}}
- if(s->room)desktop_room(s,c,cx,cy);
- desktop_weather(s,c,cx,cy);
+static void desktop_cave(const zell_scene *s,sr_canvas *c,int cx,int cy,bool front){
  int near=zell_desktop_near(s);int height=112;
  for(int i=0;i<ZELL_STATIONS&&s->room==0;i++){
-  if(!zell_desktop_station_visible(s,i))continue;
+  if(!zell_desktop_station_visible(s,i)||zell_desktop_station_in_front(s,i)!=front)continue;
   const zell_station *p=&zell_stations[i];int x=(int)(p->x*(float)ZELL_WORLD_W),y=(int)(p->y*(float)ZELL_WORLD_H);
   x-=cx;y-=cy;
   int h=(i<6||(i>=32&&i<42))?height:height*3/4;
@@ -154,6 +147,19 @@ static void desktop_base(const zell_scene *s,sr_canvas *c){
   if(i==6||i==7)desktop_label(c,x,y+8,i==6?"TUI":"SHELL",0x91e9d8u);
   if(i==near)desktop_label(c,x,y+(i==12?28:8),p->name,0xb9f8dbu);
  }
+}
+static void desktop_base(const zell_scene *s,sr_canvas *c){
+ static sr_canvas backgrounds[5];
+ int room=s->room>=0&&s->room<5?s->room:0;
+ sr_canvas *background=&backgrounds[room];
+ const zell_art *a=zell_art_get(room==1?ZELL_ART_COMMAND_ROOM:room==2?ZELL_ART_LAUNDRY_ROOM:room==3?ZELL_ART_VAULT_ROOM:room==4?ZELL_ART_WORKSHOP_ROOM:0);
+ if(!background->px&&a){if(sr_canvas_init(background,ZELL_WORLD_W,ZELL_WORLD_H)){sr_canvas src;sr_canvas_wrap(&src,a->pixels,a->width,a->height);sr_blit_scaled(background,&src,0,0,ZELL_WORLD_W,ZELL_WORLD_H,1);}}
+ int cx,cy;zell_desktop_camera(s,&cx,&cy);sr_clear(c,0x081319u);
+ if(background->px){for(int y=0;y<c->h&&y+cy<ZELL_WORLD_H;y++){int w=c->w;if(w+cx>ZELL_WORLD_W)w=ZELL_WORLD_W-cx;memcpy(c->px+(size_t)y*(size_t)c->w,background->px+(size_t)(y+cy)*ZELL_WORLD_W+(size_t)cx,(size_t)w*4);}}
+ if(s->room)desktop_room(s,c,cx,cy,false);
+ desktop_weather(s,c,cx,cy);
+ int near=zell_desktop_near(s);int height=112;
+ desktop_cave(s,c,cx,cy,false);
  if(s->room==0){
   bool enabled[3]={s->voice_on,s->dictation_on,!s->music_muted};
   const char *names[3]={"VOICE","DICTATE","MUSIC"};
@@ -180,6 +186,7 @@ static void desktop_base(const zell_scene *s,sr_canvas *c){
   }
  }
  zell_actor_pose pose=zell_desktop_pose(s,-1);sr_fill_ellipse(c,s->x-(float)cx,s->y-(float)cy,17,5,0x071719u,.45f);desktop_art(c,pose.art,(int)s->x-cx+pose.offset_x,(int)s->y-cy+pose.offset_y,height*3/4);
+ if(s->room)desktop_room(s,c,cx,cy,true);else desktop_cave(s,c,cx,cy,true);
  if(c->w>=500&&s->mode==ZELL_MODE_WALK){
   int mx=c->w-140,my=42;sr_fill_rect(c,(float)mx,(float)my,128,88,0x0c1921u,.9f);
   sr_stroke_rect(c,(float)mx,(float)my,128,88,1,0x4b7777u,1);
