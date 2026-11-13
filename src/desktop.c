@@ -55,7 +55,7 @@ const zell_station zell_stations[ZELL_STATIONS]={
  {"YOLO switch","Enable or disable shared coding-agent YOLO mode",.21f,.88f,-1},
  {"Agent updates switch","Choose and update installed coding agents",.79f,.88f,-1},
  {"Mana console","Coding-token balances and the providers' usage pages",.38f,.58f,ZELL_ART_WORKER},
- {"Workshop computer","Reserved, not an available action.",0.f,0.f,-1},
+ {"Workshop computer","Sit at the stool and use this computer.",797.f/1536.f,408.f/1024.f,-1},
  {"Fleet board","Reserved, not an available action.",0.f,0.f,-1},
  {"Floor panel","Reserved, not an available action.",0.f,0.f,-1}
 };
@@ -98,7 +98,7 @@ bool zell_desktop_station_visible(const zell_scene *s,int station){
  if(s->room==2)return (station>=20&&station<20+s->disk_count)||station==34||station==35;
  /* The Sentinel keeps the Vault with its keeper; the Signalman and the
   * Merchant work in the Workshop. */
- return (s->room==3&&(station==40||station==39))||(s->room==4&&(station==41||station==33||station==36));
+ return (s->room==3&&(station==40||station==39))||(s->room==4&&(station==41||station==33||station==36||station==ZELL_WORKSHOP_COMPUTER));
 }
 static bool contains_folded(const char *haystack,const char *needle){
  for(;*haystack;haystack++){size_t i=0;while(needle[i]&&haystack[i]&&tolower((unsigned char)haystack[i])==tolower((unsigned char)needle[i]))i++;if(!needle[i])return true;}
@@ -161,7 +161,180 @@ bool zell_desktop_station_in_front(const zell_scene *s,int i){
  bool stands=s->room==0?(i<6||(i>=32&&i<=41)):(i!=28&&i>=15&&i<46);
  return stands&&zell_stations[i].y*(float)ZELL_WORLD_H>s->y;
 }
-static void open_station(zell_scene *s,int n){s->running=false;s->run_charge=0;s->run_blocked=true;s->station=n;s->menu_index=0;s->menu_hold=0;
+
+/* Stool cushion and the floor just south of its legs, in world pixels.
+ * Measured from the compiled stool sheet: opaque bounds x 759..835, y 291..383. */
+enum { ZELL_STOOL_X=797, ZELL_STOOL_SEAT_Y=312, ZELL_STOOL_FLOOR_Y=408 };
+static const char workshop_full_notice[]="No window slot is free.";
+
+void zell_workshop_floor_point(float *x,float *y){*x=(float)ZELL_STOOL_X;*y=(float)ZELL_STOOL_FLOOR_Y;}
+void zell_workshop_seat_point(float *x,float *y){*x=(float)ZELL_STOOL_X;*y=(float)ZELL_STOOL_SEAT_Y;}
+/* lift(t) = peak * t * (T-t) / (T*T/4). Zero at both ends, 22 at tick 8. */
+int zell_seat_lift(int tick){
+ int span=ZELL_SEAT_HOP_TICKS;
+ if(tick<=0||tick>=span)return 0;
+ return (ZELL_SEAT_LIFT_PEAK*tick*(span-tick))/((span*span)/4);
+}
+int zell_seat_draw_dy(const zell_scene *s){
+ if(!s)return 0;
+ if(s->seat_ticks>0&&s->seat_ticks<ZELL_SEAT_HOP_TICKS)return -zell_seat_lift(s->seat_ticks);
+ if(s->seated&&s->seat_ticks==ZELL_SEAT_HOP_TICKS)return ZELL_SEAT_SIT_DROP;
+ return 0;
+}
+static void workshop_place(zell_scene *s,int tick){
+ float x0,y0,x1,y1,t;
+ zell_workshop_floor_point(&x0,&y0);zell_workshop_seat_point(&x1,&y1);
+ if(tick<0)tick=0;
+ if(tick>ZELL_SEAT_HOP_TICKS)tick=ZELL_SEAT_HOP_TICKS;
+ t=(float)tick/(float)ZELL_SEAT_HOP_TICKS;
+ s->x=x0+(x1-x0)*t;s->y=y0+(y1-y0)*t;
+}
+static int workshop_slot(const zell_scene *s){
+ for(int i=0;i<ZELL_WINDOWS;i++){
+  if(!s->windows[i].used||s->windows[i].close_requested)continue;
+  if(!strcmp(s->windows[i].title,"Workshop computer"))return i;
+ }
+ return -1;
+}
+static int workshop_next_generation(const zell_scene *s){
+ int generation=1;
+ for(int i=0;i<ZELL_WINDOWS;i++)if(s->windows[i].generation>=generation)generation=s->windows[i].generation+1;
+ if(generation<=0||generation>1000000000)generation=1;
+ return generation;
+}
+static void workshop_show_full(zell_scene *s){
+ s->notice_count=1;
+ snprintf(s->notice_text,sizeof s->notice_text,"%s",workshop_full_notice);
+}
+static bool workshop_reserve(zell_scene *s){
+ if(workshop_slot(s)>=0)return true;
+ int used=0,free_slot=-1,order=1;
+ for(int i=0;i<ZELL_WINDOWS;i++){
+  if(s->windows[i].used)used++;
+  else if(free_slot<0)free_slot=i;
+  if(s->windows[i].open_order>=order)order=s->windows[i].open_order+1;
+ }
+ if(used>=ZELL_WINDOWS||free_slot<0){workshop_show_full(s);return false;}
+ zell_window *w=&s->windows[free_slot];
+ *w=(zell_window){0};
+ w->generation=workshop_next_generation(s);
+ w->open_order=order;
+ w->z_order=order;
+ w->used=true;
+ w->minimized=true;
+ w->owner_service=0;
+ snprintf(w->title,sizeof w->title,"Workshop computer");
+ return true;
+}
+static bool workshop_terminal_live(const zell_scene *s){
+ return s->service_phase==5&&!strcmp(s->terminal_title,"Workshop computer");
+}
+static bool workshop_window_focused(const zell_scene *s){
+ return s->mode==ZELL_MODE_SERVICE&&s->service_phase==5&&!s->terminal_minimized;
+}
+static void workshop_mirror_terminal(zell_scene *s){
+ if(strcmp(s->terminal_title,"Workshop computer")!=0)return;
+ int slot=workshop_slot(s);
+ if(slot<0)return;
+ s->windows[slot].minimized=s->terminal_minimized;
+ s->windows[slot].maximized=s->terminal_maximized;
+}
+static void workshop_focus_live(zell_scene *s){
+ int slot=workshop_slot(s);
+ if(slot>=0)s->windows[slot].minimized=false;
+ s->terminal_minimized=false;
+ s->mode=ZELL_MODE_SERVICE;
+ s->desktop_launch=false;
+}
+static void workshop_request_window(zell_scene *s){
+ int slot;
+ if(workshop_terminal_live(s)){workshop_focus_live(s);return;}
+ if(workshop_slot(s)<0&&!workshop_reserve(s)){s->desktop_launch=false;return;}
+ slot=workshop_slot(s);
+ if(slot>=0)s->windows[slot].minimized=false;
+ s->terminal_minimized=false;
+ s->station=ZELL_WORKSHOP_COMPUTER;
+ s->menu_index=0;
+ s->desktop_launch=true;
+}
+static void workshop_land(zell_scene *s){
+ s->seated=true;
+ s->seat_ticks=ZELL_SEAT_HOP_TICKS;
+ s->direction=ZELL_DIR_UP;
+ s->step=0;s->step_ticks=0;
+ workshop_place(s,ZELL_SEAT_HOP_TICKS);
+ workshop_request_window(s);
+}
+static void workshop_hop_down(zell_scene *s){
+ int slot=workshop_slot(s);
+ if(slot>=0)s->windows[slot].minimized=true;
+ s->terminal_minimized=true;
+ if(s->mode==ZELL_MODE_SERVICE)s->mode=ZELL_MODE_WALK;
+ s->direction=ZELL_DIR_UP;
+ s->step=0;s->step_ticks=0;
+ s->running=false;s->run_charge=0;
+ s->seat_ticks=ZELL_SEAT_HOP_TICKS-1;
+ workshop_place(s,s->seat_ticks);
+}
+static void workshop_begin_hop(zell_scene *s){
+ if(s->seated||s->seat_ticks>0)return;
+ if(!workshop_reserve(s))return;
+ if(s->notice_count>0&&!strcmp(s->notice_text,workshop_full_notice)){s->notice_count=0;s->notice_text[0]=0;}
+ s->running=false;s->run_charge=0;s->run_blocked=true;
+ s->station=ZELL_WORKSHOP_COMPUTER;s->menu_index=0;
+ s->mode=ZELL_MODE_WALK;s->desktop_launch=false;
+ s->direction=ZELL_DIR_UP;s->step=0;s->step_ticks=0;
+ s->seated=false;s->seat_ticks=1;
+ workshop_place(s,1);
+}
+static void workshop_release_window(zell_scene *s,int slot){
+ if(slot<0||slot>=ZELL_WINDOWS)return;
+ memset(&s->windows[slot],0,sizeof s->windows[slot]);
+}
+static void workshop_on_frame(zell_scene *s){
+ for(int i=0;i<ZELL_WINDOWS;i++){
+  if(!s->windows[i].used||!s->windows[i].close_requested)continue;
+  if(strcmp(s->windows[i].title,"Workshop computer")!=0)continue;
+  workshop_release_window(s,i);
+  if(s->mode==ZELL_MODE_SERVICE){s->mode=ZELL_MODE_WALK;s->service_cancel=true;}
+ }
+ if(s->station==ZELL_WORKSHOP_COMPUTER&&s->service_phase==4){
+  int slot=workshop_slot(s);
+  if(slot>=0)workshop_release_window(s,slot);
+  if(strstr(s->service_text,"Could not start")){
+   s->notice_count=1;
+   snprintf(s->notice_text,sizeof s->notice_text,"%.319s",s->service_text);
+  }
+  s->mode=ZELL_MODE_WALK;
+  s->service_phase=0;
+  s->terminal_minimized=false;
+ }
+}
+static bool workshop_seat_tick(zell_scene *s,const zell_controls *c){
+ if(!s->seated&&s->seat_ticks<=0)return false;
+ s->direction=ZELL_DIR_UP;s->step=0;s->step_ticks=0;s->running=false;s->run_charge=0;
+ if(s->seat_ticks>0&&s->seat_ticks<ZELL_SEAT_HOP_TICKS){
+  if(s->seated){
+   s->seat_ticks--;
+   workshop_place(s,s->seat_ticks);
+   if(s->seat_ticks==0)s->seated=false;
+  }else{
+   s->seat_ticks++;
+   workshop_place(s,s->seat_ticks);
+   if(s->seat_ticks==ZELL_SEAT_HOP_TICKS)workshop_land(s);
+  }
+  return true;
+ }
+ if(s->seated&&s->seat_ticks==ZELL_SEAT_HOP_TICKS){
+  if(!workshop_window_focused(s)&&(c->move_x||c->move_y)){workshop_hop_down(s);return true;}
+  if(c->confirm)workshop_request_window(s);
+  return true;
+ }
+ return false;
+}
+static void open_station(zell_scene *s,int n){
+ if(n==ZELL_WORKSHOP_COMPUTER){workshop_begin_hop(s);return;}
+ s->running=false;s->run_charge=0;s->run_blocked=true;s->station=n;s->menu_index=0;s->menu_hold=0;
  if(n==13||n==14||n==28||n==42||n==43){
   if(n==28){int hatch=s->room==1?13:s->room==2?14:s->room==3?42:43;s->room=0;s->x=zell_stations[hatch].x*ZELL_WORLD_W;s->y=zell_stations[hatch].y*ZELL_WORLD_H+50;}
   else {s->room=n==13?1:n==14?2:n==42?3:4;s->x=ZELL_WORLD_W*.50f;s->y=ZELL_WORLD_H*ZELL_ROOM_ENTRY_Y;}
@@ -176,8 +349,10 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
  if(s->zoom_ticks>0){if(++s->zoom_ticks>ZELL_ZOOM_TICKS){s->zoom_ticks=0;s->desktop_launch=true;}return 1;}
  if(!c->run){s->running=false;s->run_charge=0;s->run_blocked=false;}
  if(s->mode!=ZELL_MODE_WALK){s->running=false;s->run_charge=0;s->run_bump=0;s->run_blocked=c->run;}
+ workshop_on_frame(s);
 
  if(s->mode==ZELL_MODE_SERVICE){
+  /* A focused terminal keeps the Workshop seat. Movement does not hop down. */
   if(s->service_phase==5)return 1;
   if(s->service_phase==4&&(c->confirm||c->cancel)){s->mode=ZELL_MODE_DESK;return 1;}
   if(c->cancel){
@@ -204,6 +379,7 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
  }
  if(c->launcher&&s->mode!=ZELL_MODE_WAIT){s->running=false;s->run_charge=0;s->run_blocked=c->run;s->mode=s->mode==ZELL_MODE_LAUNCHER?ZELL_MODE_WALK:ZELL_MODE_LAUNCHER;s->menu_index=0;s->menu_hold=0;s->launcher_query[0]=0;return 1;}
  if(s->mode==ZELL_MODE_WALK){
+  if(workshop_seat_tick(s,c))return 1;
   float dx=(float)c->move_x,dy=(float)c->move_y;
   float d=sqrtf(dx*dx+dy*dy),speed=ZELL_WALK_SPEED;
   if(s->run_bump>0){s->run_bump--;dx=dy=d=0;}
@@ -237,7 +413,7 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
     if(ny<.32f){s->y=(float)ZELL_WORLD_H*.32f;blocked=true;}
     if(ny>.91f&&(nx<ZELL_STAIRS_LEFT||nx>ZELL_STAIRS_RIGHT)){s->y=(float)ZELL_WORLD_H*.91f;blocked=true;}
     for(int i=0;i<ZELL_STATIONS;i++){
-     if(!zell_desktop_station_visible(s,i)||i==28||(s->room==0&&i>=6&&!(i>=32&&i<=41)))continue;
+     if(!zell_desktop_station_visible(s,i)||i==28||i>=ZELL_WORKSHOP_COMPUTER||(s->room==0&&i>=6&&!(i>=32&&i<=41)))continue;
      float ax=s->x-zell_stations[i].x*ZELL_WORLD_W,ay=s->y-zell_stations[i].y*ZELL_WORLD_H;
      if(ax*ax+ay*ay<26*26){s->x=oldx;s->y=oldy;blocked=true;break;}
     }
@@ -340,6 +516,7 @@ void zell_terminal_layout_for(const zell_scene *s,int width,int height,zell_term
 void zell_terminal_restore(zell_scene *s){
  if(!s->terminal_minimized)return;
  s->terminal_minimized=false;s->mode=ZELL_MODE_SERVICE;
+ workshop_mirror_terminal(s);
 }
 static bool rect_holds(const zell_rect *r,int x,int y){return x>=r->x&&x<r->x+r->w&&y>=r->y&&y<r->y+r->h;}
 void zell_monitor_layout(int screen,zell_rect *frame,zell_rect *display){
@@ -389,8 +566,8 @@ bool zell_terminal_click(zell_scene *s){
   zell_terminal_restore(s);return true;
  }
  if(s->mode!=ZELL_MODE_SERVICE||s->terminal_width<=0)return false;
- if(rect_holds(&l.minimize,s->mouse_x,s->mouse_y)){s->terminal_minimized=true;s->mode=ZELL_MODE_WALK;return true;}
- if(rect_holds(&l.maximize,s->mouse_x,s->mouse_y)){s->terminal_maximized=!s->terminal_maximized;return true;}
+ if(rect_holds(&l.minimize,s->mouse_x,s->mouse_y)){s->terminal_minimized=true;s->mode=ZELL_MODE_WALK;workshop_mirror_terminal(s);return true;}
+ if(rect_holds(&l.maximize,s->mouse_x,s->mouse_y)){s->terminal_maximized=!s->terminal_maximized;workshop_mirror_terminal(s);return true;}
  return false;
 }
 

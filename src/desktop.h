@@ -68,6 +68,14 @@ void zell_room_view_identity(zell_scene *s);
 void zell_world_to_screen(const zell_scene *s,float world_x,float world_y,float *screen_x,float *screen_y);
 void zell_screen_to_world(const zell_scene *s,float screen_x,float screen_y,float *world_x,float *world_y);
 bool zell_window_accepts_frame(const zell_scene *s,int slot,int generation);
+/* Sixteen ticks from the floor in front of the stool to the seat. */
+#define ZELL_SEAT_HOP_TICKS 16
+#define ZELL_SEAT_LIFT_PEAK 22
+#define ZELL_SEAT_SIT_DROP 10
+int zell_seat_lift(int tick);
+int zell_seat_draw_dy(const zell_scene *s);
+void zell_workshop_floor_point(float *x,float *y);
+void zell_workshop_seat_point(float *x,float *y);
 bool zell_provider_apply(zell_scene *s,const char *text);
 bool zell_provider_check_apply(zell_scene *s,const char *text);
 bool zell_fleet_apply(zell_scene *s,const char *text);

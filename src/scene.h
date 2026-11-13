@@ -172,7 +172,7 @@ typedef struct zell_scene {
     int service_count, service_index, service_scroll;
     bool service_send, service_cancel;
     char service_reply[1026];
-    /* L2 calls zell_window_accepts_frame. L3 calls zell_room_view_identity. L5 calls zell_provider_apply. L6 calls zell_fleet_apply. L8 calls zell_notice_show. */
+    /* L2 calls zell_window_accepts_frame. L3 calls zell_room_view_identity. L5 calls zell_provider_apply. L6 calls zell_fleet_apply. L8 calls zell_notice_show. L9 calls zell_seat_lift. */
     int seat_ticks;
     bool seated;
     zell_room_view room_view;
