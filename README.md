@@ -139,7 +139,8 @@ caches, play media or run OCR.
 
 Original PNGs are in `assets/v0.1.0/`; prompts are in
 `assets/v0.1.0/prompts.json`. `tools/compile_desktop.py` uses Pillow to compile
-compressed embedded premultiplied ARGB data in `src/desktop_assets.c`. Normal builds do not
+compressed embedded premultiplied ARGB data in `src/desktop_art/`, one generated file per
+source sheet plus `index.c`, which holds `zell_art_get()`. Normal builds do not
 regenerate assets or call an image service. Cutouts are filtered once to their
 fixed world size. Staff and Kilix animate while idle, with staggered timing. Legacy notices: `THIRD-PARTY.md`.
 
