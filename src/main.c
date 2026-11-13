@@ -842,9 +842,10 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
     kittykb_event event;
 
     memset(controls, 0, sizeof *controls);
+    bool page_keys = zell_theater_wants_keys(scene);
     bool typing = scene->mode == ZELL_MODE_QUESTION || scene->mode == ZELL_MODE_TYPE || scene->mode==ZELL_MODE_LAUNCHER ||
                   (scene->mode == ZELL_MODE_SERVICE && scene->service_phase == 1) ||
-                  zell_theater_typing(scene);
+                  zell_theater_typing(scene) || page_keys;
 
     controls->run = !typing &&
         (kittykb_input_key_down(&keyboard.input, KITTYKB_KEY_LEFT_SHIFT) ||
@@ -890,6 +891,17 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
     while (kittykb_input_next(&keyboard.input, &event)) {
         if (event.action == KITTYKB_ACTION_RELEASE) {
             continue;
+        }
+        if (page_keys) {
+            controls->key_press = true;
+            controls->key_code = event.key;
+            controls->key_modifiers = event.modifiers;
+            controls->key_text = 0;
+            if (event.text_length > 0 && event.text[0] >= 32) {
+                controls->key_text = event.text[0];
+            } else if (event.key >= 32 && event.key < KITTYKB_KEY_ESCAPE) {
+                controls->key_text = event.key;
+            }
         }
         if (event.key == KITTYKB_KEY_TAB && event.action == KITTYKB_ACTION_PRESS) {
             controls->launcher = true;

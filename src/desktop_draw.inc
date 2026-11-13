@@ -655,3 +655,30 @@ static void desktop_service(const zell_scene *s,sr_canvas *c){
  const char *hint=s->service_phase==0?"Working... | Esc cancel":s->service_phase==2?"Up/Down choose | Enter select | Esc back":s->service_phase==1?"Enter submit | Up/Down scroll | Esc back":s->service_phase==4?"Up/Down scroll | Enter return to station":"Up/Down scroll | Enter continue | Esc back";
  desktop_text(c,x+12,bottom-18,hint,0x89aaa9u,width-24);
 }
+/* Theater chrome. These live in the draw unit so the Neuronte macros apply. */
+void zell_ui_fill(struct sr_canvas *canvas,int x,int y,int w,int h,uint32_t color,float alpha){
+ if(!canvas||w<1||h<1)return;
+ sr_fill_rect(canvas,(float)x,(float)y,(float)w,(float)h,color,alpha);
+}
+void zell_ui_stroke(struct sr_canvas *canvas,int x,int y,int w,int h,float thickness,uint32_t color,float alpha){
+ if(!canvas||w<1||h<1)return;
+ sr_stroke_rect(canvas,(float)x,(float)y,(float)w,(float)h,thickness,color,alpha);
+}
+void zell_ui_text(struct sr_canvas *canvas,int x,int y,const char *text,uint32_t color,int width){
+ char line[512];int cap;size_t n;
+ if(!canvas||!text)return;
+ cap=width/8;if(cap<1)return;if(cap>511)cap=511;
+ n=strlen(text);
+ if(n>(size_t)cap){memcpy(line,text,(size_t)cap);if(cap>3)memcpy(line+cap-3,"...",3);line[cap]=0;}
+ else memcpy(line,text,n+1);
+ sr_text(canvas,(float)x,(float)y,line,color,1.f,1);
+}
+void zell_ui_blit(struct sr_canvas *canvas,int dx,int dy,int dw,int dh,const uint32_t *pixels,int src_w,int src_h){
+ sr_canvas src;int x,y,w,h;
+ if(!canvas||!pixels||dw<1||dh<1||src_w<1||src_h<1)return;
+ sr_fill_rect(canvas,(float)dx,(float)dy,(float)dw,(float)dh,0x000000u,1.f);
+ zell_theater_contain(src_w,src_h,dw,dh,&x,&y,&w,&h);
+ if(w<1||h<1)return;
+ sr_canvas_wrap(&src,(uint32_t *)pixels,src_w,src_h);
+ sr_blit_scaled(canvas,&src,dx+x,dy+y,w,h,1.f);
+}

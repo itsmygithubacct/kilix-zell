@@ -976,19 +976,49 @@ static void test_four_rooms(void){
             }
         }
     }
+    {
+        const int sizes[2][2]={{1920,1080},{1536,1024}};
+        for(int v=0;v<2;v++){
+            zell_scene wide;
+            zell_scene_init(&wide,sizes[v][0],sizes[v][1]);
+            zell_desktop_init(&wide);
+            wide.room=1;
+            zell_room_view_identity(&wide);
+            assert(wide.room_view.scale==1.f);
+            assert(wide.room_view.offset_x==wide.room_view.logical_x);
+            assert(wide.room_view.offset_y==wide.room_view.logical_y);
+            for(int room=5;room<=8;room++){
+                wide.room=room;
+                zell_room_view_identity(&wide);
+                assert(wide.room_view.logical_x==0&&wide.room_view.logical_y==0);
+                assert(wide.room_view.logical_w==ZELL_WORLD_W&&wide.room_view.logical_h==ZELL_WORLD_H);
+                assert(wide.room_view.scale<1.f);
+                assert(wide.room_view.viewport_y==ZELL_ROOM_HUD_BOTTOM);
+            }
+            wide.room=6;
+            zell_room_view_identity(&wide);
+            assert(view_contains(&wide,64.f,54.f)&&view_contains(&wide,1471.f,54.f));
+            assert(view_contains(&wide,64.f,638.f)&&view_contains(&wide,1471.f,638.f));
+            assert(view_contains(&wide,82.f,677.f)&&view_contains(&wide,1451.f,720.f));
+        }
+    }
 #ifndef ZELL_RENDER_NEURONTE
     {
         sr_canvas big,small;
         zell_scene full,fitted;
-        float bx,by;
-        int ix,iy,jx,jy;
-        assert(sr_canvas_init(&big,ZELL_WORLD_W,ZELL_WORLD_H));
+        float bx,by,rx,ry;
+        int ix,iy,jx,jy,ref_w,ref_h,sx_i,sy_i;
+        ref_w=ZELL_WORLD_W;
+        ref_h=ZELL_WORLD_H+ZELL_ROOM_HUD_BOTTOM+ZELL_ROOM_STATUS_STRIP;
+        assert(sr_canvas_init(&big,ref_w,ref_h));
         assert(sr_canvas_init(&small,960,600));
-        zell_scene_init(&full,ZELL_WORLD_W,ZELL_WORLD_H);zell_desktop_init(&full);
+        zell_scene_init(&full,ref_w,ref_h);zell_desktop_init(&full);
         full.room=6;full.flame_tick=0;full.x=700.f;full.y=500.f;
         zell_scene_init(&fitted,960,600);zell_desktop_init(&fitted);
         fitted.room=6;fitted.flame_tick=0;fitted.x=full.x;fitted.y=full.y;
         zell_room_view_identity(&full);zell_room_view_identity(&fitted);
+        assert(full.room_view.scale==1.f);
+        assert(full.room_view.offset_y==ZELL_ROOM_HUD_BOTTOM);
         zell_draw(&full,&big);zell_draw(&fitted,&small);
         zell_world_to_screen(&fitted,900.f,800.f,&sx,&sy);
         ix=(int)floorf(sx);iy=(int)floorf(sy);
@@ -996,7 +1026,10 @@ static void test_four_rooms(void){
         zell_screen_to_world(&fitted,(float)ix,(float)iy,&bx,&by);
         jx=(int)floorf(bx);jy=(int)floorf(by);
         assert(jx>=0&&jy>=0&&jx<ZELL_WORLD_W&&jy<ZELL_WORLD_H);
-        assert(small.px[(size_t)iy*960u+(size_t)ix]==big.px[(size_t)jy*(size_t)ZELL_WORLD_W+(size_t)jx]);
+        zell_world_to_screen(&full,(float)jx,(float)jy,&rx,&ry);
+        sx_i=(int)floorf(rx);sy_i=(int)floorf(ry);
+        assert(sx_i>=0&&sy_i>=ZELL_ROOM_HUD_BOTTOM&&sx_i<ref_w&&sy_i<ref_h-ZELL_ROOM_STATUS_STRIP);
+        assert(small.px[(size_t)iy*960u+(size_t)ix]==big.px[(size_t)sy_i*(size_t)ref_w+(size_t)sx_i]);
         sr_canvas_free(&big);sr_canvas_free(&small);
     }
 #endif
@@ -1055,9 +1088,6 @@ static void test_theater(void){
     uint32_t pixels[8],seq;
     int x,y,w,h,ow,oh,nrow;
     char line[1024];
-    char *chrome[]={"apt-get","install","-y","google-chrome-stable_current_amd64.deb"};
-    char *sudo_argv[]={"sudo","apt-get","install","-y","google-chrome-stable_current_amd64.deb"};
-    char *bare[]={"apt-get","install","-y","google-chrome-stable"};
     float y0;
     zell_theater_test_reset();
     zell_theater_contain(1920,1080,1408,585,&x,&y,&w,&h);
@@ -1132,9 +1162,14 @@ static void test_theater(void){
     assert(zell_theater_present(map,sizeof map)==0);
     assert(zell_theater_format_open_file(line,sizeof line,"q1","clips/reel.mp4")>0);
     assert(strstr(line,"\"cmd\":\"open\"")&&strstr(line,"clips/reel.mp4")&&strstr(line,"\"browser\":null"));
-    assert(zell_theater_install_argv_ok(4,chrome));
-    assert(!zell_theater_install_argv_ok(5,sudo_argv));
-    assert(!zell_theater_install_argv_ok(4,bare));
+    assert(zell_theater_install_action_ok("chrome","install-chrome-deb","google-chrome-stable_current_amd64.deb"));
+    assert(zell_theater_install_action_ok("firefox-esr","install-firefox-esr",NULL));
+    assert(zell_theater_install_action_ok("firefox-esr","install-firefox-esr",""));
+    assert(zell_theater_install_action_ok("chromium","install-chromium",NULL));
+    assert(!zell_theater_install_action_ok("chrome","install-chrome-deb",NULL));
+    assert(!zell_theater_install_action_ok("chrome","install-chrome-deb","google-chrome-stable"));
+    assert(!zell_theater_install_action_ok("firefox-esr","install-firefox-esr","google-chrome-stable_current_amd64.deb"));
+    assert(!zell_theater_install_action_ok("chromium","install-chrome-deb",NULL));
     zell_theater_test_reset();
     zell_scene_init(&s,960,600);zell_desktop_init(&s);
     assert(zell_theater_apply_line(&s,"{\"event\":\"install\",\"id\":\"q1\",\"phase\":\"request\",\"argv\":[\"sudo\",\"apt-get\"]}")==0);
@@ -1142,12 +1177,140 @@ static void test_theater(void){
     assert(strstr(zell_theater_last_command(),"\"ok\":false"));
     assert(!s.theater_install_request);
     zell_theater_test_reset();
-    assert(zell_theater_apply_line(&s,"{\"event\":\"install\",\"id\":\"q1\",\"phase\":\"request\",\"argv\":[\"apt-get\",\"install\",\"-y\",\"google-chrome-stable_current_amd64.deb\"]}")==1);
+    assert(zell_theater_apply_line(&s,"{\"event\":\"install\",\"id\":\"q1\",\"browser\":\"firefox-esr\",\"phase\":\"request\",\"action\":\"install-firefox-esr\"}")==1);
     assert(s.theater_install_request);
-    assert(strstr(zell_theater_error(),"")==NULL||zell_theater_error()[0]==0);
+    assert(zell_theater_error()[0]==0);
     assert(zell_theater_install_json(line,sizeof line));
-    assert(strstr(line,"Theater install")&&strstr(line,"apt-get")&&strstr(line,"google-chrome-stable_current_amd64.deb"));
-    assert(!strstr(line,"sudo"));
+    assert(strstr(line,"Theater install")&&strstr(line,"firefox-esr")&&strstr(line,"install-firefox-esr"));
+    assert(!strstr(line,"argv")&&!strstr(line,"sudo"));
+    zell_theater_test_reset();
+    assert(zell_theater_apply_line(&s,"{\"event\":\"install\",\"id\":\"q2\",\"browser\":\"chrome\",\"phase\":\"request\",\"action\":\"install-chrome-deb\",\"deb\":\"google-chrome-stable_current_amd64.deb\"}")==1);
+    assert(zell_theater_install_json(line,sizeof line));
+    assert(strstr(line,"install-chrome-deb")&&strstr(line,"google-chrome-stable_current_amd64.deb"));
+    assert(!strstr(line,"argv")&&!strstr(line,"sudo"));
+    zell_theater_test_reset();
+    zell_scene_init(&s,960,600);zell_desktop_init(&s);
+    assert(zell_theater_apply_line(&s,"{\"event\":\"install\",\"id\":\"q3\",\"browser\":\"chrome\",\"phase\":\"request\",\"action\":\"install-chrome-deb\"}")==0);
+    assert(strstr(zell_theater_error(),"refused"));
+    assert(!s.theater_install_request);
+    zell_theater_test_reset();
+    zell_scene_init(&s,960,600);zell_desktop_init(&s);
+    assert(zell_theater_apply_line(&s,"{\"event\":\"caption\",\"id\":\"q1\",\"text\":\"caf\\u00e9\",\"generation\":1}")==0);
+    assert(strcmp(zell_theater_caption(),"caf\xc3\xa9")==0);
+    assert(zell_theater_apply_line(&s,"{\"event\":\"caption\",\"id\":\"q1\",\"text\":\"\\uD83D\\uDE00\",\"generation\":2}")==0);
+    assert(strcmp(zell_theater_caption(),"\xf0\x9f\x98\x80")==0);
+    assert(zell_theater_apply_line(&s,"{\"event\":\"caption\",\"id\":\"q1\",\"text\":\"caf\xc3\xa9\",\"generation\":3}")==0);
+    assert(strcmp(zell_theater_caption(),"caf\xc3\xa9")==0);
+    assert(zell_theater_apply_line(&s,"{\"event\":\"caption\",\"id\":\"q1\",\"text\":\"\\uD800\",\"generation\":4}")==0);
+    assert(zell_theater_caption()[0]==0);
+    assert(zell_theater_apply_line(&s,"{\"event\":\"status\",\"id\":\"a\",\"state\":\"playing\",\"generation\":5,\"browser\":null}")==0);
+    assert(strcmp(zell_theater_picture(),"a")==0&&zell_theater_playing());
+    assert(zell_theater_apply_line(&s,"{\"event\":\"caption\",\"id\":\"a\",\"text\":\"newer\",\"generation\":7}")==0);
+    assert(strcmp(zell_theater_caption(),"newer")==0);
+    assert(zell_theater_apply_line(&s,"{\"event\":\"caption\",\"id\":\"a\",\"text\":\"older\",\"generation\":6}")==0);
+    assert(strcmp(zell_theater_caption(),"newer")==0);
+    assert(zell_theater_apply_line(&s,"{\"event\":\"status\",\"id\":\"b\",\"state\":\"paused\",\"generation\":8,\"browser\":null}")==0);
+    assert(strcmp(zell_theater_picture(),"a")==0&&zell_theater_playing());
+    assert(zell_theater_queue_count()==2);
+    map[0]='Z';map[1]='T';map[2]='H';map[3]='R';
+    put_le32(map+4,1);put_le32(map+8,2);put_le32(map+12,2);put_le32(map+16,2);
+    put_le32(map+32,8);put_le32(map+36,1);put_le32(map+40,8);
+    assert(zell_theater_present(map,sizeof map)==1);
+    put_le32(map+16,4);put_le32(map+40,7);
+    assert(zell_theater_present(map,sizeof map)==0);
+    {
+        char listing[4600],path[3001];
+        memset(path,'b',3000);path[3000]=0;
+        snprintf(listing,sizeof listing,"{\"event\":\"listing\",\"id\":\"fold\",\"entries\":[{\"name\":\"caf\\u00e9.mp4\",\"path\":\"%s\"}]}",path);
+        zell_theater_test_reset();
+        assert(zell_theater_apply_line(&s,listing)==0);
+        assert(zell_theater_listing_count()==1);
+        assert(strcmp(zell_theater_listing_path(0),path)==0);
+        assert(strlen(zell_theater_listing_path(0))==3000);
+        assert(zell_theater_queue_count()==0);
+    }
+    zell_theater_test_reset();
+    zell_scene_init(&s,1536,1000);zell_desktop_init(&s);
+    s.room=6;s.mode=ZELL_MODE_WALK;s.mouse_valid=true;
+    zell_room_view_identity(&s);
+    assert(zell_theater_apply_line(&s,"{\"event\":\"status\",\"id\":\"q1\",\"state\":\"paused\",\"generation\":1,\"browser\":null}")==0);
+    assert(strcmp(zell_theater_picture(),"q1")==0&&!zell_theater_playing()&&zell_theater_queue_count()==1);
+    click_world(&s,886.f,862.f);
+    assert(zell_desktop_click(&s)&&zell_theater_menu_open());
+    zell_theater_menu_layout(&s,&panel,rows,12,&nrow);
+    assert(nrow>=8);
+    s.mouse_click=true;s.mouse_x=rows[7].x+2;s.mouse_y=rows[7].y+2;
+    assert(zell_desktop_click(&s));
+    assert(strstr(zell_theater_last_command(),"\"cmd\":\"use\""));
+    assert(strstr(zell_theater_last_command(),"q1"));
+    assert(!zell_theater_playing());
+    zell_theater_test_reset();
+    zell_scene_init(&s,640,400);zell_desktop_init(&s);
+    s.room=6;s.mode=ZELL_MODE_WALK;s.mouse_valid=true;
+    for(int i=0;i<8;i++){
+        char cmd[180],st[180];
+        snprintf(cmd,sizeof cmd,"{\"cmd\":\"open\",\"id\":\"q%d\",\"source\":{\"kind\":\"file\",\"path\":\"clips/reel%d.mp4\"},\"browser\":null}",i+1,i);
+        assert(!zell_theater_submit(&s,cmd));
+        snprintf(st,sizeof st,"{\"event\":\"status\",\"id\":\"q%d\",\"state\":\"paused\",\"generation\":%d,\"browser\":null}",i+1,i+1);
+        assert(zell_theater_apply_line(&s,st)==0);
+    }
+    assert(zell_theater_queue_count()==8);
+    assert(strcmp(zell_theater_queue_label(0),"reel0.mp4")==0);
+    assert(strcmp(zell_theater_queue_label(7),"reel7.mp4")==0);
+    assert(strcmp(zell_theater_picture(),"q1")==0);
+    {
+        zell_rect shown,hidden,nav;
+        zell_theater_queue_rect(0,640,400,&shown);
+        zell_theater_queue_rect(4,640,400,&hidden);
+        assert(shown.w>0&&hidden.w==0);
+        assert(zell_theater_queue_nav(640,400,1,&nav));
+        s.mouse_click=true;s.mouse_x=nav.x+1;s.mouse_y=nav.y+1;
+        assert(zell_desktop_click(&s));
+        zell_theater_queue_rect(0,640,400,&hidden);
+        zell_theater_queue_rect(7,640,400,&shown);
+        assert(hidden.w==0&&shown.w>0);
+    }
+    zell_theater_test_reset();
+    zell_scene_init(&s,960,600);zell_desktop_init(&s);
+    s.room=6;s.mode=ZELL_MODE_WALK;s.mouse_valid=true;
+    zell_room_view_identity(&s);
+    assert(zell_theater_apply_line(&s,"{\"event\":\"status\",\"id\":\"q1\",\"state\":\"playing\",\"generation\":1,\"browser\":\"firefox-esr\"}")==0);
+    click_world(&s,200.f,200.f);
+    assert(zell_desktop_click(&s)&&zell_theater_wants_keys(&s));
+    memset(&c,0,sizeof c);
+    c.key_press=true;c.key_code='a';c.key_text='a';c.key_modifiers=1u|16u;
+    assert(zell_desktop_tick(&s,&c)==1);
+    assert(strstr(zell_theater_last_command(),"\"cmd\":\"key\""));
+    assert(strstr(zell_theater_last_command(),"\"action\":\"down\""));
+    assert(strstr(zell_theater_last_command(),"\"modifiers\":1,"));
+    assert(strstr(zell_theater_last_command(),"\"text\":\"a\""));
+    assert(!strstr(zell_theater_last_command(),"\"action\":\"up\""));
+    memset(&c,0,sizeof c);
+    c.key_press=true;c.key_code=0xe001u;c.key_text=0;
+    assert(zell_desktop_tick(&s,&c)==1);
+    assert(strstr(zell_theater_last_command(),"\"key\":\"Enter\""));
+    assert(strstr(zell_theater_last_command(),"\"action\":\"down\""));
+    {
+        zell_rect picture,caption,help,drop;
+        zell_theater_fullscreen_layout(1920,1080,&picture,&caption,&help,&drop);
+        assert(picture.y==28&&caption.y==picture.y+picture.h&&caption.h==44);
+        assert(help.y<picture.y&&drop.y==picture.y);
+    }
+    zell_theater_test_reset();
+    zell_scene_init(&s,960,600);zell_desktop_init(&s);
+    s.room=6;s.mode=ZELL_MODE_WALK;s.mouse_valid=true;
+    zell_room_view_identity(&s);
+    click_world(&s,886.f,862.f);
+    assert(zell_desktop_click(&s)&&zell_theater_menu_open());
+    memset(&c,0,sizeof c);c.fullscreen_key=true;
+    assert(zell_desktop_tick(&s,&c)==1&&zell_theater_fullscreen());
+    {
+        zell_rect picture,caption,help,drop;
+        zell_theater_fullscreen_layout(s.width,s.height,&picture,&caption,&help,&drop);
+        s.mouse_click=true;s.mouse_x=help.x+2;s.mouse_y=help.y+2;
+        assert(zell_desktop_click(&s)&&zell_theater_help_open());
+        assert(drop.y==28);
+    }
     zell_theater_test_reset();
 }
 int main(void) {

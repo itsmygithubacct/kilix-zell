@@ -90,6 +90,11 @@ typedef struct zell_controls {
     unsigned character;
     /* F11. Letter f stays a typed character for theater fields. */
     bool fullscreen_key;
+    /* One press for the focused theater browser. Releases are not forwarded. */
+    bool key_press;
+    unsigned key_code;
+    unsigned key_modifiers;
+    unsigned key_text;
 } zell_controls;
 
 typedef struct zell_scene {

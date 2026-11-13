@@ -558,14 +558,26 @@ def desktop(station,action):
         return page_text(now.strftime('%A %d %B %Y, %H:%M:%S')+'\n\n'+calendar.month(now.year,now.month))
     raise ValueError('Unknown station')
 
-def theater_install_argv_ok(argv):
-    """Accept the floating-terminal install command. Refuse sudo and a bare Chrome package."""
-    if not isinstance(argv,list) or not 1<=len(argv)<=8:return False
-    for item in argv:
-        if not isinstance(item,str) or not 1<=len(item)<=512:return False
-        if '\n' in item or '\x00' in item:return False
-        if item in {'sudo','google-chrome-stable'}:return False
-    return True
+_INSTALL_CHROME_DEB='google-chrome-stable_current_amd64.deb'
+
+def theater_install_action_ok(browser,action,deb=None):
+    """Accept one fixed install action. A helper command list is not an action."""
+    if not isinstance(browser,str) or not isinstance(action,str):return False
+    if browser=='chrome':
+        return action=='install-chrome-deb' and deb==_INSTALL_CHROME_DEB
+    if deb not in (None,''):return False
+    if browser=='firefox-esr':return action=='install-firefox-esr'
+    if browser=='chromium':return action=='install-chromium'
+    return False
+
+def theater_install_command(payload):
+    """Launch the sibling installer with the validated action and nothing else."""
+    if not isinstance(payload,dict) or 'argv' in payload:return None
+    browser=payload.get('browser')
+    action=payload.get('action')
+    if not theater_install_action_ok(browser,action,payload.get('deb')):return None
+    script=Path(__file__).resolve().with_name('zell_theater_install.py')
+    return [sys.executable,str(script),action]
 
 if __name__=='__main__':
     if len(sys.argv)>2 and sys.argv[1]=='--terminal':
@@ -581,12 +593,13 @@ if __name__=='__main__':
             at=sys.argv.index('--theater-install')
             if at+1>=len(sys.argv):raise SystemExit(1)
             payload=json.loads(sys.argv[at+1])
-            argv=payload.get('argv') if isinstance(payload,dict) else None
-            title=payload.get('title') if isinstance(payload,dict) else None
+            if not isinstance(payload,dict) or 'argv' in payload:raise SystemExit(1)
+            title=payload.get('title')
             if not isinstance(title,str) or not title:title='Theater install'
-            if not theater_install_argv_ok(argv):raise SystemExit(1)
+            command=theater_install_command(payload)
+            if command is None:raise SystemExit(1)
             DIALOGUE=Dialogue();DIALOGUE.install()
-            code=zell_terminal.terminal_loop(sys.modules[__name__],argv,title=title)
+            code=zell_terminal.terminal_loop(sys.modules[__name__],command,title=title)
             raise SystemExit(0 if code==0 else 1)
         except SystemExit:
             raise

@@ -12,10 +12,16 @@
 #include <signal.h>
 
 #define TH_ITEMS 8
-#define TH_LINE 8192
+#define TH_CMD 8192
+#define TH_LINE 65540
 #define TH_QUEUE 4
+#define TH_LIST 200
+#define TH_NAME 4096
 #define TH_ACCEPT_NONE 0xffffffffu
 #define TH_MAP_BYTES (64u+(size_t)2048*2048*4u)
+#define TH_BAR 28
+#define TH_CAP_H 44
+#define TH_CHROME_DEB "google-chrome-stable_current_amd64.deb"
 
 typedef struct {
     pid_t pid;
@@ -23,18 +29,21 @@ typedef struct {
     void *map;
     uint32_t *shown,*scratch;
     size_t cap;
-    uint32_t seq,accept,retired;
+    uint32_t seq,accept,retired,expect;
     int frame_w,frame_h,sent_w,sent_h;
-    bool ready,stopping,hold,fullscreen,popout,menu,cc,paused;
-    bool install_stored,discard;
-    int focus,items,next_serial,q_len,install_argc,listing_n;
-    char path[4096],url[2048],caption[256],error[180],notice[180],browser[16],active[33];
+    bool ready,stopping,hold,fullscreen,popout,menu,cc,paused,playing;
+    bool install_stored,discard,expect_set,helper_active,page_keys,help;
+    int focus,items,next_serial,q_len,listing_n,list_scroll,queue_page;
+    char path[4096],url[2048],caption[1024],error[180],notice[180],browser[16];
+    char active[33],picture[33],selected[33],pending_id[33],pending_label[TH_NAME];
     char item_id[TH_ITEMS][33];
-    char queue[TH_QUEUE][TH_LINE];
-    char line[TH_LINE],last[TH_LINE];
+    char item_label[TH_ITEMS][TH_NAME];
+    char queue[TH_QUEUE][TH_CMD];
+    char line[TH_LINE],last[TH_CMD];
     size_t line_n;
-    char install_id[33],install_argv[8][512];
-    char listing_name[8][64],listing_path[8][512];
+    char install_id[33],install_browser[16],install_action[32],install_deb[80];
+    char listing_name[TH_LIST][TH_NAME];
+    char listing_path[TH_LIST][4096];
 } th_state;
 
 static th_state th={.in_fd=-1,.out_fd=-1,.frame_fd=-1,.accept=TH_ACCEPT_NONE,.cc=true,.paused=true,.next_serial=1};
@@ -86,27 +95,72 @@ static const char *th_key(const char *json,const char *key){
     }
     return NULL;
 }
+static int th_hex4(const char **pp){
+    int value=0;
+    for(int i=0;i<4;i++){
+        char h=*(*pp)++;
+        int d=h>='0'&&h<='9'?h-'0':h>='a'&&h<='f'?h-'a'+10:h>='A'&&h<='F'?h-'A'+10:-1;
+        if(d<0)return -1;
+        value=value*16+d;
+    }
+    return value;
+}
+static int th_utf8_put(char *dst,size_t cap,size_t n,unsigned code){
+    unsigned char tmp[4];
+    int len;
+    if(code>0x10ffffu)return -1;
+    if(code<=0x7fu){tmp[0]=(unsigned char)code;len=1;}
+    else if(code<=0x7ffu){tmp[0]=(unsigned char)(0xc0u|(code>>6));tmp[1]=(unsigned char)(0x80u|(code&63u));len=2;}
+    else if(code<=0xffffu){
+        tmp[0]=(unsigned char)(0xe0u|(code>>12));
+        tmp[1]=(unsigned char)(0x80u|((code>>6)&63u));
+        tmp[2]=(unsigned char)(0x80u|(code&63u));
+        len=3;
+    }else{
+        tmp[0]=(unsigned char)(0xf0u|(code>>18));
+        tmp[1]=(unsigned char)(0x80u|((code>>12)&63u));
+        tmp[2]=(unsigned char)(0x80u|((code>>6)&63u));
+        tmp[3]=(unsigned char)(0x80u|(code&63u));
+        len=4;
+    }
+    if(n+(size_t)len>=cap)return -1;
+    for(int i=0;i<len;i++)dst[n+(size_t)i]=(char)tmp[i];
+    return len;
+}
 static bool th_parse_string(const char **pp,char *dst,size_t cap){
     const char *p=*pp;
     size_t n=0;
-    if(*p!='"')return false;
+    if(!dst||cap<1||*p!='"')return false;
     p++;
     while(*p&&*p!='"'){
         unsigned char ch=(unsigned char)*p++;
         if(ch=='\\'){
             char esc=*p++;
+            if(!esc)return false;
             if(esc=='"'||esc=='\\'||esc=='/')ch=(unsigned char)esc;
+            else if(esc=='b')ch='\b';
+            else if(esc=='f')ch='\f';
             else if(esc=='n')ch='\n';
+            else if(esc=='r')ch='\r';
             else if(esc=='t')ch='\t';
             else if(esc=='u'){
-                int value=0;
-                for(int i=0;i<4;i++){
-                    char h=*p++;
-                    int d=h>='0'&&h<='9'?h-'0':h>='a'&&h<='f'?h-'a'+10:h>='A'&&h<='F'?h-'A'+10:-1;
-                    if(d<0)return false;
-                    value=value*16+d;
-                }
-                ch=(unsigned char)(value>255?'?':value);
+                int unit=th_hex4(&p);
+                unsigned code;
+                int wrote;
+                if(unit<0)return false;
+                code=(unsigned)unit;
+                if(code>=0xd800u&&code<=0xdbffu){
+                    int low;
+                    if(p[0]!='\\'||p[1]!='u')return false;
+                    p+=2;
+                    low=th_hex4(&p);
+                    if(low<0xdc00||low>0xdfff)return false;
+                    code=0x10000u+(((code-0xd800u)<<10)|((unsigned)low-0xdc00u));
+                }else if(code>=0xdc00u&&code<=0xdfffu)return false;
+                wrote=th_utf8_put(dst,cap,n,code);
+                if(wrote<0)return false;
+                n+=(size_t)wrote;
+                continue;
             }else return false;
         }
         if(n+1>=cap)return false;
@@ -134,18 +188,39 @@ static bool th_json_uint(const char *json,const char *key,uint32_t *out){
     *out=(uint32_t)value;
     return true;
 }
-static int th_json_argv(const char *json,char argv[][512],int cap){
-    const char *p=th_key(json,"argv");
-    int n=0;
-    if(!p||*p!='[')return -1;
-    p++;
-    while(*p&&*p!=']'){
-        while(*p==' '||*p==','||*p=='\n'||*p=='\t'||*p=='\r')p++;
-        if(*p==']')break;
-        if(n>=cap||!th_parse_string(&p,argv[n],512))return -1;
-        n++;
+static const char *th_object_end(const char *p){
+    int depth=0;
+    bool str=false,esc=false;
+    if(!p||*p!='{')return NULL;
+    for(;*p;p++){
+        if(str){
+            if(esc)esc=false;
+            else if(*p=='\\')esc=true;
+            else if(*p=='"')str=false;
+            continue;
+        }
+        if(*p=='"')str=true;
+        else if(*p=='{')depth++;
+        else if(*p=='}'){if(--depth==0)return p;}
     }
-    return n;
+    return NULL;
+}
+static bool th_gen_ok(uint32_t gen){
+    if(th.hold&&gen==th.retired)return false;
+    if(th.expect_set&&gen<th.expect)return false;
+    return true;
+}
+static void th_gen_take(uint32_t gen){
+    th.expect=gen;
+    th.expect_set=true;
+    th.accept=gen;
+    th.hold=false;
+}
+static const char *th_base(const char *path){
+    const char *slash;
+    if(!path||!path[0])return "";
+    slash=strrchr(path,'/');
+    return slash&&slash[1]?slash+1:path;
 }
 static void th_close_fds(void){
     if(th.map&&th.map!=MAP_FAILED){munmap(th.map,TH_MAP_BYTES);th.map=NULL;}
@@ -176,8 +251,8 @@ static void th_retire(void){
 static bool th_enqueue(const char *json){
     int n;
     if(!json||th.q_len>=TH_QUEUE)return false;
-    n=snprintf(th.queue[th.q_len],TH_LINE,"%s\n",json);
-    if(n<0||n>=TH_LINE)return false;
+    n=snprintf(th.queue[th.q_len],TH_CMD,"%s\n",json);
+    if(n<0||n>=TH_CMD)return false;
     th.q_len++;
     return true;
 }
@@ -265,32 +340,62 @@ static bool th_start(zell_scene *s){
     return true;
 }
 static void th_send_install_result(bool ok);
+static void th_send_install_cancel(void);
 static void th_send_install_result_body(bool ok){
-    char line[128];
+    char line[160];
     if(!th_id_ok(th.install_id))return;
     snprintf(line,sizeof line,"{\"cmd\":\"install_result\",\"id\":\"%s\",\"ok\":%s}",th.install_id,ok?"true":"false");
-    snprintf(th.last,sizeof th.last,"%s",line);
+    th_copy(th.last,sizeof th.last,line);
     if(th.pid>0)th_enqueue(line);
+    th.install_id[0]=0;
+    th.install_stored=false;
+}
+static void th_send_install_cancel(void){
+    char line[96];
+    if(!th_id_ok(th.install_id))return;
+    snprintf(line,sizeof line,"{\"cmd\":\"install_cancel\",\"id\":\"%s\"}",th.install_id);
+    th_copy(th.last,sizeof th.last,line);
+    if(th.pid>0)th_enqueue(line);
+    th.install_id[0]=0;
+    th.install_stored=false;
+}
+static void th_clear_pending(void){
+    th.pending_id[0]=0;
+    th.pending_label[0]=0;
+}
+static bool th_note_loaded(const char *id){
+    const char *label;
+    if(!th_id_ok(id))return false;
+    for(int i=0;i<th.items;i++)if(strcmp(th.item_id[i],id)==0)return true;
+    if(th.items>=TH_ITEMS){th_set_error("The queue is full.");return false;}
+    label=th.pending_label[0]&&strcmp(th.pending_id,id)==0?th.pending_label:id;
+    th_copy(th.item_id[th.items],sizeof th.item_id[0],id);
+    th_copy(th.item_label[th.items],sizeof th.item_label[0],label);
+    th.items++;
+    if(!th.selected[0])th_copy(th.selected,sizeof th.selected,id);
+    if(strcmp(th.pending_id,id)==0)th_clear_pending();
+    return true;
 }
 static int th_take_entries(const char *json){
     const char *p=th_key(json,"entries");
     th.listing_n=0;
+    th.list_scroll=0;
     if(!p||*p!='[')return 0;
     p++;
-    while(*p&&*p!=']'&&th.listing_n<8){
-        char obj[1200],name[64],path[512];
+    while(*p&&*p!=']'&&th.listing_n<TH_LIST){
+        char obj[16384],name[TH_NAME],path[4096];
         const char *end;
         size_t len;
         while(*p&&*p!='{'&&*p!=']')p++;
         if(*p!='{')break;
-        end=strchr(p,'}');
+        end=th_object_end(p);
         if(!end)break;
         len=(size_t)(end-p)+1;
         if(len>=sizeof obj){p=end+1;continue;}
         memcpy(obj,p,len);obj[len]=0;
-        if(th_json_string(obj,"name",name,sizeof name)&&th_json_string(obj,"path",path,sizeof path)&&path[0]){
-            snprintf(th.listing_name[th.listing_n],sizeof th.listing_name[0],"%s",name);
-            snprintf(th.listing_path[th.listing_n],sizeof th.listing_path[0],"%s",path);
+        if(th_json_string(obj,"name",name,sizeof name)&&th_json_string(obj,"path",path,sizeof path)&&path[0]&&strlen(path)<=4096){
+            th_copy(th.listing_name[th.listing_n],sizeof th.listing_name[0],name);
+            th_copy(th.listing_path[th.listing_n],sizeof th.listing_path[0],path);
             th.listing_n++;
         }
         p=end+1;
@@ -304,20 +409,24 @@ int zell_theater_apply_line(zell_scene *s,const char *line){
     if(strcmp(event,"fatal")==0){
         char err[160];
         if(!th_json_string(line,"error",err,sizeof err))snprintf(err,sizeof err,"Theater runtime is missing.");
-        th_set_error(err);th_retire();return 0;
+        th_set_error(err);th_retire();th_clear_pending();return 0;
     }
     if(strcmp(event,"error")==0){
         char detail[160];
         if(!th_json_string(line,"detail",detail,sizeof detail)&&!th_json_string(line,"error",detail,sizeof detail))
             snprintf(detail,sizeof detail,"Theater error.");
-        th_set_error(detail);return 0;
+        th_set_error(detail);
+        th_clear_pending();
+        return 0;
     }
     if(strcmp(event,"caption")==0){
         uint32_t gen=0;
-        if(th_json_uint(line,"generation",&gen)){
-            if(th.hold&&gen==th.retired)return 0;
-            th.accept=gen;th.hold=false;
-        }
+        char id[40];
+        bool has_gen=th_json_uint(line,"generation",&gen);
+        bool has_id=th_json_string(line,"id",id,sizeof id);
+        if(has_gen&&!th_gen_ok(gen))return 0;
+        if(has_gen)th_gen_take(gen);
+        if(has_id&&th.picture[0]&&strcmp(id,th.picture)!=0)return 0;
         if(!th_json_string(line,"text",th.caption,sizeof th.caption))th.caption[0]=0;
         return 0;
     }
@@ -325,34 +434,81 @@ int zell_theater_apply_line(zell_scene *s,const char *line){
         uint32_t gen=0;
         char id[40],state[32],browser[16];
         const char *browser_at;
-        if(th_json_uint(line,"generation",&gen)){
-            if(th.hold&&gen==th.retired)return 0;
-            th.accept=gen;th.hold=false;
-        }
-        if(th_json_string(line,"id",id,sizeof id)&&th_id_ok(id))th_copy(th.active,sizeof th.active,id);
-        if(th_json_string(line,"state",state,sizeof state))th.paused=strcmp(state,"playing")!=0;
+        bool has_gen=th_json_uint(line,"generation",&gen);
+        bool has_id;
+        if(has_gen&&!th_gen_ok(gen))return 0;
+        if(has_gen)th_gen_take(gen);
+        has_id=th_json_string(line,"id",id,sizeof id)&&th_id_ok(id);
+        if(!th_json_string(line,"state",state,sizeof state))state[0]=0;
         browser_at=th_key(line,"browser");
-        if(browser_at&&*browser_at=='n')th.browser[0]=0;
-        else if(th_json_string(line,"browser",browser,sizeof browser))snprintf(th.browser,sizeof th.browser,"%s",browser);
+        if(has_id&&strcmp(state,"playing")==0){
+            th_note_loaded(id);
+            th_copy(th.picture,sizeof th.picture,id);
+            th_copy(th.active,sizeof th.active,id);
+            th_copy(th.selected,sizeof th.selected,id);
+            th.playing=true;
+            th.paused=false;
+            th.helper_active=true;
+            if(browser_at&&*browser_at=='n')th.browser[0]=0;
+            else if(th_json_string(line,"browser",browser,sizeof browser))th_copy(th.browser,sizeof th.browser,browser);
+        }else if(has_id&&(strcmp(state,"paused")==0||strcmp(state,"ended")==0||strcmp(state,"error")==0)){
+            if(th.picture[0]&&strcmp(id,th.picture)!=0){
+                if(strcmp(state,"paused")==0)th_note_loaded(id);
+            }else{
+                th_note_loaded(id);
+                th.playing=false;
+                th.paused=true;
+                if(strcmp(state,"paused")==0){
+                    th_copy(th.picture,sizeof th.picture,id);
+                    th_copy(th.active,sizeof th.active,id);
+                    if(browser_at&&*browser_at=='n')th.browser[0]=0;
+                    else if(th_json_string(line,"browser",browser,sizeof browser))th_copy(th.browser,sizeof th.browser,browser);
+                }else{
+                    th.helper_active=false;
+                    if(strcmp(id,th.picture)==0){th.picture[0]=0;th.active[0]=0;}
+                }
+            }
+        }else if(!has_id){
+            th.playing=false;
+            th.paused=true;
+            th.helper_active=false;
+            th.picture[0]=0;
+            th.active[0]=0;
+            th.browser[0]=0;
+        }
         return 0;
     }
-    if(strcmp(event,"listing")==0){th_take_entries(line);th.menu=true;return 0;}
+    if(strcmp(event,"listing")==0){
+        char id[40];
+        th_take_entries(line);
+        if(th_json_string(line,"id",id,sizeof id)&&th.pending_id[0]&&strcmp(id,th.pending_id)==0)th_clear_pending();
+        th.menu=true;
+        return 0;
+    }
     if(strcmp(event,"install")==0){
-        char phase[32],id[40],argv[8][512];
-        char *ptrs[8];
-        int argc;
+        char phase[32],id[40],action[40],browser[16],deb[80];
+        bool has_deb;
         if(!th_json_string(line,"phase",phase,sizeof phase)||strcmp(phase,"request")!=0)return 0;
-        if(!th_json_string(line,"id",id,sizeof id)||!th_id_ok(id)){th_set_error("Theater install id is not valid.");return 0;}
-        th_copy(th.install_id,sizeof th.install_id,id);
-        argc=th_json_argv(line,argv,8);
-        for(int i=0;i<8;i++)ptrs[i]=argv[i];
-        if(argc<1||!zell_theater_install_argv_ok(argc,ptrs)){
+        if(th_key(line,"argv")){
             th_set_error("Theater install command was refused.");
-            th_send_install_result(false);
+            if(th_json_string(line,"id",id,sizeof id)&&th_id_ok(id)){th_copy(th.install_id,sizeof th.install_id,id);th_send_install_result(false);}
             return 0;
         }
-        th.install_argc=argc;
-        for(int i=0;i<argc;i++)th_copy(th.install_argv[i],sizeof th.install_argv[0],argv[i]);
+        if(!th_json_string(line,"id",id,sizeof id)||!th_id_ok(id)){th_set_error("Theater install id is not valid.");return 0;}
+        if(!th_json_string(line,"action",action,sizeof action))action[0]=0;
+        if(!th_json_string(line,"browser",browser,sizeof browser))browser[0]=0;
+        has_deb=th_json_string(line,"deb",deb,sizeof deb);
+        th_copy(th.install_id,sizeof th.install_id,id);
+        if(!zell_theater_install_action_ok(browser,action,has_deb?deb:NULL)){
+            th_set_error("Theater install command was refused.");
+            th_send_install_result(false);
+            th_clear_pending();
+            return 0;
+        }
+        th_copy(th.install_browser,sizeof th.install_browser,browser);
+        th_copy(th.install_action,sizeof th.install_action,action);
+        if(has_deb)th_copy(th.install_deb,sizeof th.install_deb,deb);
+        else th.install_deb[0]=0;
         th.install_stored=true;
         if(s)s->theater_install_request=true;
         th_set_notice("Install requested.");
@@ -360,17 +516,9 @@ int zell_theater_apply_line(zell_scene *s,const char *line){
     }
     return 0;
 }
-static bool th_add_item(const char *id){
-    if(!th_id_ok(id)||th.items>=TH_ITEMS)return false;
-    for(int i=0;i<th.items;i++)if(strcmp(th.item_id[i],id)==0)return true;
-    th_copy(th.item_id[th.items],sizeof th.item_id[0],id);
-    th.items++;
-    th_copy(th.active,sizeof th.active,id);
-    return true;
-}
 static void th_read(zell_scene *s){
     if(th.out_fd<0)return;
-    for(int batch=0;batch<8;batch++){
+    for(int batch=0;batch<20;batch++){
         char bytes[4096];
         ssize_t count=read(th.out_fd,bytes,sizeof bytes);
         if(count<0){if(errno==EINTR)continue;break;}
@@ -408,17 +556,28 @@ static void th_window(const zell_scene *s,zell_rect *frame,zell_rect *image,zell
     if(h>height-160)h=height-160;
     if(h<112)h=112;
     *frame=(zell_rect){width-w-24,88,w,h+36};
-    *image=(zell_rect){frame->x+8,frame->y+28,w-16,h};
-    *dock=(zell_rect){frame->x+w-62,frame->y+4,26,20};
-    *close_r=(zell_rect){dock->x-30,dock->y,26,20};
+    *image=(zell_rect){frame->x+8,frame->y+TH_BAR,w-16,h};
+    *dock=(zell_rect){frame->x+w-108,frame->y+4,48,20};
+    *close_r=(zell_rect){dock->x-52,dock->y,48,20};
+}
+void zell_theater_fullscreen_layout(int width,int height,zell_rect *picture,zell_rect *caption,zell_rect *help,zell_rect *drop){
+    int w=width>0?width:1,h=height>0?height:1,ph=h-TH_BAR-TH_CAP_H;
+    if(ph<1)ph=1;
+    if(picture)*picture=(zell_rect){0,TH_BAR,w,ph};
+    if(caption)*caption=(zell_rect){0,TH_BAR+ph,w,TH_CAP_H};
+    if(help)*help=(zell_rect){w-76,4,68,20};
+    if(drop)*drop=(zell_rect){w-280,TH_BAR,268,44};
 }
 static void th_resize_target(const zell_scene *s,int *w,int *h){
     if(th.fullscreen){
-        int width=s->width>0?s->width:1408,height=s->height>0?s->height:585,fh=height-44-28;
-        if(fh<1)fh=1;
-        if(width>16384)width=16384;
-        if(fh>16384)fh=16384;
-        *w=width;*h=fh;return;
+        zell_rect picture,caption,help,drop;
+        int width=s->width>0?s->width:1408,height=s->height>0?s->height:585;
+        zell_theater_fullscreen_layout(width,height,&picture,&caption,&help,&drop);
+        if(picture.w>16384)picture.w=16384;
+        if(picture.h>16384)picture.h=16384;
+        if(picture.w<1)picture.w=1;
+        if(picture.h<1)picture.h=1;
+        *w=picture.w;*h=picture.h;return;
     }
     if(th.popout){
         zell_rect frame,image,dock,close_r;
@@ -446,7 +605,8 @@ static void th_pump(zell_scene *s){
         if(code==-2)th_set_error("The station terminal is busy.");
         else if(code==0)th_set_notice("Install finished.");
         else th_set_error("Install did not finish.");
-        th_send_install_result(code==0);
+        if(code==0)th_send_install_result(true);
+        else th_send_install_cancel();
     }
     th_read(s);
     if(th.map)zell_theater_present(th.map,TH_MAP_BYTES);
@@ -454,22 +614,28 @@ static void th_pump(zell_scene *s){
     th_flush();
     th_reap();
 }
+static void th_remember_open(const char *json){
+    char id[40],kind[16],path[4096],url[2048];
+    if(!th_json_string(json,"id",id,sizeof id)||!th_id_ok(id))return;
+    th_copy(th.pending_id,sizeof th.pending_id,id);
+    th.pending_label[0]=0;
+    if(th_json_string(json,"path",path,sizeof path)&&path[0])th_copy(th.pending_label,sizeof th.pending_label,th_base(path));
+    else if(th_json_string(json,"url",url,sizeof url)&&url[0])th_copy(th.pending_label,sizeof th.pending_label,url);
+    (void)kind;
+}
 bool zell_theater_submit(zell_scene *s,const char *json){
     bool open_cmd,use_cmd,close_cmd;
-    char id[40];
-    if(!json||!json[0]||strlen(json)>=TH_LINE-2)return false;
-    snprintf(th.last,sizeof th.last,"%s",json);
+    if(!json||!json[0]||strlen(json)>=TH_CMD-2)return false;
+    th_copy(th.last,sizeof th.last,json);
     open_cmd=th_cmd_is(json,"open");
     use_cmd=th_cmd_is(json,"use");
     close_cmd=th_cmd_is(json,"close");
+    if(open_cmd)th_remember_open(json);
     if(!th_start(s)){
         if(use_cmd||close_cmd)th_retire();
         return false;
     }
     if(open_cmd||use_cmd||close_cmd)th_retire();
-    if(open_cmd){
-        if(!th_json_string(json,"id",id,sizeof id)||!th_add_item(id)){th_set_error("The queue is full.");return false;}
-    }
     if(!th_enqueue(json)){th_set_error("The theater command queue is full.");return false;}
     th_flush();
     return true;
@@ -494,7 +660,7 @@ static int th_quote(char *dst,size_t cap,const char *src){
     return (int)n;
 }
 static int th_format_open(char *dst,size_t cap,const char *id,const char *kind,const char *path,const char *url,const char *browser){
-    char qid[80],qpath[TH_LINE],qurl[TH_LINE];
+    char qid[80],qpath[TH_CMD],qurl[TH_CMD];
     int n;
     if(!th_id_ok(id)||th_quote(qid,sizeof qid,id)<0)return -1;
     if(url){
@@ -522,7 +688,7 @@ static bool th_url_ok(const char *url){
     return true;
 }
 static bool th_open_path(zell_scene *s,const char *kind,const char *path){
-    char id[16],line[TH_LINE];
+    char id[16],line[TH_CMD];
     if(!path||!path[0]){th_set_error(strcmp(kind,"folder")==0?"Type a folder path first.":"Type a file path first.");return false;}
     if(strlen(path)>4096){th_set_error("That path is too long.");return false;}
     if(th.items>=TH_ITEMS){th_set_error("The queue is full.");return false;}
@@ -533,7 +699,7 @@ static bool th_open_path(zell_scene *s,const char *kind,const char *path){
     return true;
 }
 static bool th_open_browser(zell_scene *s,const char *browser){
-    char id[16],line[TH_LINE];
+    char id[16],line[TH_CMD];
     if(!th_url_ok(th.url)){th_set_error("Type an http or https URL first.");return false;}
     if(th.items>=TH_ITEMS){th_set_error("The queue is full.");return false;}
     snprintf(id,sizeof id,"q%d",th.next_serial);
@@ -542,31 +708,49 @@ static bool th_open_browser(zell_scene *s,const char *browser){
     th.next_serial++;
     return true;
 }
+static void th_drop_item(const char *id){
+    int at=-1;
+    if(!id||!id[0])return;
+    for(int i=0;i<th.items;i++)if(strcmp(th.item_id[i],id)==0)at=i;
+    if(at<0)return;
+    for(int i=at;i+1<th.items;i++){
+        th_copy(th.item_id[i],sizeof th.item_id[0],th.item_id[i+1]);
+        th_copy(th.item_label[i],sizeof th.item_label[0],th.item_label[i+1]);
+    }
+    th.items--;
+    if(th.queue_page>0&&th.queue_page*4>=th.items)th.queue_page--;
+}
 static void th_use(zell_scene *s,const char *id){
     char line[80];
     if(!th_id_ok(id))return;
-    snprintf(th.active,sizeof th.active,"%s",id);
+    th_copy(th.selected,sizeof th.selected,id);
     snprintf(line,sizeof line,"{\"cmd\":\"use\",\"id\":\"%s\"}",id);
     zell_theater_submit(s,line);
 }
 static void th_close_active(zell_scene *s){
-    char line[80];
-    int at=-1;
-    if(!th.active[0]){th_set_error("Nothing is playing.");return;}
-    snprintf(line,sizeof line,"{\"cmd\":\"close\",\"id\":\"%s\"}",th.active);
+    char line[80],closing[33];
+    if(!th.active[0]&&!th.picture[0]&&!th.selected[0]){th_set_error("Nothing is playing.");return;}
+    th_copy(closing,sizeof closing,th.picture[0]?th.picture:th.active[0]?th.active:th.selected);
+    snprintf(line,sizeof line,"{\"cmd\":\"close\",\"id\":\"%s\"}",closing);
     zell_theater_submit(s,line);
-    for(int i=0;i<th.items;i++)if(strcmp(th.item_id[i],th.active)==0)at=i;
-    if(at>=0){
-        for(int i=at;i+1<th.items;i++)snprintf(th.item_id[i],sizeof th.item_id[0],"%s",th.item_id[i+1]);
-        th.items--;
+    th_drop_item(closing);
+    if(strcmp(th.picture,closing)==0){th.picture[0]=0;th.playing=false;th.paused=true;th.helper_active=false;th.browser[0]=0;}
+    if(strcmp(th.active,closing)==0)th.active[0]=0;
+    if(strcmp(th.selected,closing)==0){
+        if(th.items>0)th_copy(th.selected,sizeof th.selected,th.item_id[0]);
+        else th.selected[0]=0;
     }
-    th.active[0]=0;
-    if(th.items>0)snprintf(th.active,sizeof th.active,"%s",th.item_id[0]);
-    if(th.items==0){th.popout=false;th.fullscreen=false;}
+    if(th.items==0){th.popout=false;th.fullscreen=false;th.page_keys=false;}
 }
 static void th_toggle_playback(zell_scene *s){
-    if(!th.active[0]){th_set_error("Nothing is playing.");return;}
-    zell_theater_submit(s,th.paused?"{\"cmd\":\"resume\"}":"{\"cmd\":\"pause\"}");
+    const char *id=th.selected[0]?th.selected:th.items>0?th.item_id[0]:"";
+    if(!th.playing){
+        if(!id[0]){th_set_error("Nothing is queued.");return;}
+        if(!th.helper_active){th_use(s,id);return;}
+        zell_theater_submit(s,"{\"cmd\":\"resume\"}");
+        return;
+    }
+    zell_theater_submit(s,"{\"cmd\":\"pause\"}");
 }
 static void th_toggle_cc(zell_scene *s){
     th.cc=!th.cc;
@@ -600,23 +784,11 @@ static void th_pointer(zell_scene *s,int x,int y){
     zell_theater_submit(s,line);
 }
 static void th_label(sr_canvas *c,int x,int y,const char *text,uint32_t color,int width){
-    char shown[160];
-    int cap=width/8;
-    if(cap<1)return;
-    if(cap>159)cap=159;
-    snprintf(shown,sizeof shown,"%s",text?text:"");
-    if((int)strlen(shown)>cap){shown[cap]=0;if(cap>3)memcpy(shown+cap-3,"...",3);}
-    sr_text(c,(float)x,(float)y,shown,color,1.f,1);
+    zell_ui_text(c,x,y,text,color,width);
 }
 static void th_paint(sr_canvas *c,int dx,int dy,int dw,int dh){
-    int x,y,w,h;
-    sr_canvas src;
     if(th.frame_w<1||th.frame_h<1||!th.shown||dw<1||dh<1)return;
-    sr_fill_rect(c,(float)dx,(float)dy,(float)dw,(float)dh,0x000000u,1.f);
-    zell_theater_contain(th.frame_w,th.frame_h,dw,dh,&x,&y,&w,&h);
-    if(w<1||h<1)return;
-    sr_canvas_wrap(&src,th.shown,th.frame_w,th.frame_h);
-    sr_blit_scaled(c,&src,dx+x,dy+y,w,h,1.f);
+    zell_ui_blit(c,dx,dy,dw,dh,th.shown,th.frame_w,th.frame_h);
 }
 static const char *th_row_label(int row){
     switch(row){
@@ -627,7 +799,7 @@ static const char *th_row_label(int row){
     case 4:return "Chrome";
     case 5:return "Chromium";
     case 6:return "Firefox ESR";
-    case 7:return th.paused||!th.active[0]?"Play":"Pause";
+    case 7:return th.playing?"Pause":"Play";
     case 8:return th.cc?"Captions on":"Captions off";
     case 9:return "Fullscreen";
     case 10:return th.popout?"Dock in the theater":"Pop out";
@@ -649,39 +821,91 @@ static void th_row_action(zell_scene *s,int row){
     else if(row==10)th_pop(s);
     else if(row==11)th_close_active(s);
 }
-void zell_theater_menu_layout(const zell_scene *s,zell_rect *panel,zell_rect *rows,int row_cap,int *row_count){
+typedef struct th_menu_hit {
+    zell_rect panel;
+    zell_rect action[12];
+    int action_n;
+    zell_rect file[16];
+    int file_i[16];
+    int file_n;
+    zell_rect next;
+    int has_next;
+} th_menu_hit;
+static void th_menu_hit_build(const zell_scene *s,th_menu_hit *hit){
     float sx,sy;
-    int width,height,pw=300,row_h=22,rows_n=12,ph,x,y,n;
-    if(row_count)*row_count=0;
-    if(panel)*panel=(zell_rect){0,0,0,0};
+    int width,height,pw=300,row_h=20,x,y,max_ph,rows_fit,action_vis,file_budget,ph;
+    memset(hit,0,sizeof *hit);
     if(!s||!th.menu||th.fullscreen)return;
     width=s->width>0?s->width:1;height=s->height>0?s->height:1;
-    ph=16+rows_n*row_h;
     zell_world_to_screen(s,840.f+92.f,790.f,&sx,&sy);
     x=(int)sx-pw-8;y=(int)sy;
     if(x+pw>width-8)x=width-pw-8;
     if(x<8)x=8;
+    max_ph=height-40-80;
+    if(max_ph<160)max_ph=height-48;
+    if(max_ph<160)max_ph=160;
+    rows_fit=(max_ph-16)/row_h;
+    if(rows_fit<8)rows_fit=8;
+    if(rows_fit>28)rows_fit=28;
+    file_budget=th.listing_n>0?1:0;
+    action_vis=rows_fit-file_budget;
+    if(action_vis>12)action_vis=12;
+    if(action_vis<1)action_vis=1;
+    file_budget=th.listing_n>0?rows_fit-action_vis:0;
+    if(file_budget>16)file_budget=16;
+    ph=16+(action_vis+file_budget)*row_h;
     if(y+ph>height-40)y=height-40-ph;
-    if(y<80)y=80;
-    if(panel)*panel=(zell_rect){x,y,pw,ph};
+    if(y<8)y=8;
+    hit->panel=(zell_rect){x,y,pw,ph};
+    for(int i=0;i<action_vis&&i<12;i++)hit->action[hit->action_n++]=(zell_rect){x+8,y+8+i*row_h,pw-16,row_h-2};
+    if(th.listing_n>0&&file_budget>0){
+        int reserve=0,shown,remain;
+        if(th.list_scroll<0||th.list_scroll>=th.listing_n)th.list_scroll=0;
+        remain=th.listing_n-th.list_scroll;
+        if(remain>file_budget)reserve=1;
+        shown=file_budget-reserve;
+        if(shown<1){shown=1;reserve=0;}
+        for(int i=0;i<shown&&th.list_scroll+i<th.listing_n&&hit->file_n<16;i++){
+            hit->file[hit->file_n]=(zell_rect){x+8,y+8+(action_vis+i)*row_h,pw-16,row_h-2};
+            hit->file_i[hit->file_n]=th.list_scroll+i;
+            hit->file_n++;
+        }
+        if(reserve){
+            if(hit->file_n>0&&shown>=file_budget){
+                zell_rect *last=&hit->file[hit->file_n-1];
+                int keep=last->w-72;
+                if(keep<80)keep=80;
+                hit->next=(zell_rect){last->x+keep,last->y,last->w-keep,last->h};
+                last->w=keep;
+            }else hit->next=(zell_rect){x+8,y+8+(action_vis+shown)*row_h,pw-16,row_h-2};
+            hit->has_next=1;
+        }
+    }
+}
+void zell_theater_menu_layout(const zell_scene *s,zell_rect *panel,zell_rect *rows,int row_cap,int *row_count){
+    th_menu_hit hit;
+    if(row_count)*row_count=0;
+    if(panel)*panel=(zell_rect){0,0,0,0};
+    th_menu_hit_build(s,&hit);
+    if(panel)*panel=hit.panel;
     if(!rows||row_cap<=0||!row_count)return;
-    n=rows_n;if(n>row_cap)n=row_cap;
-    for(int i=0;i<n;i++)rows[i]=(zell_rect){x+8,y+8+i*row_h,pw-16,row_h-2};
-    *row_count=n;
+    for(int i=0;i<hit.action_n&&i<row_cap;i++)rows[i]=hit.action[i];
+    *row_count=hit.action_n<row_cap?hit.action_n:row_cap;
 }
 static bool th_menu_click(zell_scene *s){
-    zell_rect panel,rows[12];
-    int n=0;
+    th_menu_hit hit;
     if(!th.menu)return false;
-    zell_theater_menu_layout(s,&panel,rows,12,&n);
-    for(int i=0;i<n;i++)if(rect_holds(&rows[i],s->mouse_x,s->mouse_y)){th_row_action(s,i);return true;}
-    if(th.listing_n>0&&panel.w>0){
-        for(int i=0;i<th.listing_n;i++){
-            zell_rect row={panel.x+8,panel.y+panel.h+4+i*22,panel.w-16,20};
-            if(!rect_holds(&row,s->mouse_x,s->mouse_y))continue;
-            th_open_path(s,"file",th.listing_path[i]);
-            return true;
-        }
+    th_menu_hit_build(s,&hit);
+    for(int i=0;i<hit.action_n;i++)if(rect_holds(&hit.action[i],s->mouse_x,s->mouse_y)){th_row_action(s,i);return true;}
+    if(hit.has_next&&rect_holds(&hit.next,s->mouse_x,s->mouse_y)){
+        th.list_scroll+=hit.file_n>0?hit.file_n:1;
+        if(th.list_scroll>=th.listing_n)th.list_scroll=0;
+        return true;
+    }
+    for(int i=0;i<hit.file_n;i++){
+        if(!rect_holds(&hit.file[i],s->mouse_x,s->mouse_y))continue;
+        th_open_path(s,"file",th.listing_path[hit.file_i[i]]);
+        return true;
     }
     th.menu=false;th.focus=0;
     return true;
@@ -690,10 +914,13 @@ bool zell_theater_click(zell_scene *s){
     zell_rect remote,frame,image,dock,close_r;
     if(!s||!s->desktop||!s->mouse_valid||!s->mouse_click||s->mode!=ZELL_MODE_WALK)return false;
     if(th.fullscreen){
-        int top=32,dh=s->height-top-44,local_x,local_y;
-        if(dh<1)dh=1;
-        local_x=s->mouse_x;local_y=s->mouse_y-top;
-        if(th.browser[0]&&local_x>=0&&local_y>=0&&local_x<s->width&&local_y<dh)th_pointer(s,local_x,local_y);
+        zell_rect picture,caption,help,drop;
+        zell_theater_fullscreen_layout(s->width,s->height,&picture,&caption,&help,&drop);
+        if(rect_holds(&help,s->mouse_x,s->mouse_y)){th.help=!th.help;s->mouse_click=false;return true;}
+        if(th.help&&rect_holds(&drop,s->mouse_x,s->mouse_y)){s->mouse_click=false;return true;}
+        if(rect_holds(&picture,s->mouse_x,s->mouse_y)){
+            if(th.browser[0]){th.page_keys=true;th_pointer(s,s->mouse_x-picture.x,s->mouse_y-picture.y);}
+        }
         s->mouse_click=false;return true;
     }
     if(th.popout){
@@ -701,14 +928,19 @@ bool zell_theater_click(zell_scene *s){
         if(rect_holds(&close_r,s->mouse_x,s->mouse_y)){th_close_active(s);s->mouse_click=false;return true;}
         if(rect_holds(&dock,s->mouse_x,s->mouse_y)){th_dock(s);s->mouse_click=false;return true;}
         if(rect_holds(&image,s->mouse_x,s->mouse_y)){
-            if(th.browser[0])th_pointer(s,s->mouse_x-image.x,s->mouse_y-image.y);
+            if(th.browser[0]){th.page_keys=true;th_pointer(s,s->mouse_x-image.x,s->mouse_y-image.y);}
             s->mouse_click=false;return true;
         }
+    }
+    {
+        zell_rect nav;
+        if(zell_theater_queue_nav(s->width,s->height,-1,&nav)&&rect_holds(&nav,s->mouse_x,s->mouse_y)){th.queue_page--;s->mouse_click=false;return true;}
+        if(zell_theater_queue_nav(s->width,s->height,1,&nav)&&rect_holds(&nav,s->mouse_x,s->mouse_y)){th.queue_page++;s->mouse_click=false;return true;}
     }
     for(int i=0;i<th.items;i++){
         zell_rect button;
         zell_theater_queue_rect(i,s->width,s->height,&button);
-        if(button.x+button.w>s->width-4)continue;
+        if(button.w<1)continue;
         if(!rect_holds(&button,s->mouse_x,s->mouse_y))continue;
         th_use(s,th.item_id[i]);
         s->mouse_click=false;return true;
@@ -718,13 +950,60 @@ bool zell_theater_click(zell_scene *s){
         float wx,wy;
         zell_screen_to_world(s,(float)s->mouse_x,(float)s->mouse_y,&wx,&wy);
         zell_theater_remote_rect(&remote);
-        if(rect_holds(&remote,(int)floorf(wx),(int)floorf(wy))){th.menu=!th.menu;th.focus=0;s->mouse_click=false;return true;}
+        if(rect_holds(&remote,(int)floorf(wx),(int)floorf(wy))){th.menu=!th.menu;th.focus=0;th.page_keys=false;s->mouse_click=false;return true;}
         if(th.browser[0]){
             int lx=(int)floorf(wx)-64,ly=(int)floorf(wy)-54;
-            if(lx>=0&&ly>=0&&lx<1408&&ly<585){th_pointer(s,lx,ly);s->mouse_click=false;return true;}
+            if(lx>=0&&ly>=0&&lx<1408&&ly<585){th.page_keys=true;th_pointer(s,lx,ly);s->mouse_click=false;return true;}
         }
     }
     return false;
+}
+static const char *th_key_name(unsigned key){
+    switch(key){
+    case 0xe000u:return "Escape";
+    case 0xe001u:return "Enter";
+    case 0xe002u:return "Tab";
+    case 0xe003u:return "Backspace";
+    case 0xe004u:return "Insert";
+    case 0xe005u:return "Delete";
+    case 0xe006u:return "ArrowLeft";
+    case 0xe007u:return "ArrowRight";
+    case 0xe008u:return "ArrowUp";
+    case 0xe009u:return "ArrowDown";
+    case 0xe00au:return "PageUp";
+    case 0xe00bu:return "PageDown";
+    case 0xe00cu:return "Home";
+    case 0xe00du:return "End";
+    default:break;
+    }
+    if(key>=0xe014u&&key<=0xe01fu){
+        static const char *fn[]={"F1","F2","F3","F4","F5","F6","F7","F8","F9","F10","F11","F12"};
+        return fn[key-0xe014u];
+    }
+    return NULL;
+}
+static void th_send_key(zell_scene *s,const zell_controls *c){
+    char line[TH_CMD],qtext[256],text[16];
+    const char *name;
+    unsigned mods,code;
+    int n,quoted;
+    if(!c)return;
+    mods=c->key_modifiers&(1u|2u|4u|8u|64u|128u);
+    code=c->key_text;
+    name=th_key_name(c->key_code);
+    text[0]=0;
+    if(name&&code<32){
+        quoted=th_quote(qtext,sizeof qtext,"");
+        if(quoted<0)return;
+        n=snprintf(line,sizeof line,"{\"cmd\":\"key\",\"action\":\"down\",\"key\":\"%s\",\"modifiers\":%u,\"text\":%s}",name,mods,qtext);
+    }else if(code>=32){
+        int wrote=th_utf8_put(text,sizeof text,0,code);
+        if(wrote<0)return;
+        text[wrote]=0;
+        if(th_quote(qtext,sizeof qtext,text)<0)return;
+        n=snprintf(line,sizeof line,"{\"cmd\":\"key\",\"action\":\"down\",\"key\":\"\",\"modifiers\":%u,\"text\":%s}",mods,qtext);
+    }else return;
+    if(n>0&&(size_t)n<sizeof line)zell_theater_submit(s,line);
 }
 int zell_theater_input(zell_scene *s,const zell_controls *c){
     char *field;
@@ -736,6 +1015,7 @@ int zell_theater_input(zell_scene *s,const zell_controls *c){
     if(th.fullscreen&&c->cancel){th_set_fullscreen(s,false);return 1;}
     if(c->fullscreen_key&&(th.items>0||th.fullscreen||th.menu)){th_set_fullscreen(s,!th.fullscreen);return 1;}
     if(th.focus&&c->cancel){th.focus=0;return 1;}
+    if(th.page_keys&&th.browser[0]&&!th.focus&&c->key_press){th_send_key(s,c);return 1;}
     if(th.focus&&(c->backspace||(c->character>=32&&c->character<127)||c->confirm)){
         field=th.focus==2?th.url:th.path;
         cap=th.focus==2?sizeof th.url:sizeof th.path;
@@ -782,21 +1062,11 @@ void zell_theater_shutdown(void){
     th_close_fds();
 }
 bool zell_theater_install_json(char *dst,size_t cap){
-    char q[8][1100];
-    size_t used=0;
     int n;
-    if(!dst||cap<16||!th.install_stored||th.install_argc<1)return false;
-    n=snprintf(dst,cap,"{\"title\":\"Theater install\",\"argv\":[");
-    if(n<0||(size_t)n>=cap)return false;
-    used=(size_t)n;
-    for(int i=0;i<th.install_argc;i++){
-        if(th_quote(q[i],sizeof q[i],th.install_argv[i])<0)return false;
-        n=snprintf(dst+used,cap-used,"%s%s",i?",":"",q[i]);
-        if(n<0||(size_t)n>=cap-used)return false;
-        used+=(size_t)n;
-    }
-    n=snprintf(dst+used,cap-used,"]}");
-    return n>0&&(size_t)n<cap-used;
+    if(!dst||cap<32||!th.install_stored||!th.install_action[0]||!th.install_browser[0])return false;
+    if(th.install_deb[0])n=snprintf(dst,cap,"{\"title\":\"Theater install\",\"browser\":\"%s\",\"action\":\"%s\",\"deb\":\"%s\"}",th.install_browser,th.install_action,th.install_deb);
+    else n=snprintf(dst,cap,"{\"title\":\"Theater install\",\"browser\":\"%s\",\"action\":\"%s\"}",th.install_browser,th.install_action);
+    return n>0&&(size_t)n<cap&&!strstr(dst,"argv")&&!strstr(dst,"sudo");
 }
 int zell_theater_copy_frame(const void *map,size_t map_bytes,uint32_t want_generation,uint32_t *last_seq,uint32_t *dst,size_t dst_pixels,int *out_w,int *out_h){
     const unsigned char *p;
@@ -816,7 +1086,7 @@ int zell_theater_copy_frame(const void *map,size_t map_bytes,uint32_t want_gener
     bytes=pixels*4u;
     if(map_bytes<64u+bytes)return 0;
     memcpy(dst,p+64,bytes);
-    if(th_u32(p+16)!=seq)return 0;
+    if(th_u32(p+16)!=seq||th_u32(p+40)!=generation)return 0;
     *last_seq=seq;*out_w=(int)width;*out_h=(int)height;
     return 1;
 }
@@ -854,22 +1124,80 @@ void zell_theater_contain(int src_w,int src_h,int dest_w,int dest_h,int *x,int *
 void zell_theater_video_rect(zell_rect *r){if(r)*r=(zell_rect){64,54,1408,585};}
 void zell_theater_caption_rect(zell_rect *r){if(r)*r=(zell_rect){82,677,1370,44};}
 void zell_theater_remote_rect(zell_rect *r){if(r)*r=(zell_rect){840,790,92,145};}
+static void th_queue_layout(int width,int height,int *left,int *top,int *per,int *first,int *arrows){
+    int right=width>8?width-4:width;
+    int start=260,inner,n,pages,reserve=0;
+    if(right<start+72)start=8;
+    if(th.items>1&&(right-start)<th.items*78)reserve=44;
+    inner=right-start-reserve;
+    n=inner/78;
+    if(n<1)n=1;
+    if(n>TH_ITEMS)n=TH_ITEMS;
+    pages=th.items>0?(th.items+n-1)/n:1;
+    if(th.queue_page>=pages)th.queue_page=pages-1;
+    if(th.queue_page<0)th.queue_page=0;
+    *left=start;
+    *top=height-ZELL_ROOM_STATUS_STRIP-28;
+    *per=n;
+    *first=th.queue_page*n;
+    *arrows=reserve?1:0;
+}
 void zell_theater_queue_rect(int index,int width,int height,zell_rect *r){
-    (void)width;
+    int left,top,per,first,arrows,slot;
     if(!r)return;
     *r=(zell_rect){0,0,0,0};
     if(index<0||index>=TH_ITEMS)return;
+    th_queue_layout(width,height,&left,&top,&per,&first,&arrows);
+    if(th.items>1){
+        if(index<first||index>=first+per)return;
+        slot=index-first;
+        *r=(zell_rect){left+(arrows?22:0)+slot*78,top,72,24};
+        return;
+    }
     *r=(zell_rect){260+index*78,height-ZELL_ROOM_STATUS_STRIP-28,72,24};
 }
-static void th_send_install_result(bool ok){th_send_install_result_body(ok);}
-bool zell_theater_install_argv_ok(int argc,char **argv){
-    if(!argv||argc<1||argc>8)return false;
-    for(int i=0;i<argc;i++){
-        if(!argv[i]||!argv[i][0]||strlen(argv[i])>511||strchr(argv[i],'\n'))return false;
-        if(strcmp(argv[i],"sudo")==0||strcmp(argv[i],"google-chrome-stable")==0)return false;
+bool zell_theater_queue_nav(int width,int height,int dir,zell_rect *out){
+    int left,top,per,first,arrows;
+    if(out)*out=(zell_rect){0,0,0,0};
+    th_queue_layout(width,height,&left,&top,&per,&first,&arrows);
+    if(!arrows||!out)return false;
+    if(dir<0){
+        if(first<=0)return false;
+        *out=(zell_rect){left,top,20,24};
+        return true;
     }
+    if(first+per>=th.items)return false;
+    *out=(zell_rect){left+22+per*78,top,20,24};
     return true;
 }
+static void th_send_install_result(bool ok){th_send_install_result_body(ok);}
+bool zell_theater_install_action_ok(const char *browser,const char *action,const char *deb){
+    if(!browser||!action)return false;
+    if(strcmp(browser,"chrome")==0){
+        if(strcmp(action,"install-chrome-deb")!=0)return false;
+        return deb&&strcmp(deb,TH_CHROME_DEB)==0;
+    }
+    if(deb&&deb[0])return false;
+    if(strcmp(browser,"firefox-esr")==0)return strcmp(action,"install-firefox-esr")==0;
+    if(strcmp(browser,"chromium")==0)return strcmp(action,"install-chromium")==0;
+    return false;
+}
+bool zell_theater_wants_keys(const zell_scene *s){
+    (void)s;
+    return th.page_keys&&th.browser[0]&&th.focus==0&&!th.menu;
+}
+int zell_theater_listing_count(void){return th.listing_n;}
+const char *zell_theater_listing_path(int index){
+    if(index<0||index>=th.listing_n)return "";
+    return th.listing_path[index];
+}
+const char *zell_theater_picture(void){return th.picture;}
+const char *zell_theater_queue_label(int index){
+    if(index<0||index>=th.items)return "";
+    return th.item_label[index];
+}
+bool zell_theater_playing(void){return th.playing;}
+bool zell_theater_help_open(void){return th.help;}
 void zell_theater_test_reset(void){
     if(th.pid>0){
         if(kill(-th.pid,SIGKILL)<0)kill(th.pid,SIGKILL);
@@ -898,51 +1226,62 @@ static void th_screen_span(const zell_scene *s,float x0,float y0,float x1,float 
     if(*dh<1)*dh=1;
 }
 void zell_theater_draw(const zell_scene *s,sr_canvas *c){
-    zell_rect panel,rows[12],frame,image,dock,close_r,button;
-    int n=0,dx,dy,dw,dh;
+    zell_rect frame,image,dock,close_r,button,nav;
+    int dx,dy,dw,dh;
     if(!s||!c||!s->desktop)return;
     if(th.fullscreen){
-        int top=32,cap_h=44,vh=c->h-top-cap_h;
-        if(vh<1)vh=1;
-        sr_fill_rect(c,0,0,(float)c->w,(float)c->h,0x05080cu,1.f);
-        th_paint(c,0,top,c->w,vh);
-        sr_fill_rect(c,0,(float)(top+vh),(float)c->w,(float)cap_h,0x101820u,1.f);
-        th_label(c,12,top+vh+14,th.caption[0]?th.caption:"",0xe7e2d4u,c->w-24);
-        th_label(c,12,8,"F11 toggles fullscreen. Escape leaves it.",0xf0d69bu,c->w-24);
+        zell_rect picture,caption,help,drop;
+        zell_theater_fullscreen_layout(c->w,c->h,&picture,&caption,&help,&drop);
+        zell_ui_fill(c,0,0,c->w,c->h,0x05080cu,1.f);
+        th_paint(c,picture.x,picture.y,picture.w,picture.h);
+        zell_ui_fill(c,caption.x,caption.y,caption.w,caption.h,0x101820u,1.f);
+        th_label(c,12,caption.y+14,th.caption[0]?th.caption:"",0xe7e2d4u,c->w-24);
+        zell_ui_stroke(c,help.x,help.y,help.w,help.h,1.f,0xd9ba79u,1.f);
+        th_label(c,help.x+8,help.y+2,"Help",0xf0d69bu,help.w-8);
+        if(th.help){
+            zell_ui_fill(c,drop.x,drop.y,drop.w,drop.h,0x10232cu,1.f);
+            zell_ui_stroke(c,drop.x,drop.y,drop.w,drop.h,1.f,0xd9ba79u,1.f);
+            th_label(c,drop.x+8,drop.y+4,"F11 toggles fullscreen",0xf0d69bu,drop.w-16);
+            th_label(c,drop.x+8,drop.y+22,"Escape leaves fullscreen",0xf0d69bu,drop.w-16);
+        }
     }else if(s->room==6&&!th.popout){
         th_screen_span(s,64.f,54.f,64.f+1408.f,54.f+585.f,&dx,&dy,&dw,&dh);
         th_paint(c,dx,dy,dw,dh);
         th_screen_span(s,82.f,677.f,82.f+1370.f,677.f+44.f,&dx,&dy,&dw,&dh);
         if(th.caption[0]){
-            sr_fill_rect(c,(float)dx,(float)dy,(float)dw,(float)dh,0x101820u,.72f);
+            zell_ui_fill(c,dx,dy,dw,dh,0x101820u,.72f);
             th_label(c,dx+8,dy+12,th.caption,0xe7e2d4u,dw-16);
         }
     }
     if(th.popout&&!th.fullscreen){
         th_window(s,&frame,&image,&dock,&close_r);
-        sr_fill_rect(c,(float)frame.x,(float)frame.y,(float)frame.w,(float)frame.h,0x10232cu,.98f);
-        sr_stroke_rect(c,(float)frame.x,(float)frame.y,(float)frame.w,(float)frame.h,1.f,0x5b9989u,1.f);
-        th_label(c,frame.x+8,frame.y+6,"Theater",0xf0d69bu,frame.w-80);
+        zell_ui_fill(c,frame.x,frame.y,frame.w,frame.h,0x10232cu,.98f);
+        zell_ui_stroke(c,frame.x,frame.y,frame.w,frame.h,1.f,0x5b9989u,1.f);
+        th_label(c,frame.x+8,frame.y+6,"Theater",0xf0d69bu,frame.w-120);
         th_paint(c,image.x,image.y,image.w,image.h);
-        sr_stroke_rect(c,(float)dock.x,(float)dock.y,(float)dock.w,(float)dock.h,1.f,0xd9ba79u,1.f);
-        sr_stroke_rect(c,(float)close_r.x,(float)close_r.y,(float)close_r.w,(float)close_r.h,1.f,0xd9ba79u,1.f);
+        zell_ui_stroke(c,dock.x,dock.y,dock.w,dock.h,1.f,0xd9ba79u,1.f);
+        th_label(c,dock.x+4,dock.y+2,"Dock",0xf0d69bu,dock.w-4);
+        zell_ui_stroke(c,close_r.x,close_r.y,close_r.w,close_r.h,1.f,0xd9ba79u,1.f);
+        th_label(c,close_r.x+4,close_r.y+2,"Close",0xf0d69bu,close_r.w-4);
     }
+    if(zell_theater_queue_nav(c->w,c->h,-1,&nav))th_label(c,nav.x+2,nav.y+4,"<",0xf0d69bu,nav.w);
+    if(zell_theater_queue_nav(c->w,c->h,1,&nav))th_label(c,nav.x+2,nav.y+4,">",0xf0d69bu,nav.w);
     for(int i=0;i<th.items;i++){
+        int on=th.picture[0]&&strcmp(th.item_id[i],th.picture)==0;
         zell_theater_queue_rect(i,c->w,c->h,&button);
-        if(button.x+button.w>c->w-4)break;
-        sr_fill_rect(c,(float)button.x,(float)button.y,(float)button.w,(float)button.h,strcmp(th.item_id[i],th.active)==0?0x254b50u:0x10232cu,.95f);
-        th_label(c,button.x+4,button.y+4,th.item_id[i],0xe8ffe9u,button.w-8);
+        if(button.w<1||button.x+button.w>c->w-4)continue;
+        zell_ui_fill(c,button.x,button.y,button.w,button.h,on?0x254b50u:0x10232cu,.95f);
+        th_label(c,button.x+4,button.y+4,th.item_label[i][0]?th.item_label[i]:th.item_id[i],0xe8ffe9u,button.w-8);
     }
     if(th.menu&&!th.fullscreen){
-        zell_theater_menu_layout(s,&panel,rows,12,&n);
-        if(panel.w>0){
-            sr_fill_rect(c,(float)panel.x,(float)panel.y,(float)panel.w,(float)panel.h,0x10232cu,.98f);
-            sr_stroke_rect(c,(float)panel.x,(float)panel.y,(float)panel.w,(float)panel.h,1.f,0xd9ba79u,1.f);
-            for(int i=0;i<n;i++)th_label(c,rows[i].x,rows[i].y+2,th_row_label(i),i==0||i==3?0xf5dda7u:0xd5e4e6u,rows[i].w);
-            for(int i=0;i<th.listing_n;i++){
-                int y=panel.y+panel.h+4+i*22;
-                th_label(c,panel.x+8,y,th.listing_name[i],0xc7d8dau,panel.w-16);
-            }
+        th_menu_hit hit;
+        th_menu_hit_build(s,&hit);
+        if(hit.panel.w>0){
+            zell_ui_fill(c,hit.panel.x,hit.panel.y,hit.panel.w,hit.panel.h,0x10232cu,.98f);
+            zell_ui_stroke(c,hit.panel.x,hit.panel.y,hit.panel.w,hit.panel.h,1.f,0xd9ba79u,1.f);
+            for(int i=0;i<hit.action_n;i++)th_label(c,hit.action[i].x,hit.action[i].y+2,th_row_label(i),i==0||i==3?0xf5dda7u:0xd5e4e6u,hit.action[i].w);
+            for(int i=0;i<hit.file_n;i++)th_label(c,hit.file[i].x,hit.file[i].y+2,th.listing_name[hit.file_i[i]],0xc7d8dau,hit.file[i].w);
+            if(hit.has_next)th_label(c,hit.next.x+4,hit.next.y+2,"Next",0xf0d69bu,hit.next.w-4);
         }
     }
     if(th.error[0])th_label(c,12,c->h-ZELL_ROOM_STATUS_STRIP-18,th.error,0xffb4a8u,c->w-24);

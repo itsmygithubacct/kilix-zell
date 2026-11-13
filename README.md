@@ -4,9 +4,14 @@ A walkable Kilix desktop inside a terminal pane. Kilix is an orange firekitten
 in a green adventurer outfit. Six staff members help with questions, logs,
 settings, system health, media, and documents.
 
-The cave is a fixed **1536×1024 world**. Characters and furniture keep their
-size. The camera follows Kilix; smaller panes show less of the room. Work
-areas sit along the walls, leaving the central floor open.
+The cave and the original downstairs rooms use a fixed **1536×1024 world**.
+Characters and furniture keep their size. The camera follows Kilix in those
+rooms, so a smaller pane shows less of the room. A hatch row in the cave opens
+four more rooms: the game room, the movie theater, the meditation room, and
+the library. Those rooms fit between the top bar and the status line, including
+in a large window. Walk onto a hatch to enter, and walk south through the
+doorway to return to the cave. Work areas sit along the walls, leaving the
+central floor open.
 
 ## Start
 
@@ -42,6 +47,22 @@ The build does not modify that dependency.
 
 The minimap shows Kilix, stations and viewport. The launcher reaches all
 stations without walking. Menus scroll on smaller panes.
+
+## Movie theater
+
+The remote in the theater opens the picture controls.
+
+- Open a video file, a folder of videos, or an http or https URL.
+- Choose Chrome, Chromium, or Firefox ESR for a URL. The page stays in the
+  theater. If that browser is missing, the floating terminal installs only the
+  one you chose, after you confirm. Chromium is already provided. Chrome uses
+  Google's official package. Firefox ESR installs when you choose it.
+- Play starts the selected video. Pause holds it. The queue shows file names
+  and pages when the window is narrow.
+- Captions follow a file's subtitle track when captions are on.
+- F11 toggles fullscreen. Escape leaves fullscreen. Help lists those keys.
+- Pop out moves a browser page into the floating window. Dock returns it to
+  the theater screen.
 
 ## Work areas
 
