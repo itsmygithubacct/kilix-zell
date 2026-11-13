@@ -485,6 +485,14 @@ static void test_contract_frames(zell_scene *scene){
     assert(scene->provider_check_generation==7&&scene->provider_check_running==1);
     send_text(&job,&job_svc,scene,'H',"1 8 0");
     assert(scene->provider_check_generation==7&&scene->provider_check_running==1);
+    send_text(&mon,&mon_svc,scene,'H',"1 6 0");
+    assert(scene->provider_check_generation==7&&scene->provider_check_running==1);
+    send_text(&mon,&mon_svc,scene,'H',"1 8 1");
+    assert(scene->provider_check_generation==8&&scene->provider_check_running==1);
+    send_text(&mon,&mon_svc,scene,'H',"1 7 0");
+    assert(scene->provider_check_generation==8&&scene->provider_check_running==1);
+    send_text(&mon,&mon_svc,scene,'H',"1 8 0");
+    assert(scene->provider_check_generation==8&&scene->provider_check_running==0);
     send_text(&mon,&mon_svc,scene,'F',"1 4 1 0 1\nalpha\tNorth desk\tDemo\t2\t1");
     expect_fleet_page(scene);
     send_text(&mon,&mon_svc,scene,'F',"1 97 1 0 1\nalpha\tBad\nname\tDemo\t2\t1");
@@ -513,6 +521,44 @@ static void test_contract_frames(zell_scene *scene){
     assert(!strcmp(scene->update_state,"done"));
     send_text(&job,&job_svc,scene,'U',"1 4 0 3 idle");
     assert(scene->update_done==2&&!strcmp(scene->update_state,"done"));
+    expect_provider_snapshot(scene);
+    {
+        const char *seven=
+            "1 70 7\n"
+            "codex 5 verified api unknown\n"
+            "claude 6 verified cli unknown\n"
+            "grok 7 verified vault unknown\n"
+            "qwen 8 configured api unknown\n"
+            "minimax 9 unknown api unknown\n"
+            "gemini -1 stale api unknown\n"
+            "elevenlabs 0 verified api unknown";
+        char many[2048];
+        size_t filled=0;
+        int wrote;
+        send_text(&mon,&mon_svc,scene,'G',seven);
+        assert(scene->provider_count==7&&scene->provider_generation==70);
+        assert(!strcmp(scene->provider_rows[3].id,"qwen"));
+        assert(!strcmp(scene->provider_rows[4].id,"minimax"));
+        assert(!strcmp(scene->provider_rows[5].id,"gemini")&&scene->provider_rows[5].percent==-1);
+        assert(!strcmp(scene->provider_rows[6].id,"elevenlabs")&&scene->provider_rows[6].percent==0);
+        expect_mana(scene,5,6,7);
+        /* A bare three-integer line is legacy mana. The extra row forces the versioned parser. */
+        send_text(&mon,&mon_svc,scene,'G',"1 71 33\ncodex 1 verified api unknown");
+        assert(scene->provider_count==7&&scene->provider_generation==70);
+        expect_mana(scene,5,6,7);
+        wrote=snprintf(many,sizeof many,"1 72 32\n");
+        assert(wrote>0);
+        filled=(size_t)wrote;
+        for(int row=0;row<32;row++){
+            wrote=snprintf(many+filled,sizeof many-filled,"codex 1 verified api unknown\n");
+            assert(wrote>0&&filled+(size_t)wrote<sizeof many);
+            filled+=(size_t)wrote;
+        }
+        send_text(&mon,&mon_svc,scene,'G',many);
+        assert(scene->provider_count==7&&scene->provider_generation==70);
+        expect_mana(scene,5,6,7);
+        send_text(&mon,&mon_svc,scene,'G',versioned);
+    }
     expect_provider_snapshot(scene);
     expect_fleet_page(scene);
     expect_numeric_menu(scene);

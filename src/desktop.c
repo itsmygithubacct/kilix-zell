@@ -615,6 +615,8 @@ bool zell_provider_check_apply(zell_scene *s,const char *text){
  if(fields!=3||!token_is(tok[0],toklen[0],"1"))return false;
  if(!parse_uint(tok[1],toklen[1],&generation,1000000000))return false;
  if(!parse_uint(tok[2],toklen[2],&running,1))return false;
+ /* A late result must not clear a newer check. */
+ if(generation<s->provider_check_generation)return false;
  s->provider_check_generation=generation;
  s->provider_check_running=running;
  return true;

@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "note": "Redacted read-only checks. No credential, header value, email, or provider body is stored.",
+  "providers": {
+    "codex": {
+      "label": "Codex",
+      "env": "OPENAI_API_KEY",
+      "api": {
+        "method": "GET",
+        "url": "https://api.openai.com/v1/models",
+        "header": "Authorization",
+        "quota": false,
+        "doc": "https://platform.openai.com/docs/api-reference/models/list"
+      },
+      "cli": null
+    },
+    "claude": {
+      "label": "Claude",
+      "env": "ANTHROPIC_API_KEY",
+      "api": {
+        "method": "GET",
+        "url": "https://api.anthropic.com/v1/models",
+        "header": "x-api-key",
+        "quota": false,
+        "doc": "https://docs.anthropic.com/en/api/models-list"
+      },
+      "cli": null
+    },
+    "grok": {
+      "label": "Grok",
+      "env": "XAI_API_KEY",
+      "api": {
+        "method": "GET",
+        "url": "https://api.x.ai/v1/models",
+        "header": "Authorization",
+        "quota": false,
+        "doc": "https://docs.x.ai/docs/api-reference"
+      },
+      "cli": {
+        "method": "GET",
+        "url": "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
+        "header": "Authorization",
+        "quota": false,
+        "doc": "existing grok CLI credits GET; raw billing body is discarded"
+      }
+    },
+    "qwen": {
+      "label": "Qwen",
+      "env": "DASHSCOPE_API_KEY",
+      "api": {
+        "method": "GET",
+        "url": "https://dashscope-intl.aliyuncs.com/api/v1/models",
+        "header": "Authorization",
+        "quota": false,
+        "doc": "https://www.alibabacloud.com/help/en/model-studio/list-models"
+      },
+      "cli": null
+    },
+    "minimax": {
+      "label": "MiniMax",
+      "env": "MINIMAX_API_KEY",
+      "api": {
+        "method": "GET",
+        "url": "https://www.minimax.io/v1/token_plan/remains",
+        "header": "Authorization",
+        "quota": false,
+        "doc": "https://platform.minimax.io/docs/m-plan/faq"
+      },
+      "cli": null
+    },
+    "gemini": {
+      "label": "Gemini",
+      "env": "GEMINI_API_KEY",
+      "api": {
+        "method": "GET",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models",
+        "header": "x-goog-api-key",
+        "quota": false,
+        "doc": "https://ai.google.dev/api/models"
+      },
+      "cli": null
+    },
+    "elevenlabs": {
+      "label": "ElevenLabs",
+      "env": "ELEVENLABS_API_KEY",
+      "api": {
+        "method": "GET",
+        "url": "https://api.elevenlabs.io/v1/user/subscription",
+        "header": "xi-api-key",
+        "quota": true,
+        "doc": "https://elevenlabs.io/docs/api-reference/user/subscription/get"
+      },
+      "cli": null
+    }
+  }
+}
