@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Provider checks: fake transports, both account filters, and no stored secrets."""
+"""Provider checks: fake transports, the stored API-plus-CLI policy, and no stored secrets."""
 import contextlib
 import io
 import json
@@ -51,34 +51,41 @@ class ProviderTests(unittest.TestCase):
             self.assertNotIn(CANARY, text)
             self.assertNotIn(EMAIL, text)
 
-    def test_unset_is_not_a_chosen_filter(self):
-        self.assertEqual(providers.blank_state()["account_mode"], providers.UNSET)
-        self.assertEqual(providers.peek_mode(self.directory), providers.UNSET)
-        self.assertEqual(providers.account_mode(self.directory), providers.UNSET)
+    def test_fresh_state_uses_api_keys_and_verified_cli(self):
+        mode = providers.MODE_API_AND_CLI
+        self.assertEqual(providers.blank_state()["account_mode"], mode)
+        self.assertNotEqual(mode, providers.UNSET)
+        self.assertNotEqual(mode, providers.MODE_API)
+        self.assertEqual(providers.peek_mode(self.directory), mode)
+        self.assertEqual(providers.account_mode(self.directory), mode)
         self.assertFalse((self.directory / providers.STATE_NAME).exists())
         line = providers.mode_line(self.directory)
-        self.assertIn("Verified API-key accounts only: not selected.", line)
-        self.assertIn("Verified API-key accounts plus verified signed-in CLI subscriptions: not selected.", line)
-        self.assertEqual(providers.empty_text(providers.UNSET),
-                         "Account mode is unset. Mana is not choosing which verified accounts to show.")
-        source = verified("grok", "cli", "cli:grok", "10", 33)
+        self.assertEqual(line, "Account mode: " + providers.MODE_TEXT[mode])
+        self.assertNotIn("not selected", line)
+        cli = verified("grok", "cli", "cli:grok", "10", 33)
+        api = verified("codex", "api", "env:OPENAI_API_KEY", "untracked", 50)
+        unverified = configured("claude", "cli", "cli:claude", "10")
         state = providers.blank_state()
-        state["sources"] = [source]
-        self.assertEqual(providers.published_rows(state["sources"], providers.UNSET, NOW), [])
-        self.assertIsNone(providers.verified_mean(state["sources"], providers.UNSET, NOW))
+        state["sources"] = [cli, api, unverified]
+        self.assertEqual(state["account_mode"], mode)
+        self.assertTrue(providers.eligible(cli, state["account_mode"], NOW))
+        self.assertTrue(providers.eligible(api, state["account_mode"], NOW))
+        self.assertFalse(providers.eligible(unverified, state["account_mode"], NOW))
+        self.assertNotEqual(cli["kind"], api["kind"])
+        self.assertNotEqual(cli["source_id"], api["source_id"])
+        rows = providers.published_rows(state["sources"], state["account_mode"], NOW)
+        self.assertEqual([(row["id"], row["source"]) for row in rows], [("codex", "api"), ("grok", "cli")])
         report = providers.report(state, NOW)
-        self.assertIn("not selected", report)
-        self.assertIn(providers.empty_text(providers.UNSET), report)
-        self.assertNotIn("grok 33 verified cli", report)
+        shown = report.split("What needs attention:", 1)[0]
+        self.assertIn("codex 50 verified api", shown)
+        self.assertIn("grok 33 verified cli", shown)
+        self.assertNotIn("claude", shown)
+        self.assertNotIn("not selected", report)
         self.assert_clean(report)
-        providers.write_account_mode(self.directory, providers.MODE_API)
-        providers.write_account_mode(self.directory, providers.UNSET)
-        raw = json.loads((self.directory / providers.STATE_NAME).read_text())
-        self.assertEqual(raw["account_mode"], "unset")
         (self.directory / providers.STATE_NAME).write_text(json.dumps({"version": 1, "account_mode": "recommended"}))
         providers.forget(self.directory)
-        self.assertEqual(providers.peek_mode(self.directory), providers.UNSET)
-        self.assertEqual(providers.load_state(self.directory)["account_mode"], providers.UNSET)
+        self.assertEqual(providers.peek_mode(self.directory), mode)
+        self.assertEqual(providers.load_state(self.directory)["account_mode"], mode)
 
     def test_both_filters_keep_a_verified_cli_distinct(self):
         cli = verified("grok", "cli", "cli:grok", "10", 33)
@@ -573,13 +580,13 @@ class ProviderTests(unittest.TestCase):
 
     def test_monitor_frames_hide_unset_and_publish_an_explicit_mode(self):
         with patch.object(providers, "live_transport", side_effect=AssertionError("live")):
-            self.assertEqual(providers.monitor_frames(self.directory, NOW), [])
+            self.assertEqual(providers.monitor_frames(self.directory, NOW), [("G", "1 1 0")])
         self.assertFalse((self.directory / providers.STATE_NAME).exists())
         providers.write_account_mode(self.directory, providers.MODE_API)
         first = providers.monitor_frames(self.directory, NOW)
         second = providers.monitor_frames(self.directory, NOW)
-        self.assertEqual(first, [("G", "1 1 0")])
-        self.assertEqual(second, [("G", "1 1 0")])
+        self.assertEqual(first, [("G", "1 2 0")])
+        self.assertEqual(second, [("G", "1 2 0")])
         state = providers.load_state(self.directory)
         state["check"] = {"generation": 4, "running": True, "owner": 4}
         providers.write_state(self.directory, state)

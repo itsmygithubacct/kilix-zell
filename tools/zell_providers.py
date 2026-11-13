@@ -1,7 +1,8 @@
 """Shared provider registry for Mana, vitals, and Key Master.
 
-Account mode stays unset until a caller stores one of the two filters.
-Neither filter is a default. Fleet instruction storage is not decided here.
+The stored account policy is verified API-key accounts plus verified
+signed-in CLI subscriptions. An API-key-only filter remains available when a
+caller stores it. Fleet instruction storage is not decided here.
 
 A discovered key, vault record, or CLI login is only a candidate. Verification
 is an adapter's read-only result for that source. Credential values, header
@@ -111,7 +112,7 @@ def fixture_path():
 def blank_state():
     return {
         "version": 1,
-        "account_mode": UNSET,
+        "account_mode": MODE_API_AND_CLI,
         "sources": [],
         "bindings": {},
         "check": {"generation": 0, "running": False, "owner": 0},
@@ -285,7 +286,7 @@ def _clean_state(raw):
     if not isinstance(raw, dict) or raw.get("version") != 1:
         return state
     mode = raw.get("account_mode")
-    state["account_mode"] = mode if mode in MODES else UNSET
+    state["account_mode"] = mode if mode in MODES else MODE_API_AND_CLI
     generation = raw.get("snapshot_generation")
     state["snapshot_generation"] = generation if whole(generation, 0, 1_000_000_000) else 0
     check = raw.get("check") if isinstance(raw.get("check"), dict) else {}
@@ -398,13 +399,15 @@ def peek_mode(directory=None):
         return UNSET
     path = _path(directory)
     try:
-        if not path.exists() or path.is_symlink():
+        if path.is_symlink():
             return UNSET
+        if not path.exists():
+            return MODE_API_AND_CLI
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return UNSET
+        return MODE_API_AND_CLI
     mode = raw.get("account_mode") if isinstance(raw, dict) else None
-    return mode if mode in MODES else UNSET
+    return mode if mode in MODES else MODE_API_AND_CLI
 
 
 def account_mode(directory=None):
@@ -412,7 +415,7 @@ def account_mode(directory=None):
 
 
 def write_account_mode(directory, mode):
-    """Store a mode only when the caller names one. Missing stays unset."""
+    """Store a named mode. A fresh state already uses API keys plus verified CLI subscriptions."""
     if mode not in MODES:
         raise ValueError("unknown account mode")
     state = load_state(directory)
