@@ -419,6 +419,66 @@ class TheaterTests(unittest.TestCase):
         session.handle({'cmd': 'key', 'key': 'a', 'action': 'up'})
         session.handle({'cmd': 'key', 'text': 'hi', 'modifiers': 4})
         self.assertEqual(page.keys, [('a', 0, ''), ('', 4, 'hi')])
+        rejected = session.handle_line(json.dumps({'cmd': 'key', 'key': 'b', 'modifiers': True}).encode())
+        self.assertEqual(rejected[-1]['error'], 'malformed')
+        self.assertEqual(page.keys, [('a', 0, ''), ('', 4, 'hi')])
+        self.assertTrue(all(isinstance(modifiers, int) and not isinstance(modifiers, bool) for _key, modifiers, _text in page.keys))
+
+    def test_resize_and_popout_keep_the_capture_viewport(self):
+        def which(name):
+            return '/usr/bin/chromium' if name in ('chromium', 'chromium-browser') else None
+
+        page = browser.PrivateBrowser(session_type=FakeSession, which=which)
+        session = self.session(browser=page)
+        session.handle({
+            'cmd': 'open', 'id': 'web', 'browser': 'chromium',
+            'source': {'kind': 'url', 'url': 'https://example.com/a'},
+        })
+        page.viewport = (320, 180)
+        session.handle({'cmd': 'use', 'id': 'web'})
+        session.handle({'cmd': 'resize', 'width': 800, 'height': 600})
+        session.handle({'cmd': 'popout'})
+        session.handle({'cmd': 'dock'})
+        self.assertEqual(page.viewport, (320, 180))
+        self.assertFalse(hasattr(page.session, 'size'))
+        self.assertEqual(session.dest, (800, 600))
+        self.assertEqual(fit.contain(320, 180, 800, 600), (800, 450))
+        session.items['web']['src_w'] = 320
+        session.items['web']['src_h'] = 180
+        session.handle({'cmd': 'pointer', 'x': 0, 'y': 10, 'button': 1, 'action': 'move'})
+        self.assertEqual(page.session.injector.calls, [])
+
+    def test_switch_stores_the_paused_page_playhead(self):
+        class MediaPage(FramePage):
+            def pause(self):
+                self.paused = True
+                return {'paused': True, 'position_ms': 3200, 'duration_ms': 20000, 'present': True}
+
+            def resume(self):
+                self.paused = False
+                self.resumes += 1
+                return {'paused': False, 'position_ms': 400, 'duration_ms': 20000, 'present': True}
+
+        made = []
+
+        def factory():
+            page = MediaPage()
+            made.append(page)
+            return page
+
+        session = self.session(browser_factory=factory)
+        for identity in ('one', 'two'):
+            session.handle({
+                'cmd': 'open', 'id': identity, 'browser': 'chromium',
+                'source': {'kind': 'url', 'url': 'https://example.com/' + identity},
+            })
+        session.handle({'cmd': 'use', 'id': 'one'})
+        session.handle({'cmd': 'use', 'id': 'two'})
+        self.assertEqual(session.items['one']['position_ms'], 3200)
+        self.assertEqual(session.items['one']['duration_ms'], 20000)
+        self.assertEqual(session.items['one']['paused'], True)
+        self.assertGreaterEqual(made[1].resumes, 1)
+        self.assertEqual(session.items['two']['paused'], False)
 
     def test_generation_drops_a_stale_frame(self):
         session = self.session()

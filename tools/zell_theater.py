@@ -757,17 +757,9 @@ class TheaterSession:
         if playing:
             self.halt_playback()
         self.dest = (width, height)
-        page = self._active_page()
-        viewport = getattr(page, 'viewport', None) if page is not None else None
-        display = getattr(page, 'session', None) if page is not None else None
-        if (
-            isinstance(viewport, tuple) and len(viewport) == 2
-            and display is not None and hasattr(display, 'set_geometry')
-        ):
-            try:
-                display.set_geometry(int(viewport[0]), int(viewport[1]))
-            except Exception:
-                pass
+        # The capture viewport stays at launch size. set_geometry only
+        # rewrites injector bounds, so resize and popout do not call it.
+        # The next frame is contained into this destination.
         if playing:
             self.begin_playback()
         state = 'paused'
@@ -804,45 +796,49 @@ class TheaterSession:
         return self.status(self.active, 'playing' if not item['paused'] else 'paused')
 
     def send_key(self, command):
-        """Forward one tap, or pasted text, to the private display.
+        """Tap one page key, or paste text, through the private display.
 
-        The adapter presses and releases on a single call. An up event is
-        acknowledged and not injected again. Outer fullscreen keys stay with
-        native code; this method does not decide them.
+        key() presses and releases once. modifiers is the Kilix bit mask.
+        A down/up boolean is not that mask. An up event is not sent again.
         """
         if self.active is None or self.items[self.active].get('kind') != 'url':
             raise ProtocolError('no browser item')
         action = command.get('action', 'down')
-        if action not in ('down', 'up'):
+        if isinstance(action, bool) or action not in ('down', 'up'):
             raise ProtocolError('bad key')
         text = command.get('text', '')
-        key = command.get('key', '')
+        key_name = command.get('key', '')
         modifiers = command.get('modifiers', 0)
+        if modifiers is None:
+            modifiers = 0
         if not isinstance(text, str) or isinstance(modifiers, bool) or not isinstance(modifiers, int):
             raise ProtocolError('bad key')
-        if text == '' and (not isinstance(key, str) or not key or len(key) > 32):
+        if text == '' and (not isinstance(key_name, str) or not key_name or len(key_name) > 32):
             raise ProtocolError('bad key')
         item = self.items[self.active]
-        if action == 'down':
-            page = self._active_page()
-            sender = getattr(page, 'key', None)
-            if page is None or sender is None:
-                raise ProtocolError('no key input')
-            try:
-                sender(key, modifiers, text)
-            except ValueError as error:
-                raise ProtocolError(_clean(error) or 'bad key') from error
-            except Exception as error:
-                self.emit({'event': 'error', 'error': 'capture', 'detail': _clean(error) or 'key was not injected'})
+        if action == 'up':
+            return self.status(self.active, 'playing' if not item['paused'] else 'paused')
+        page = self._active_page()
+        sender = getattr(page, 'key', None)
+        if page is None or sender is None:
+            raise ProtocolError('no key input')
+        try:
+            sender(key_name, modifiers, text)
+        except ValueError as error:
+            raise ProtocolError(_clean(error) or 'bad key') from error
+        except Exception as error:
+            self.emit({'event': 'error', 'error': 'capture', 'detail': _clean(error) or 'key was not injected'})
         return self.status(self.active, 'playing' if not item['paused'] else 'paused')
 
     def _pointer_source(self, item):
-        """Private-display size. The captured frame is that fixed viewport."""
+        """Fixed capture size. Contain this into the destination, then map."""
+        if item.get('src_w') and item.get('src_h'):
+            return int(item['src_w']), int(item['src_h'])
         page = self._active_page()
         viewport = getattr(page, 'viewport', None) if page is not None else None
-        if not item.get('src_w') and isinstance(viewport, tuple) and len(viewport) == 2:
+        if isinstance(viewport, tuple) and len(viewport) == 2:
             return int(viewport[0]), int(viewport[1])
-        return item.get('src_w') or self.dest[0], item.get('src_h') or self.dest[1]
+        return self.dest
 
     def _apply_media(self, identity, state):
         if not isinstance(state, dict):
@@ -866,11 +862,12 @@ class TheaterSession:
         return method()
 
     def _suspend_other_pages(self, identity):
+        """Pause every other page's media and keep the currentTime it returns."""
         for key in list(self.pages):
             if key == identity:
                 continue
             try:
-                self._call_page(key, 'pause')
+                self._apply_media(key, self._call_page(key, 'pause'))
             except Exception:
                 pass
 
