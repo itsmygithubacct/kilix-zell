@@ -1146,6 +1146,8 @@ void zell_theater_queue_rect(int index,int width,int height,zell_rect *r){
     int left,top,per,first,arrows,slot;
     if(!r)return;
     *r=(zell_rect){0,0,0,0};
+    /* Fullscreen keeps Help and the caption. The room queue returns on exit. */
+    if(th.fullscreen)return;
     if(index<0||index>=TH_ITEMS)return;
     th_queue_layout(width,height,&left,&top,&per,&first,&arrows);
     if(th.items>1){
@@ -1159,6 +1161,7 @@ void zell_theater_queue_rect(int index,int width,int height,zell_rect *r){
 bool zell_theater_queue_nav(int width,int height,int dir,zell_rect *out){
     int left,top,per,first,arrows;
     if(out)*out=(zell_rect){0,0,0,0};
+    if(th.fullscreen)return false;
     th_queue_layout(width,height,&left,&top,&per,&first,&arrows);
     if(!arrows||!out)return false;
     if(dir<0){
@@ -1386,9 +1389,9 @@ void zell_theater_draw(const zell_scene *s,sr_canvas *c){
         zell_ui_stroke(c,close_r.x,close_r.y,close_r.w,close_r.h,1.f,0xd9ba79u,1.f);
         th_label(c,close_r.x+4,close_r.y+2,"Close",0xf0d69bu,close_r.w-4);
     }
-    if(zell_theater_queue_nav(c->w,c->h,-1,&nav))th_label(c,nav.x+2,nav.y+4,"<",0xf0d69bu,nav.w);
-    if(zell_theater_queue_nav(c->w,c->h,1,&nav))th_label(c,nav.x+2,nav.y+4,">",0xf0d69bu,nav.w);
-    for(int i=0;i<th.items;i++){
+    if(!th.fullscreen&&zell_theater_queue_nav(c->w,c->h,-1,&nav))th_label(c,nav.x+2,nav.y+4,"<",0xf0d69bu,nav.w);
+    if(!th.fullscreen&&zell_theater_queue_nav(c->w,c->h,1,&nav))th_label(c,nav.x+2,nav.y+4,">",0xf0d69bu,nav.w);
+    if(!th.fullscreen)for(int i=0;i<th.items;i++){
         int on=th.picture[0]&&strcmp(th.item_id[i],th.picture)==0;
         zell_theater_queue_rect(i,c->w,c->h,&button);
         if(button.w<1||button.x+button.w>c->w-4)continue;
@@ -1406,6 +1409,6 @@ void zell_theater_draw(const zell_scene *s,sr_canvas *c){
             if(hit.has_next)th_label(c,hit.next.x+4,hit.next.y+2,"Next",0xf0d69bu,hit.next.w-4);
         }
     }
-    if(th.error[0])th_label(c,12,c->h-ZELL_ROOM_STATUS_STRIP-18,th.error,0xffb4a8u,c->w-24);
-    else if(th.notice[0])th_label(c,12,c->h-ZELL_ROOM_STATUS_STRIP-18,th.notice,0xf0d69bu,c->w-24);
+    if(!th.fullscreen&&th.error[0])th_label(c,12,c->h-ZELL_ROOM_STATUS_STRIP-18,th.error,0xffb4a8u,c->w-24);
+    else if(!th.fullscreen&&th.notice[0])th_label(c,12,c->h-ZELL_ROOM_STATUS_STRIP-18,th.notice,0xf0d69bu,c->w-24);
 }
