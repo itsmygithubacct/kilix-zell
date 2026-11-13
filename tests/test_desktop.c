@@ -220,11 +220,12 @@ int main(void) {
     s.desktop_launch=false;s.mode=ZELL_MODE_DESK;s.menu_index=4;
     c=(zell_controls){.confirm=true};zell_scene_tick(&s,&c);
     assert(s.desktop_launch&&s.zoom_ticks==0);
-    /* The Sentinel stands in the Vault and the Signalman in the Workshop. */
-    s.room=0;assert(!zell_desktop_station_visible(&s,33)&&!zell_desktop_station_visible(&s,39));
-    assert(zell_desktop_station_visible(&s,32)&&zell_desktop_station_visible(&s,36)&&zell_desktop_station_visible(&s,38));
+    /* The Sentinel stands in the Vault; the Signalman and Merchant in the Workshop. */
+    s.room=0;assert(!zell_desktop_station_visible(&s,33)&&!zell_desktop_station_visible(&s,36)&&!zell_desktop_station_visible(&s,39));
+    assert(zell_desktop_station_visible(&s,32)&&zell_desktop_station_visible(&s,37)&&zell_desktop_station_visible(&s,38));
     s.room=3;assert(zell_desktop_station_visible(&s,39)&&zell_desktop_station_visible(&s,40)&&!zell_desktop_station_visible(&s,33));
-    s.room=4;assert(zell_desktop_station_visible(&s,33)&&zell_desktop_station_visible(&s,41)&&!zell_desktop_station_visible(&s,39));
+    s.room=4;assert(zell_desktop_station_visible(&s,33)&&zell_desktop_station_visible(&s,36)&&zell_desktop_station_visible(&s,41)&&!zell_desktop_station_visible(&s,39));
+    s.room=3;assert(!zell_desktop_station_visible(&s,36));
     s.room=0;s.mode=ZELL_MODE_WALK;s.desktop_launch=false;
     strcpy(s.launcher_query,"checksum");
     assert(zell_desktop_launcher_count(&s)==2);

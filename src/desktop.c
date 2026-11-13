@@ -42,8 +42,8 @@ const zell_station zell_stations[ZELL_STATIONS]={
  {"Signalman","Wi-Fi, connections and Bluetooth",.34f,.62f,ZELL_ART_CIVIC_IDLE+4},
  {"Porter","Files, trash and archives",.36f,.86f,ZELL_ART_CRAFT_IDLE},
  {"Laundress","Drives, removable media and health",.64f,.86f,ZELL_ART_CRAFT_IDLE+4},
- {"Merchant","Packages, Kilix apps and local models",.36f,.43f,ZELL_ART_CIVIC_IDLE+8},
- {"Herald","Notices, jobs and attention",.80f,.49f,ZELL_ART_CIVIC_IDLE+12},
+ {"Merchant","Packages, Kilix apps and local models",.66f,.62f,ZELL_ART_CIVIC_IDLE+8},
+ {"Herald","Notices, jobs and attention",.59f,.88f,ZELL_ART_CIVIC_IDLE+12},
  {"Timekeeper","Timers, reminders and scheduled work",.81f,.34f,ZELL_ART_CRAFT_IDLE+8},
  {"Sentinel","Accounts, updates and security",.66f,.62f,ZELL_ART_CIVIC_IDLE+16},
  {"Vault Keeper","Backups, verification and restore",.50f,.55f,ZELL_ART_CRAFT_IDLE+12},
@@ -88,12 +88,13 @@ int zell_desktop_actions(int station){int n=0;
 const char *zell_desktop_action(int station,int index){return index>=0&&index<zell_desktop_actions(station)?actions[station][index]:"";}
 void zell_desktop_init(zell_scene *s){s->desktop=true;s->x=(float)ZELL_WORLD_W*.51f;s->y=(float)ZELL_WORLD_H*.48f;s->station=0;s->desktop_launch=false;s->hp=100;s->max_hp=100;s->fatigue=100;s->mana=-1;s->update_age_days=-1;s->mana_age=-1;s->os_health=-1;s->dirty_files=0;}
 bool zell_desktop_station_visible(const zell_scene *s,int station){
- if(s->room==0)return station<ZELL_CAVE_STATIONS||station==32||(station>=36&&station<=38)||(station>=42&&station<=45);
+ if(s->room==0)return station<ZELL_CAVE_STATIONS||station==32||station==37||station==38||(station>=42&&station<=45);
  if(station==28)return true;
  if(s->room==1)return (station>=15&&station<=19)||(station>=29&&station<=31)||(station>=46&&station<=48);
  if(s->room==2)return (station>=20&&station<20+s->disk_count)||station==34||station==35;
- /* The Sentinel keeps the Vault with its keeper; the Signalman works in the Workshop. */
- return (s->room==3&&(station==40||station==39))||(s->room==4&&(station==41||station==33));
+ /* The Sentinel keeps the Vault with its keeper; the Signalman and the
+  * Merchant work in the Workshop. */
+ return (s->room==3&&(station==40||station==39))||(s->room==4&&(station==41||station==33||station==36));
 }
 static bool contains_folded(const char *haystack,const char *needle){
  for(;*haystack;haystack++){size_t i=0;while(needle[i]&&haystack[i]&&tolower((unsigned char)haystack[i])==tolower((unsigned char)needle[i]))i++;if(!needle[i])return true;}
