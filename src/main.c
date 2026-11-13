@@ -926,6 +926,7 @@ static bool present_scene(zell_scene *scene, sr_canvas *canvas, uint8_t **rgba,
         return false;
     }
     if (scene->width != width || scene->height != height) {
+        /* L3 calls zell_room_view_identity. */
         zell_scene_resize(scene, width, height);
     }
     if (canvas->w != width || canvas->h != height) {
@@ -1041,6 +1042,7 @@ static int run_scene(void)
             speech_stop(&speech);proc_stop(&proc);
             service_start(&service,&scene);
         }
+        /* L2 calls zell_window_accepts_frame from service_frame. */
         service_pump(&vitals,&scene);
         service_pump(&service,&scene);
         if (scene.mode != ZELL_MODE_WAIT) {

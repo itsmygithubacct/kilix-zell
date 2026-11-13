@@ -54,7 +54,10 @@ const zell_station zell_stations[ZELL_STATIONS]={
  {"Music mute switch","Pause or resume the DJ and room music",.092f,.34f,16},
  {"YOLO switch","Enable or disable shared coding-agent YOLO mode",.21f,.88f,-1},
  {"Agent updates switch","Choose and update installed coding agents",.79f,.88f,-1},
- {"Mana console","Coding-token balances and the providers' usage pages",.38f,.58f,ZELL_ART_WORKER}
+ {"Mana console","Coding-token balances and the providers' usage pages",.38f,.58f,ZELL_ART_WORKER},
+ {"Workshop computer","Reserved, not an available action.",0.f,0.f,-1},
+ {"Fleet board","Reserved, not an available action.",0.f,0.f,-1},
+ {"Floor panel","Reserved, not an available action.",0.f,0.f,-1}
 };
 static const char *const actions[ZELL_STATIONS][17]={
  {"Ask the wizard","First-run tour of Zell",NULL},
@@ -79,7 +82,8 @@ static const char *const actions[ZELL_STATIONS][17]={
  [42]={"Go down to the Vault",NULL}, [43]={"Go down to the Workshop",NULL},
  [44]={"Start / finish dictation",NULL}, [45]={"Pause / resume music",NULL},
  [46]={"Toggle shared YOLO mode",NULL}, [47]={"Update selected coding agents",NULL},
- [48]={"Zoom into the usage dashboard","Zoom into the Codex usage page","Zoom into the Claude usage page","Zoom into the Grok usage page","Read mana now","What needs me","Automatic readings on / off",NULL}
+ [48]={"Zoom into the usage dashboard","Zoom into the Codex usage page","Zoom into the Claude usage page","Zoom into the Grok usage page","Read mana now","What needs me","Automatic readings on / off",NULL},
+ [49]={NULL}, [50]={NULL}, [51]={NULL}
 };
 int zell_desktop_actions(int station){int n=0;
  if(station<0||station>=ZELL_STATIONS)return 0;
@@ -274,6 +278,7 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
  return 1;
 }
 
+/* L3 calls zell_world_to_screen. */
 void zell_desktop_camera(const zell_scene *s,int *x,int *y){
  *x=(int)s->x-s->width/2;*y=(int)s->y-s->height/2;
  int maxx=ZELL_WORLD_W-s->width,maxy=ZELL_WORLD_H-s->height;
@@ -387,4 +392,285 @@ bool zell_terminal_click(zell_scene *s){
  if(rect_holds(&l.minimize,s->mouse_x,s->mouse_y)){s->terminal_minimized=true;s->mode=ZELL_MODE_WALK;return true;}
  if(rect_holds(&l.maximize,s->mouse_x,s->mouse_y)){s->terminal_maximized=!s->terminal_maximized;return true;}
  return false;
+}
+
+/* L3 replaces zell_room_view_identity with the fit in src/desktop_command.inc. */
+void zell_room_view_identity(zell_scene *s){
+ s->room_view.logical_x=0;
+ s->room_view.logical_y=0;
+ s->room_view.logical_w=ZELL_WORLD_W;
+ s->room_view.logical_h=ZELL_WORLD_H;
+ s->room_view.viewport_x=0;
+ s->room_view.viewport_y=0;
+ s->room_view.viewport_w=s->width;
+ s->room_view.viewport_h=s->height;
+ s->room_view.scale=1.f;
+ s->room_view.offset_x=0;
+ s->room_view.offset_y=0;
+}
+void zell_world_to_screen(const zell_scene *s,float world_x,float world_y,float *screen_x,float *screen_y){
+ const zell_room_view *v=&s->room_view;
+ *screen_x=(float)v->viewport_x+(world_x-(float)v->logical_x)*v->scale+(float)v->offset_x;
+ *screen_y=(float)v->viewport_y+(world_y-(float)v->logical_y)*v->scale+(float)v->offset_y;
+}
+void zell_screen_to_world(const zell_scene *s,float screen_x,float screen_y,float *world_x,float *world_y){
+ const zell_room_view *v=&s->room_view;
+ float scale=v->scale==0.f?1.f:v->scale;
+ *world_x=(float)v->logical_x+(screen_x-(float)v->viewport_x-(float)v->offset_x)/scale;
+ *world_y=(float)v->logical_y+(screen_y-(float)v->viewport_y-(float)v->offset_y)/scale;
+}
+bool zell_window_accepts_frame(const zell_scene *s,int slot,int generation){
+ if(!s||slot<0||slot>=ZELL_WINDOWS)return false;
+ if(generation==0)return slot==0;
+ return s->windows[slot].generation==generation;
+}
+
+static bool token_is(const char *s,size_t n,const char *lit){
+ size_t m=strlen(lit);
+ return n==m&&memcmp(s,lit,n)==0;
+}
+static bool token_in(const char *s,size_t n,const char *const *list,size_t count){
+ for(size_t i=0;i<count;i++)if(token_is(s,n,list[i]))return true;
+ return false;
+}
+static bool parse_uint(const char *s,size_t n,int *out,int max_value){
+ if(n==0||n>10)return false;
+ long long value=0;
+ for(size_t i=0;i<n;i++){
+  if(s[i]<'0'||s[i]>'9')return false;
+  value=value*10+(s[i]-'0');
+ }
+ if(value>max_value)return false;
+ *out=(int)value;
+ return true;
+}
+static bool parse_percent(const char *s,size_t n,int *out){
+ if(n==2&&s[0]=='-'&&s[1]=='1'){*out=-1;return true;}
+ return parse_uint(s,n,out,100);
+}
+static bool copy_token(char *dst,size_t cap,const char *s,size_t n){
+ if(n>=cap)return false;
+ memcpy(dst,s,n);
+ dst[n]=0;
+ return true;
+}
+static int split_lines(const char *text,const char **start,size_t *len,int cap){
+ size_t total=strlen(text);
+ if(total>0&&text[total-1]=='\n')total--;
+ if(total==0)return 0;
+ int n=0;
+ size_t i=0;
+ for(;;){
+  size_t begin=i;
+  while(i<total&&text[i]!='\n')i++;
+  if(n>=cap)return -1;
+  start[n]=text+begin;
+  len[n]=i-begin;
+  n++;
+  if(i>=total)break;
+  i++;
+  if(i==total){
+   if(n>=cap)return -1;
+   start[n]=text+i;
+   len[n]=0;
+   n++;
+   break;
+  }
+ }
+ return n;
+}
+static int split_spaces(const char *s,size_t n,const char **tok,size_t *toklen,int cap){
+ int count=0;
+ size_t i=0;
+ if(n==0)return 0;
+ if(s[0]==' '||s[n-1]==' ')return -1;
+ while(i<n){
+  size_t begin=i;
+  while(i<n&&s[i]!=' '){
+   unsigned char c=(unsigned char)s[i];
+   if(c<32||c==127)return -1;
+   i++;
+  }
+  if(begin==i)return -1;
+  if(count>=cap)return -1;
+  tok[count]=s+begin;
+  toklen[count]=i-begin;
+  count++;
+  if(i==n)break;
+  i++;
+  if(i==n||s[i]==' ')return -1;
+ }
+ return count;
+}
+static int split_tabs(const char *s,size_t n,const char **tok,size_t *toklen,int expect){
+ int count=0;
+ size_t begin=0;
+ for(size_t i=0;i<=n;i++){
+  if(i<n&&s[i]!='\t'){
+   unsigned char c=(unsigned char)s[i];
+   if(c<32||c==127)return -1;
+   continue;
+  }
+  if(count>=expect)return -1;
+  tok[count]=s+begin;
+  toklen[count]=i-begin;
+  count++;
+  begin=i+1;
+ }
+ return count==expect?count:-1;
+}
+static bool label_ok(const char *s,size_t n){
+ if(n<1||n>95)return false;
+ for(size_t i=0;i<n;i++){
+  unsigned char c=(unsigned char)s[i];
+  if(c<32||c==127)return false;
+ }
+ return true;
+}
+static bool fleet_id_ok(const char *s,size_t n){
+ if(n<1||n>63)return false;
+ for(size_t i=0;i<n;i++){
+  char c=s[i];
+  if((c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='.'||c=='_'||c=='-')continue;
+  return false;
+ }
+ return true;
+}
+static int provider_percent(const zell_scene *s,const char *id){
+ for(int i=0;i<s->provider_count;i++)if(!strcmp(s->provider_rows[i].id,id))return s->provider_rows[i].percent;
+ return -1;
+}
+bool zell_provider_apply(zell_scene *s,const char *text){
+ static const char *const ids[]={"codex","claude","grok","qwen","minimax","gemini","elevenlabs"};
+ static const char *const states[]={"configured","verified","unknown","stale","invalid"};
+ static const char *const sources[]={"unknown","api","cli","vault"};
+ const char *line[40];
+ size_t line_len[40];
+ const char *tok[8];
+ size_t toklen[8];
+ zell_provider_row parsed[ZELL_PROVIDER_ROWS];
+ int lines,fields,generation=0,count=0;
+ if(!s||!text)return false;
+ lines=split_lines(text,line,line_len,40);
+ if(lines<1)return false;
+ fields=split_spaces(line[0],line_len[0],tok,toklen,8);
+ if(fields!=3||!token_is(tok[0],toklen[0],"1"))return false;
+ if(!parse_uint(tok[1],toklen[1],&generation,1000000000))return false;
+ if(!parse_uint(tok[2],toklen[2],&count,ZELL_PROVIDER_ROWS))return false;
+ if(lines!=count+1)return false;
+ memset(parsed,0,sizeof parsed);
+ for(int row=0;row<count;row++){
+  int percent=0;
+  fields=split_spaces(line[row+1],line_len[row+1],tok,toklen,8);
+  if(fields!=5)return false;
+  if(!token_in(tok[0],toklen[0],ids,sizeof ids/sizeof ids[0]))return false;
+  if(!parse_percent(tok[1],toklen[1],&percent))return false;
+  if(!token_in(tok[2],toklen[2],states,sizeof states/sizeof states[0]))return false;
+  if(!token_in(tok[3],toklen[3],sources,sizeof sources/sizeof sources[0]))return false;
+  if(!token_is(tok[4],toklen[4],"unknown"))return false;
+  if(!copy_token(parsed[row].id,sizeof parsed[row].id,tok[0],toklen[0]))return false;
+  parsed[row].percent=percent;
+  if(!copy_token(parsed[row].state,sizeof parsed[row].state,tok[2],toklen[2]))return false;
+  if(!copy_token(parsed[row].source,sizeof parsed[row].source,tok[3],toklen[3]))return false;
+  if(!copy_token(parsed[row].plan,sizeof parsed[row].plan,tok[4],toklen[4]))return false;
+  for(int prev=0;prev<row;prev++)if(!strcmp(parsed[prev].id,parsed[row].id))return false;
+ }
+ memset(s->provider_rows,0,sizeof s->provider_rows);
+ if(count>0)memcpy(s->provider_rows,parsed,(size_t)count*sizeof parsed[0]);
+ s->provider_count=count;
+ s->provider_generation=generation;
+ s->provider_mana[0]=provider_percent(s,"codex");
+ s->provider_mana[1]=provider_percent(s,"claude");
+ s->provider_mana[2]=provider_percent(s,"grok");
+ s->provider_mana_ready=true;
+ return true;
+}
+bool zell_provider_check_apply(zell_scene *s,const char *text){
+ const char *line[4];
+ size_t line_len[4];
+ const char *tok[4];
+ size_t toklen[4];
+ int lines,fields,generation=0,running=0;
+ if(!s||!text)return false;
+ lines=split_lines(text,line,line_len,4);
+ if(lines!=1)return false;
+ fields=split_spaces(line[0],line_len[0],tok,toklen,4);
+ if(fields!=3||!token_is(tok[0],toklen[0],"1"))return false;
+ if(!parse_uint(tok[1],toklen[1],&generation,1000000000))return false;
+ if(!parse_uint(tok[2],toklen[2],&running,1))return false;
+ s->provider_check_generation=generation;
+ s->provider_check_running=running;
+ return true;
+}
+bool zell_fleet_apply(zell_scene *s,const char *text){
+ const char *line[40];
+ size_t line_len[40];
+ const char *tok[8];
+ size_t toklen[8];
+ zell_fleet_row parsed[ZELL_FLEET_ROWS];
+ int lines,fields,revision=0,total=0,offset=0,count=0;
+ if(!s||!text||strlen(text)>3500)return false;
+ lines=split_lines(text,line,line_len,40);
+ if(lines<1)return false;
+ fields=split_spaces(line[0],line_len[0],tok,toklen,8);
+ if(fields!=5||!token_is(tok[0],toklen[0],"1"))return false;
+ if(!parse_uint(tok[1],toklen[1],&revision,1000000000))return false;
+ if(!parse_uint(tok[2],toklen[2],&total,1000000000))return false;
+ if(!parse_uint(tok[3],toklen[3],&offset,1000000000))return false;
+ if(!parse_uint(tok[4],toklen[4],&count,ZELL_FLEET_ROWS))return false;
+ if(total==0){if(offset!=0||count!=0)return false;}
+ else if((long long)offset+count>total)return false;
+ if(lines!=count+1)return false;
+ memset(parsed,0,sizeof parsed);
+ for(int row=0;row<count;row++){
+  const char *field[5];
+  size_t field_len[5];
+  int workers=0,live=0;
+  if(split_tabs(line[row+1],line_len[row+1],field,field_len,5)!=5)return false;
+  if(!fleet_id_ok(field[0],field_len[0]))return false;
+  if(!label_ok(field[1],field_len[1])||!label_ok(field[2],field_len[2]))return false;
+  if(!parse_uint(field[3],field_len[3],&workers,100000))return false;
+  if(!parse_uint(field[4],field_len[4],&live,100000))return false;
+  if(!copy_token(parsed[row].fleet_id,sizeof parsed[row].fleet_id,field[0],field_len[0]))return false;
+  if(!copy_token(parsed[row].display_name,sizeof parsed[row].display_name,field[1],field_len[1]))return false;
+  if(!copy_token(parsed[row].project_label,sizeof parsed[row].project_label,field[2],field_len[2]))return false;
+  parsed[row].worker_count=workers;
+  parsed[row].live_count=live;
+ }
+ memset(s->fleet_rows,0,sizeof s->fleet_rows);
+ if(count>0)memcpy(s->fleet_rows,parsed,(size_t)count*sizeof parsed[0]);
+ s->fleet_revision=revision;
+ s->fleet_total=total;
+ s->fleet_offset=offset;
+ s->fleet_count=count;
+ return true;
+}
+bool zell_update_apply(zell_scene *s,const char *text){
+ const char *line[4];
+ size_t line_len[4];
+ const char *tok[8];
+ size_t toklen[8];
+ char state[16];
+ int lines,fields,generation=0,done=0,total=0;
+ if(!s||!text)return false;
+ lines=split_lines(text,line,line_len,4);
+ if(lines!=1)return false;
+ fields=split_spaces(line[0],line_len[0],tok,toklen,8);
+ if(fields!=5||!token_is(tok[0],toklen[0],"1"))return false;
+ if(!parse_uint(tok[1],toklen[1],&generation,1000000000))return false;
+ if(!parse_uint(tok[2],toklen[2],&done,1000000))return false;
+ if(!parse_uint(tok[3],toklen[3],&total,1000000))return false;
+ if(done>total)return false;
+ if(!token_is(tok[4],toklen[4],"idle")&&!token_is(tok[4],toklen[4],"running")&&!token_is(tok[4],toklen[4],"done")&&!token_is(tok[4],toklen[4],"failed")&&!token_is(tok[4],toklen[4],"cancelled"))return false;
+ memset(state,0,sizeof state);
+ if(!copy_token(state,sizeof state,tok[4],toklen[4]))return false;
+ if(s->update_job_active&&generation!=s->update_job_generation)return false;
+ if(!s->update_job_active){
+  s->update_job_generation=generation;
+  s->update_job_active=true;
+ }
+ s->update_done=done;
+ s->update_total=total;
+ memcpy(s->update_state,state,sizeof s->update_state);
+ return true;
 }

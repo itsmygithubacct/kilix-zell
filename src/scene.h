@@ -33,6 +33,52 @@ enum {
     ZELL_QUESTION_CHOICES = ZELL_PRESET_COUNT + 1
 };
 
+typedef struct zell_room_view {
+    int logical_x, logical_y, logical_w, logical_h;
+    int viewport_x, viewport_y, viewport_w, viewport_h;
+    float scale;
+    int offset_x, offset_y;
+} zell_room_view;
+
+#define ZELL_WINDOWS 4
+typedef struct zell_window {
+    int generation;
+    int open_order;
+    int z_order;
+    bool used;
+    bool minimized;
+    bool maximized;
+    bool private_surface;
+    bool close_requested;
+    bool cancel_blocked;
+    int owner_service;
+    char title[96];
+} zell_window;
+
+#define ZELL_PROVIDER_ROWS 32
+typedef struct zell_provider_row {
+    char id[16];
+    int percent;
+    char state[16];
+    char source[16];
+    char plan[16];
+} zell_provider_row;
+
+#define ZELL_FLEET_ROWS 8
+typedef struct zell_fleet_row {
+    char fleet_id[64];
+    char display_name[96];
+    char project_label[96];
+    int worker_count;
+    int live_count;
+} zell_fleet_row;
+
+#define ZELL_DEBUG_BLOCKS 4
+typedef struct zell_debug_block {
+    bool enabled;
+    char label[32];
+} zell_debug_block;
+
 typedef struct zell_controls {
     int move_x;
     int move_y;
@@ -126,6 +172,29 @@ typedef struct zell_scene {
     int service_count, service_index, service_scroll;
     bool service_send, service_cancel;
     char service_reply[1026];
+    /* L2 calls zell_window_accepts_frame. L3 calls zell_room_view_identity. L5 calls zell_provider_apply. L6 calls zell_fleet_apply. L8 calls zell_notice_show. */
+    int seat_ticks;
+    bool seated;
+    zell_room_view room_view;
+    zell_window windows[ZELL_WINDOWS];
+    zell_provider_row provider_rows[ZELL_PROVIDER_ROWS];
+    int provider_count;
+    int provider_generation;
+    int provider_check_generation;
+    int provider_check_running;
+    int fleet_revision;
+    int fleet_total;
+    int fleet_offset;
+    int fleet_count;
+    zell_fleet_row fleet_rows[ZELL_FLEET_ROWS];
+    bool update_job_active;
+    int update_job_generation;
+    int update_done;
+    int update_total;
+    char update_state[16];
+    int64_t notice_until_ms;
+    char notice_key[64];
+    zell_debug_block debug_blocks[ZELL_DEBUG_BLOCKS];
 } zell_scene;
 
 typedef struct zell_request {

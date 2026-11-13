@@ -1,0 +1,7 @@
+1 9 2
+codex 40 verified api unknown
+claude 70 configured cli unknown
+REJECT
+1 9 2
+codex 40 verified api unknown
+nope 10 verified api unknown

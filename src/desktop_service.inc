@@ -22,6 +22,20 @@ static void service_append(zell_scene *s,const char *text){
     memcpy(s->service_text+used,text,n+1);
 }
 enum { SERVICE_ORIGIN_JOB=0, SERVICE_ORIGIN_MONITOR=1 };
+static const struct { char kind; bool job; bool monitor; } zell_frame_registry[]={
+ {'C',true,false},{'M',true,true},{'L',true,false},{'P',true,false},{'Q',true,false},
+ {'R',true,false},{'O',true,false},{'T',true,false},
+ {'G',false,true},{'H',false,true},{'F',false,true},{'U',false,true},
+ {'V',false,true},{'Y',false,true},{'N',false,true},{'S',false,true},{'W',false,true},
+ {'A',false,true},{'J',false,true},{'D',false,true},{'B',false,true}
+};
+static int frame_origin_allowed(char kind,int origin){
+ for(size_t i=0;i<sizeof zell_frame_registry/sizeof zell_frame_registry[0];i++){
+  if(zell_frame_registry[i].kind!=kind)continue;
+  return (origin==SERVICE_ORIGIN_MONITOR?zell_frame_registry[i].monitor:zell_frame_registry[i].job)?1:0;
+ }
+ return -1;
+}
 /* Three integers and nothing after them. A successful sscanf with leftover text is not a reading. */
 static void service_mana(zell_scene *s,const char *text){
     int v[3],n=0;
@@ -30,6 +44,7 @@ static void service_mana(zell_scene *s,const char *text){
     s->provider_mana_ready=true;
 }
 static void service_frame(zell_scene *s,char *frame,int origin){
+    /* L2 will reject late frames through zell_window_accepts_frame. */
     char kind=frame[0],decoded[4096];size_t n=0;
     for(size_t i=1;frame[i]&&frame[i+1]&&n+1<sizeof decoded;i+=2){
         int a=service_hex(frame[i]),b=service_hex(frame[i+1]);if(a<0||b<0)return;
@@ -37,11 +52,23 @@ static void service_frame(zell_scene *s,char *frame,int origin){
         if(c>=32||c=='\n'||c=='\t')decoded[n++]=(char)c;
     }
     decoded[n]=0;
+    int allowed=frame_origin_allowed(kind,origin);
+    if(allowed==0)return;
     if(origin==SERVICE_ORIGIN_MONITOR){
-        /* H, F and U are reserved. They are not menus and do not change Mana. */
-        if(kind=='H'||kind=='F'||kind=='U')return;
-        /* G is the Mana snapshot. Legacy M carries the same three integers for one transition, never a menu. */
-        if(kind=='G'||kind=='M'){service_mana(s,decoded);return;}
+        /* L5 calls zell_provider_apply. */
+        if(kind=='G'){
+            int a,b,c,used=0;
+            if(sscanf(decoded,"%d %d %d%n",&a,&b,&c,&used)==3&&!decoded[used]){service_mana(s,decoded);return;}
+            (void)a;(void)b;(void)c;
+            zell_provider_apply(s,decoded);return;
+        }
+        /* L5 calls zell_provider_check_apply. */
+        if(kind=='H'){zell_provider_check_apply(s,decoded);return;}
+        /* L6 calls zell_fleet_apply. */
+        if(kind=='F'){zell_fleet_apply(s,decoded);return;}
+        if(kind=='U'){zell_update_apply(s,decoded);return;}
+        /* Legacy M carries the same three integers for one transition, never a menu. */
+        if(kind=='M'){service_mana(s,decoded);return;}
         if(kind=='J'){s->restart_needed=decoded[0]=='1';return;}
         if(kind=='Y'){
             s->coding_yolo_ready=n==1&&(decoded[0]=='0'||decoded[0]=='1');

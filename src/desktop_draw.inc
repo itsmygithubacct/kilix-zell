@@ -74,6 +74,7 @@ static void desktop_command_switch(const zell_scene *s,sr_canvas *c,int index,in
  desktop_text(c,r.x+18,r.y+125,index?"Click / Enter: configure & run":"Click / Enter: toggle",0xc1c9bfu,265);
 }
 /* Drawn twice: once for what stands behind Kilix, once for what stands in front. */
+/* L3 calls zell_command_layout. */
 /* One row per provider: name, a bar of what is left, and the number. */
 static void desktop_mana_rows(const zell_scene *s,sr_canvas *c,int x,int y,int w,int row,int scale){
  static const char *const names[3]={"CODEX","CLAUDE","GROK"};
@@ -123,6 +124,7 @@ static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
  int near=zell_desktop_near(s);
  for(int i=15;i<ZELL_STATIONS;i++){
   if(!zell_desktop_station_visible(s,i)||zell_desktop_station_in_front(s,i)!=front)continue;
+  if(i>=ZELL_WORKSHOP_COMPUTER)continue;
   int x=(int)(zell_stations[i].x*ZELL_WORLD_W)-cx,y=(int)(zell_stations[i].y*ZELL_WORLD_H)-cy;
   if(i==ZELL_MANA_CONSOLE){desktop_mana_console(s,c,cx,cy,i==near);continue;}
   if(i>=46){desktop_command_switch(s,c,i-46,cx,cy,i==near);continue;}
@@ -196,6 +198,7 @@ static void desktop_cave(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
  int near=zell_desktop_near(s);int height=112;
  for(int i=0;i<ZELL_STATIONS&&s->room==0;i++){
   if(!zell_desktop_station_visible(s,i)||zell_desktop_station_in_front(s,i)!=front)continue;
+  if(i>=ZELL_WORKSHOP_COMPUTER)continue;
   const zell_station *p=&zell_stations[i];int x=(int)(p->x*(float)ZELL_WORLD_W),y=(int)(p->y*(float)ZELL_WORLD_H);
   x-=cx;y-=cy;
   int h=(i<6||(i>=32&&i<42))?height:height*3/4;
@@ -254,13 +257,14 @@ static void desktop_base(const zell_scene *s,sr_canvas *c){
  if(c->w>=500&&s->mode==ZELL_MODE_WALK){
   int mx=c->w-140,my=42;sr_fill_rect(c,(float)mx,(float)my,128,88,0x0c1921u,.9f);
   sr_stroke_rect(c,(float)mx,(float)my,128,88,1,0x4b7777u,1);
-  for(int i=0;i<ZELL_STATIONS;i++)if(zell_desktop_station_visible(s,i))sr_fill_circle(c,(float)(mx+4)+zell_stations[i].x*120,(float)(my+4)+zell_stations[i].y*80,2,0xd9ba79u,1);
+  for(int i=0;i<ZELL_STATIONS;i++)if(i<ZELL_WORKSHOP_COMPUTER&&zell_desktop_station_visible(s,i))sr_fill_circle(c,(float)(mx+4)+zell_stations[i].x*120,(float)(my+4)+zell_stations[i].y*80,2,0xd9ba79u,1);
   sr_stroke_rect(c,(float)(mx+4)+((float)cx/ZELL_WORLD_W)*120,(float)(my+4)+((float)cy/ZELL_WORLD_H)*80,(float)c->w/ZELL_WORLD_W*120,(float)c->h/ZELL_WORLD_H*80,1,0x407b85u,1);
   sr_fill_circle(c,(float)(mx+4)+s->x/ZELL_WORLD_W*120,(float)(my+4)+s->y/ZELL_WORLD_H*80,3,0x8af8d4u,1);
  }
  sr_fill_rect(c,0,0,(float)c->w,30,0x0c1921u,.97f);
  sr_text(c,12,7,s->room==1?"ZELL / COMMAND":s->room==2?"ZELL / LAUNDRY":s->room==3?"ZELL / VAULT":s->room==4?"ZELL / WORKSHOP":"ZELL / " ZELL_VERSION,0xf0d69bu,1,1);
  if(s->dictation_on)desktop_label(c,c->w/2,82,"Listening / click dictation to finish",0xb7f3d5u);
+ /* L8 calls zell_notice_show. */
  else if(s->notice_count>0&&s->mode==ZELL_MODE_WALK)desktop_text(c,12,104,s->notice_text,0xe9d49fu,c->w-165);
  char status[100];time_t now=time(NULL);struct tm local;localtime_r(&now,&local);
  snprintf(status,sizeof status,"%02d:%02d  %d fps",local.tm_hour,local.tm_min,s->frame_rate);

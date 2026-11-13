@@ -4,9 +4,12 @@
 #define ZELL_VERSION "0.1.1"
 #define ZELL_WORLD_W 1536
 #define ZELL_WORLD_H 1024
-#define ZELL_STATIONS 49
+#define ZELL_STATIONS 52
 /* The Command Center computer that zooms into a usage browser. */
 #define ZELL_MANA_CONSOLE 48
+#define ZELL_WORKSHOP_COMPUTER 49
+#define ZELL_FLEET_BOARD 50
+#define ZELL_FLOOR_PANEL 51
 #define ZELL_ZOOM_TICKS 22
 #define ZELL_CAVE_STATIONS 15
 /* Where the Neuronte lever is drawn, relative to its floor interaction point. */
@@ -60,4 +63,13 @@ void zell_terminal_cells(const zell_scene *s,int *cols,int *rows);
 bool zell_terminal_click(zell_scene *s);
 void zell_terminal_restore(zell_scene *s);
 const char *zell_desktop_action(int station,int index);
+/* L3 replaces zell_room_view_identity with the fit in src/desktop_command.inc. */
+void zell_room_view_identity(zell_scene *s);
+void zell_world_to_screen(const zell_scene *s,float world_x,float world_y,float *screen_x,float *screen_y);
+void zell_screen_to_world(const zell_scene *s,float screen_x,float screen_y,float *world_x,float *world_y);
+bool zell_window_accepts_frame(const zell_scene *s,int slot,int generation);
+bool zell_provider_apply(zell_scene *s,const char *text);
+bool zell_provider_check_apply(zell_scene *s,const char *text);
+bool zell_fleet_apply(zell_scene *s,const char *text);
+bool zell_update_apply(zell_scene *s,const char *text);
 #endif

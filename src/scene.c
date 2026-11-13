@@ -107,11 +107,12 @@ void zell_scene_init(zell_scene *scene, int width, int height)
     }
     place_wizard(scene);
     clamp_actor(scene);
+    zell_room_view_identity(scene);
 }
 
 void zell_scene_resize(zell_scene *scene, int width, int height)
 {
-    if (scene->desktop) { scene->width=width<32?32:width;scene->height=height<32?32:height;return; }
+    if (scene->desktop) { scene->width=width<32?32:width;scene->height=height<32?32:height;zell_room_view_identity(scene);return; }
     float rx = scene->width > 0 ? scene->x / (float)scene->width : 0.5f;
     float ry = scene->height > 0 ? scene->y / (float)scene->height : 0.72f;
 
@@ -128,6 +129,7 @@ void zell_scene_resize(zell_scene *scene, int width, int height)
     scene->y = ry * (float)height;
     place_wizard(scene);
     clamp_actor(scene);
+    zell_room_view_identity(scene);
 }
 
 bool zell_near_wizard(const zell_scene *scene)

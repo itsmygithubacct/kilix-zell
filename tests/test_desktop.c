@@ -15,6 +15,85 @@ static int pixel_gap(uint32_t a,uint32_t b){
     for(int shift=0;shift<24;shift+=8){int d=(int)((a>>shift)&255u)-(int)((b>>shift)&255u);if(d<0)d=-d;if(d>gap)gap=d;}
     return gap;
 }
+static char *read_fixture(const char *path,char *buf,size_t cap){
+    FILE *file=fopen(path,"r");
+    assert(file);
+    size_t n=fread(buf,1,cap-1,file);
+    assert(!ferror(file));
+    fclose(file);
+    buf[n]=0;
+    return buf;
+}
+static void test_contract_fixtures(void){
+    char text[4096];
+    int rows=0,width,height,scale,offset_x,offset_y;
+    FILE *geometry=fopen("tests/fixtures/contracts/geometry.txt","r");
+    assert(geometry);
+    while(fscanf(geometry,"%d %d %d %d %d",&width,&height,&scale,&offset_x,&offset_y)==5){
+        zell_scene view;
+        float sx,sy,wx,wy,x,y;
+        zell_scene_init(&view,width,height);
+        assert(view.room_view.logical_x==0&&view.room_view.logical_y==0);
+        assert(view.room_view.logical_w==ZELL_WORLD_W&&view.room_view.logical_h==ZELL_WORLD_H);
+        assert(view.room_view.viewport_x==0&&view.room_view.viewport_y==0);
+        assert(view.room_view.viewport_w==width&&view.room_view.viewport_h==height);
+        assert(view.room_view.scale==(float)scale);
+        assert(view.room_view.offset_x==offset_x&&view.room_view.offset_y==offset_y);
+        x=view.x;y=view.y;
+        zell_room_view_identity(&view);
+        assert(view.x==x&&view.y==y);
+        zell_desktop_init(&view);
+        x=view.x;y=view.y;
+        zell_scene_resize(&view,width,height);
+        assert(view.x==x&&view.y==y);
+        assert(view.room_view.scale==(float)scale&&view.room_view.offset_x==offset_x&&view.room_view.offset_y==offset_y);
+        zell_world_to_screen(&view,100.f,200.f,&sx,&sy);
+        assert(sx==100.f&&sy==200.f);
+        zell_screen_to_world(&view,sx,sy,&wx,&wy);
+        assert(wx==100.f&&wy==200.f);
+        rows++;
+    }
+    fclose(geometry);
+    assert(rows==2);
+    read_fixture("tests/fixtures/contracts/launch-settings.json",text,sizeof text);
+    assert(strstr(text,"\"prompt_ref\""));
+    assert(!strstr(text,"\"prompt\""));
+    read_fixture("tests/fixtures/contracts/provider-rows-v1.txt",text,sizeof text);
+    {
+        char *reject=strstr(text,"\nREJECT\n");
+        zell_scene parsed;
+        assert(reject);
+        *reject=0;
+        reject+=strlen("\nREJECT\n");
+        zell_scene_init(&parsed,320,240);
+        assert(zell_provider_apply(&parsed,text));
+        assert(parsed.provider_count==2&&parsed.provider_generation==9);
+        assert(!strcmp(parsed.provider_rows[0].id,"codex")&&parsed.provider_rows[0].percent==40);
+        assert(!strcmp(parsed.provider_rows[1].id,"claude")&&parsed.provider_rows[1].percent==70);
+        assert(parsed.provider_mana_ready);
+        assert(parsed.provider_mana[0]==40&&parsed.provider_mana[1]==70&&parsed.provider_mana[2]==-1);
+        assert(!zell_provider_apply(&parsed,reject));
+        assert(parsed.provider_count==2&&parsed.provider_generation==9);
+        assert(parsed.provider_mana[0]==40&&parsed.provider_mana[1]==70&&parsed.provider_mana[2]==-1);
+    }
+    {
+        zell_scene slots;
+        zell_scene_init(&slots,320,240);
+        assert(zell_window_accepts_frame(&slots,0,0));
+        assert(!zell_window_accepts_frame(&slots,1,0));
+        assert(!zell_window_accepts_frame(&slots,3,0));
+        assert(!zell_window_accepts_frame(&slots,-1,1));
+        assert(!zell_window_accepts_frame(&slots,4,1));
+        slots.windows[0].generation=3;
+        slots.windows[2].generation=9;
+        assert(zell_window_accepts_frame(&slots,0,0));
+        assert(zell_window_accepts_frame(&slots,0,3));
+        assert(!zell_window_accepts_frame(&slots,2,0));
+        assert(zell_window_accepts_frame(&slots,2,9));
+        assert(!zell_window_accepts_frame(&slots,2,3));
+        assert(!zell_window_accepts_frame(&slots,1,9));
+    }
+}
 int main(void) {
     zell_scene s;
     zell_controls c={0};
@@ -44,7 +123,30 @@ int main(void) {
     zell_scene_tick(&s,&c);assert(s.voice_on!=voice&&s.voice_changed);
     s.mode=ZELL_MODE_WALK;s.x=ZELL_WORLD_W*.5f;s.y=ZELL_WORLD_H*.98f;
     c=(zell_controls){0};assert(zell_scene_tick(&s,&c));
-    for(int i=0;i<ZELL_STATIONS;i++)assert(zell_desktop_actions(i)>0);
+    for(int i=0;i<=48;i++)assert(zell_desktop_actions(i)>0);
+    assert(!strcmp(zell_stations[ZELL_WORKSHOP_COMPUTER].name,"Workshop computer"));
+    assert(!strcmp(zell_stations[ZELL_FLEET_BOARD].name,"Fleet board"));
+    assert(!strcmp(zell_stations[ZELL_FLOOR_PANEL].name,"Floor panel"));
+    {
+        int room=s.room;float kept_x=s.x,kept_y=s.y;char query[64];
+        snprintf(query,sizeof query,"%s",s.launcher_query);
+        for(int id=ZELL_WORKSHOP_COMPUTER;id<=ZELL_FLOOR_PANEL;id++){
+            assert(zell_desktop_actions(id)==0);
+            assert(zell_stations[id].art==-1);
+            assert(strstr(zell_stations[id].role,"Reserved"));
+            assert(strstr(zell_stations[id].role,"not an available action"));
+            s.x=zell_stations[id].x*ZELL_WORLD_W;s.y=zell_stations[id].y*ZELL_WORLD_H;
+            for(int r=0;r<=4;r++){
+                s.room=r;
+                assert(!zell_desktop_station_visible(&s,id));
+                assert(zell_desktop_near(&s)!=id);
+            }
+        }
+        snprintf(s.launcher_query,sizeof s.launcher_query,"Fleet board");
+        for(int i=0;i<zell_desktop_launcher_count(&s);i++)assert(zell_desktop_launcher_station(&s,i)<ZELL_WORKSHOP_COMPUTER);
+        snprintf(s.launcher_query,sizeof s.launcher_query,"%s",query);
+        s.room=room;s.x=kept_x;s.y=kept_y;
+    }
     s.leave=false;s.mode=ZELL_MODE_SERVICE;s.service_phase=2;s.service_count=3;
     c=(zell_controls){.move_y=1};s.menu_hold=0;zell_scene_tick(&s,&c);
     assert(s.service_index==1);
@@ -389,6 +491,7 @@ int main(void) {
 #ifdef ZELL_RENDER_NEURONTE
     zell_neuronte_close();
 #endif
+    test_contract_fixtures();
     puts("desktop world, camera, alpha, idle/walk animation, launcher and voice: ok");
     return 0;
 }
