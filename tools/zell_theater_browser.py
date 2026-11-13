@@ -2,8 +2,10 @@
 
 One PrivateBrowser is one URL item. The capture viewport stays at the size
 passed to launch. Popout and dock keep that same session and page. The
-orchestrator scales the fixed RGB frame. Pause and resume talk to the page's
-media elements through the browser's own control API.
+orchestrator scales the fixed RGB frame. Launch installs a document-start
+hold before the URL loads. Pause and resume talk to the page's media
+elements through the browser's own control API, and the hold keeps later
+elements paused until resume.
 """
 import atexit
 import base64
@@ -32,9 +34,80 @@ _KEY_NAMES = {
 }
 _PROFILES = set()
 _SESSIONS = 0
+_HOLD_JS = r"""
+(() => {
+  if (window.__zellTheaterHoldInstalled) return;
+  window.__zellTheaterHoldInstalled = true;
+  const key = 'zell-theater-hold';
+  function held() {
+    const root = document.documentElement;
+    if (root) {
+      const mark = root.getAttribute('data-zell-hold-state');
+      if (mark === '0') return false;
+      if (mark === '1') return true;
+    }
+    try {
+      const stored = sessionStorage.getItem(key);
+      if (stored === '0') return false;
+      if (stored === '1') return true;
+    } catch (error) {}
+    return true;
+  }
+  function pauseNode(node) {
+    if (!node || node.paused || typeof node.pause !== 'function') return;
+    const tag = node.tagName;
+    if (tag !== 'VIDEO' && tag !== 'AUDIO') return;
+    try { node.pause(); } catch (error) {}
+  }
+  function sweep() {
+    if (!held()) return;
+    const nodes = document.querySelectorAll('video, audio');
+    for (let index = 0; index < nodes.length; index += 1) pauseNode(nodes[index]);
+  }
+  document.addEventListener('play', (event) => {
+    if (held()) pauseNode(event.target);
+  }, true);
+  let armed = false;
+  function arm() {
+    const root = document.documentElement;
+    if (root && root.getAttribute('data-zell-hold') !== '1')
+      root.setAttribute('data-zell-hold', '1');
+    if (!root || armed) return;
+    armed = true;
+    new MutationObserver(sweep).observe(root, {childList: true, subtree: true});
+  }
+  arm();
+  try {
+    new MutationObserver(arm).observe(document, {childList: true, subtree: true});
+  } catch (error) {}
+  setInterval(() => { arm(); sweep(); }, 200);
+})();
+"""
+_HOLD_MANIFEST = """{
+  "manifest_version": 3,
+  "name": "zell-theater-hold",
+  "version": "1.0",
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [{
+    "matches": ["<all_urls>"],
+    "match_about_blank": true,
+    "all_frames": true,
+    "run_at": "document_start",
+    "js": ["hold.js"]
+  }]
+}
+"""
 _MEDIA_JS = r"""
 (() => {
   const action = %s;
+  const key = 'zell-theater-hold';
+  if (action === 'pause' || action === 'play') {
+    const hold = action === 'pause';
+    window.__zellTheaterHold = hold;
+    try { sessionStorage.setItem(key, hold ? '1' : '0'); } catch (error) {}
+    const root = document.documentElement;
+    if (root) root.setAttribute('data-zell-hold-state', hold ? '1' : '0');
+  }
   const nodes = Array.from(document.querySelectorAll('video, audio'));
   for (const node of nodes) {
     if (action === 'pause') node.pause();
@@ -45,16 +118,12 @@ _MEDIA_JS = r"""
   }
   const videos = nodes.filter((node) => node.tagName === 'VIDEO');
   const primary = videos.length ? videos[0] : null;
-  const field = document.getElementById('field');
-  const counter = document.getElementById('counter');
   const millis = (value) => Number.isFinite(value) ? Math.round(value * 1000) : null;
   return {
     present: !!primary,
     paused: primary ? videos.every((node) => node.paused) : null,
     position_ms: primary ? millis(primary.currentTime) : null,
-    duration_ms: primary ? millis(primary.duration) : null,
-    field: field ? field.value : null,
-    counter: counter ? counter.textContent : null
+    duration_ms: primary ? millis(primary.duration) : null
   };
 })()
 """
@@ -411,7 +480,6 @@ def _normalize_media(value):
     if not present:
         return {
             'paused': None, 'position_ms': None, 'duration_ms': None, 'present': False,
-            'field': value.get('field'), 'counter': value.get('counter'),
         }
     paused = value.get('paused')
     if not isinstance(paused, bool):
@@ -428,8 +496,6 @@ def _normalize_media(value):
         'position_ms': millis('position_ms'),
         'duration_ms': millis('duration_ms'),
         'present': True,
-        'field': value.get('field'),
-        'counter': value.get('counter'),
     }
 
 
@@ -468,6 +534,8 @@ def _write_firefox_prefs(profile, port):
         'user_pref("browser.aboutwelcome.enabled", false);\n'
         'user_pref("toolkit.telemetry.reportingpolicy.firstRun", false);\n'
         'user_pref("browser.sessionstore.resume_from_crash", false);\n'
+        # Marionette play() is not a user gesture, so audible resume needs
+        # autoplay allowed. The document-start hold keeps an inactive page paused.
         'user_pref("media.autoplay.default", 0);\n'
         'user_pref("media.autoplay.blocking_policy", 0);\n'
         'user_pref("layout.css.devPixelsPerPx", "1.0");\n'
@@ -475,6 +543,21 @@ def _write_firefox_prefs(profile, port):
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, 'w', encoding='ascii') as handle:
         handle.write(text)
+
+
+def _write_private(path, text):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+        handle.write(text)
+
+
+def _write_hold_extension(profile):
+    root = os.path.join(profile, 'zell-hold')
+    os.makedirs(root, mode=0o700, exist_ok=True)
+    os.chmod(root, 0o700)
+    _write_private(os.path.join(root, 'manifest.json'), _HOLD_MANIFEST)
+    _write_private(os.path.join(root, 'hold.js'), _HOLD_JS)
+    return root
 
 
 def _log_tail(path):
@@ -511,6 +594,7 @@ class PrivateBrowser:
         self._raw_pending = bytearray()
         self._log_path = None
         self._debug_port = None
+        self._hold_installed = False
         self._lock = threading.RLock()
 
     def launch(self, browser, url, width, height):
@@ -527,7 +611,9 @@ class PrivateBrowser:
         os.chmod(profile, 0o700)
         _PROFILES.add(profile)
         port = _free_port()
-        command = _launch_command(browser, binary[0], profile, url, width, height, port)
+        # The command line stays on about:blank. The requested URL is loaded
+        # only after the document-start hold is installed.
+        command = _launch_command(browser, binary[0], profile, 'about:blank', width, height, port)
         global _SESSIONS
         _SESSIONS += 1
         if self.session_type is None:
@@ -568,6 +654,9 @@ class PrivateBrowser:
                     self._initial_frame = bytes(initial)
                 self.url = url
                 self._connect_control(browser, port, width, height)
+                self._navigate(url)
+                self._wait_for_hold(url)
+                self._apply_media('pause')
         except Exception as error:
             try:
                 session.close()
@@ -578,6 +667,7 @@ class PrivateBrowser:
             detail = _log_tail(log_path)
             self._profile = None
             self.url = None
+            self._hold_installed = False
             _remove_profile(profile)
             self._control_close()
             if detail:
@@ -699,6 +789,7 @@ class PrivateBrowser:
             _kill_recorded(self._record)
             self._disarm_reaper()
             self._control_close()
+            self._hold_installed = False
             profile = self._profile
             self._profile = None
             self._record = None
@@ -736,13 +827,93 @@ class PrivateBrowser:
         if getattr(self.session, 'display', None) is None:
             raise RuntimeError('browser control is not connected')
         self._ensure_control()
-        script = _MEDIA_JS % json.dumps(action)
+        return self._apply_media(action)
+
+    def _page_value(self, expression):
+        """Evaluate one page expression. Tests use this for their own DOM."""
+        with self._lock:
+            if self.session is None:
+                raise RuntimeError('no browser session')
+            if getattr(self.session, 'display', None) is None:
+                raise RuntimeError('browser control is not connected')
+            self._ensure_control()
+            return self._eval(expression)
+
+    def _apply_media(self, action):
+        # DevTools treats only the resume evaluation as a user gesture.
+        value = self._eval(_MEDIA_JS % json.dumps(action), user_gesture=(action == 'play'))
+        return _normalize_media(value)
+
+    def _eval(self, expression, user_gesture=False):
         if self._control_kind == 'marionette':
             value = self._marionette(
-                'WebDriver:ExecuteScript', {'script': 'return (' + script + ')', 'args': []})
+                'WebDriver:ExecuteScript',
+                {'script': 'return (' + expression + ')', 'args': []})
         else:
-            value = self._devtools(script)
-        return _normalize_media(value)
+            value = self._devtools(expression, user_gesture=user_gesture)
+        if isinstance(value, dict) and 'present' not in value and set(value) == {'value'}:
+            return value['value']
+        return value
+
+    def _navigate(self, url):
+        if self._control_kind == 'marionette':
+            self._marionette('WebDriver:Navigate', {'url': url})
+            return
+        result = self._devtools_command('Page.navigate', {'url': url})
+        if result.get('errorText'):
+            raise RuntimeError(f'browser navigation failed: {result["errorText"]}')
+
+    def _wait_for_hold(self, url):
+        # The finished document may be a redirect, an https upgrade, or a
+        # login hop. The hold has to be on that document, not on the URL
+        # that was requested.
+        probe = (
+            '(() => {'
+            ' const href = String(location.href || "");'
+            ' const root = document.documentElement;'
+            ' const hold = root ? root.getAttribute("data-zell-hold") : null;'
+            ' const ready = document.readyState;'
+            ' const scheme = /^(https?:|file:)/.test(href);'
+            ' return {held: hold === "1" && scheme && ready !== "loading",'
+            ' href: href, ready: ready, hold: hold};'
+            '})()'
+        )
+        deadline = time.monotonic() + 20
+        last = None
+        stable = None
+        stable_since = None
+        while time.monotonic() < deadline:
+            try:
+                last = self._eval(probe)
+            except Exception as error:
+                last = str(error)
+                stable = None
+            else:
+                href = last.get('href') if isinstance(last, dict) else None
+                if isinstance(last, dict) and last.get('held') and href:
+                    if href != stable:
+                        stable = href
+                        stable_since = time.monotonic()
+                    elif time.monotonic() - stable_since >= 0.4:
+                        return
+                else:
+                    stable = None
+            time.sleep(0.15)
+        raise RuntimeError(f'browser page did not hold before use: requested {url} landed {last}')
+
+    def _install_hold(self):
+        if self._hold_installed:
+            return
+        if self._control_kind == 'marionette':
+            root = _write_hold_extension(self._profile)
+            result = self._marionette('Addon:Install', {'path': root, 'temporary': True})
+            if not result:
+                raise RuntimeError('browser hold extension did not install')
+        else:
+            # Page.enable has to precede this registration. Without it the
+            # script is accepted and then never runs on the next document.
+            self._devtools_command('Page.addScriptToEvaluateOnNewDocument', {'source': _HOLD_JS})
+        self._hold_installed = True
 
     def _connect_control(self, browser, port, width, height):
         deadline = time.monotonic() + 25
@@ -753,9 +924,12 @@ class PrivateBrowser:
                     self._connect_marionette(port, width, height)
                 else:
                     self._connect_devtools(port)
+                    self._devtools_command('Page.enable', {})
+                self._install_hold()
                 return
             except Exception as error:
                 last = error
+                self._hold_installed = False
                 self._control_close()
                 time.sleep(0.25)
         detail = _log_tail(self._log_path)
@@ -824,17 +998,13 @@ class PrivateBrowser:
         except RuntimeError:
             pass
 
-    def _devtools(self, script):
+    def _devtools_command(self, method, params):
         self._message += 1
         ident = self._message
         _ws_send(self._control, json.dumps({
             'id': ident,
-            'method': 'Runtime.evaluate',
-            'params': {
-                'expression': script,
-                'returnByValue': True,
-                'userGesture': True,
-            },
+            'method': method,
+            'params': params,
         }))
         while True:
             reply = json.loads(_ws_recv(self._control))
@@ -842,11 +1012,19 @@ class PrivateBrowser:
                 continue
             if reply.get('error'):
                 raise RuntimeError(f'browser control failed: {reply["error"]}')
-            result = reply.get('result', {}).get('result', {})
-            details = reply.get('result', {}).get('exceptionDetails')
-            if details or result.get('subtype') == 'error':
-                raise RuntimeError(f'browser page script failed: {details or result}')
-            return result.get('value')
+            return reply.get('result') or {}
+
+    def _devtools(self, script, user_gesture=False):
+        result = self._devtools_command('Runtime.evaluate', {
+            'expression': script,
+            'returnByValue': True,
+            'userGesture': bool(user_gesture),
+        })
+        details = result.get('exceptionDetails')
+        value = result.get('result', {})
+        if details or value.get('subtype') == 'error':
+            raise RuntimeError(f'browser page script failed: {details or value}')
+        return value.get('value')
 
     def _marionette(self, command, params):
         self._message += 1
@@ -938,6 +1116,7 @@ class PrivateBrowser:
 
 
 def _launch_command(browser, binary, profile, url, width, height, port):
+    extension = _write_hold_extension(profile)
     if browser == 'firefox-esr':
         _write_firefox_prefs(profile, port)
         return [
@@ -951,12 +1130,13 @@ def _launch_command(browser, binary, profile, url, width, height, port):
         '--disable-sync',
         '--disable-default-apps',
         '--disable-popup-blocking',
-        '--autoplay-policy=no-user-gesture-required',
         '--disable-gpu',
         '--force-device-scale-factor=1',
         '--remote-debugging-port=0',
         '--remote-debugging-address=127.0.0.1',
         '--remote-allow-origins=*',
+        f'--disable-extensions-except={extension}',
+        f'--load-extension={extension}',
         f'--window-size={width},{height}',
         '--window-position=0,0',
         '--ozone-platform=x11',
