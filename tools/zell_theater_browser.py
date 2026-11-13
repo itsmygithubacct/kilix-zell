@@ -56,10 +56,21 @@ _HOLD_JS = r"""
     return true;
   }
   function pauseNode(node) {
-    if (!node || node.paused || typeof node.pause !== 'function') return;
+    if (!node || typeof node.pause !== 'function') return;
     const tag = node.tagName;
     if (tag !== 'VIDEO' && tag !== 'AUDIO') return;
+    // A paused element with autoplay still set starts when its data
+    // arrives. Clearing autoplay is what makes the pause stick.
+    try { node.autoplay = false; } catch (error) {}
+    if (node.paused) return;
     try { node.pause(); } catch (error) {}
+    if (!node.paused) {
+      Promise.resolve().then(() => {
+        if (!held() || !node || node.paused || typeof node.pause !== 'function') return;
+        try { node.autoplay = false; } catch (error) {}
+        try { node.pause(); } catch (error) {}
+      });
+    }
   }
   function sweep() {
     if (!held()) return;
@@ -67,6 +78,9 @@ _HOLD_JS = r"""
     for (let index = 0; index < nodes.length; index += 1) pauseNode(nodes[index]);
   }
   document.addEventListener('play', (event) => {
+    if (held()) pauseNode(event.target);
+  }, true);
+  document.addEventListener('playing', (event) => {
     if (held()) pauseNode(event.target);
   }, true);
   let armed = false;
@@ -95,6 +109,7 @@ _HOLD_MANIFEST = """{
     "match_about_blank": true,
     "all_frames": true,
     "run_at": "document_start",
+    "world": "MAIN",
     "js": ["hold.js"]
   }]
 }
@@ -119,7 +134,10 @@ _MEDIA_JS = r"""
     }
     const nodes = Array.from(doc.querySelectorAll('video, audio'));
     for (const node of nodes) {
-      if (action === 'pause') node.pause();
+      if (action === 'pause') {
+        try { node.autoplay = false; } catch (error) {}
+        node.pause();
+      }
       if (action === 'play') {
         const pending = node.play();
         if (pending && pending.catch) pending.catch(() => {});
@@ -873,7 +891,12 @@ class PrivateBrowser:
 
     def media_state(self):
         with self._lock:
-            return _public_media(self._read_page('state'))
+            # A held element can start between the document-start callback
+            # and this read. Pause in the same evaluation, then return the
+            # real element state. An active item is only observed, so a
+            # video the page itself paused is not played.
+            action = 'pause' if self._held else 'state'
+            return _public_media(self._read_page(action))
 
     def popout(self):
         with self._lock:
@@ -1471,10 +1494,12 @@ class PrivateBrowser:
             ' const root = document.documentElement;'
             ' const current = root ? root.getAttribute("data-zell-hold-state") : null;'
             ' const nodes = document.querySelectorAll("video, audio");'
+            ' const stop = (node) => {'
+            '   try { node.autoplay = false; } catch (error) {}'
+            '   try { node.pause(); } catch (error) {}'
+            ' };'
             ' if (current === mark) {'
-            '   if (mark === "1") {'
-            '     for (const node of nodes) { try { node.pause(); } catch (error) {} }'
-            '   }'
+            '   if (mark === "1") { for (const node of nodes) stop(node); }'
             '   return false;'
             ' }'
             ' if (root) root.setAttribute("data-zell-hold-state", mark);'
@@ -1483,9 +1508,7 @@ class PrivateBrowser:
             '   if (play) {'
             '     const pending = node.play();'
             '     if (pending && pending.catch) pending.catch(() => {});'
-            '   } else {'
-            '     try { node.pause(); } catch (error) {}'
-            '   }'
+            '   } else stop(node);'
             ' }'
             ' return true;'
             '})()'
