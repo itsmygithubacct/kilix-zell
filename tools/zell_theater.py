@@ -1302,19 +1302,22 @@ class TheaterSession:
         return (origin + (time.monotonic() - started)) * 1000, state
 
     def _complete_browser(self, identity, generation, state):
-        """The page reached its duration. Pause it, then drop the theater hold."""
-        confirmed = isinstance(state, dict) and state.get('paused') is True
+        """The page reached its duration. Finish only if this pause confirms quiet.
+
+        state is the media_state that reached the duration. A paused flag in
+        that snapshot must not release the hold when pause() is still playing
+        or raises.
+        """
+        del state
         try:
             silenced = self._pause_page(identity)
         except Exception as error:
-            silenced = False
-            if not confirmed:
-                self.emit({
-                    'event': 'error', 'error': 'capture',
-                    'detail': _clean(error) or 'browser stayed audible',
-                })
-                return
-        if not silenced and not confirmed:
+            self.emit({
+                'event': 'error', 'error': 'capture',
+                'detail': _clean(error) or 'browser stayed audible',
+            })
+            return
+        if not silenced:
             self.emit({'event': 'error', 'error': 'capture', 'detail': 'browser stayed audible'})
             return
         self._finish_media(identity, generation, True, '')

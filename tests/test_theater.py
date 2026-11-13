@@ -678,6 +678,79 @@ class TheaterTests(unittest.TestCase):
         finally:
             session.shutdown()
 
+    def test_stale_paused_snapshot_does_not_release_the_hold(self):
+        class StillLoud(FramePage):
+            def __init__(self):
+                super().__init__()
+                self.pauses = 0
+
+            def pause(self):
+                self.pauses += 1
+                self.paused = False
+                return {'paused': False, 'position_ms': 20000, 'duration_ms': 20000, 'present': True}
+
+            def media_state(self):
+                return {'paused': True, 'position_ms': 20000, 'duration_ms': 20000, 'present': True}
+
+            def frame(self, timeout=0.1):
+                return None
+
+        class RaiseOnPause(StillLoud):
+            def pause(self):
+                self.pauses += 1
+                self.paused = False
+                raise RuntimeError('browser media state is unreadable')
+
+        def run(page):
+            holds = []
+            session = self.session(
+                browser=page, play_frames=True,
+                hold_audio=lambda active, _owner: holds.append(bool(active)) or False)
+            session.ink = object()
+            try:
+                session.handle({
+                    'cmd': 'open', 'id': 'web', 'browser': 'chromium',
+                    'source': {'kind': 'url', 'url': 'https://example.com/a'},
+                })
+                events = session.handle_line(json.dumps({'cmd': 'use', 'id': 'web'}).encode())
+                session.thread.join(1)
+                events.extend(session.drain())
+                alive = session.thread.is_alive()
+                held = session.audio_held
+                return session, events, list(holds), page, alive, held
+            finally:
+                session.shutdown()
+
+        session, events, holds, page, alive, held = run(StillLoud())
+        self.assertFalse(alive)
+        self.assertEqual(session.active, 'web')
+        self.assertGreaterEqual(page.pauses, 1)
+        self.assertFalse(page.paused)
+        self.assertFalse(session.items['web']['paused'])
+        self.assertFalse(session.items['web'].get('ended'))
+        self.assertTrue(any(
+            event.get('event') == 'error' and event.get('error') == 'capture'
+            and event.get('detail') == 'browser stayed audible'
+            for event in events))
+        self.assertFalse(any(event.get('state') == 'ended' for event in events))
+        self.assertTrue(held)
+        self.assertEqual(holds, [True])
+
+        session, events, holds, page, alive, held = run(RaiseOnPause())
+        self.assertFalse(alive)
+        self.assertEqual(session.active, 'web')
+        self.assertGreaterEqual(page.pauses, 1)
+        self.assertFalse(page.paused)
+        self.assertFalse(session.items['web']['paused'])
+        self.assertFalse(session.items['web'].get('ended'))
+        self.assertTrue(any(
+            event.get('event') == 'error' and event.get('error') == 'capture'
+            and 'unreadable' in event.get('detail', '')
+            for event in events))
+        self.assertFalse(any(event.get('state') == 'ended' for event in events))
+        self.assertTrue(held)
+        self.assertEqual(holds, [True])
+
     def test_capture_failure_pauses_before_dropping_the_hold(self):
         class Broken(FramePage):
             def __init__(self):
