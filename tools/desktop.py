@@ -292,6 +292,7 @@ def play(target):
     return zell_media.play(media_ui(),str(target))
 
 def music(action):
+    if action==9:return zell_media.find_in_browser(sys.modules[__name__])
     if action==8:return zell_audio.configure(sys.modules[__name__])
     if action==7:return zell_library.hub(sys.modules[__name__],'music')
     ui=media_ui()

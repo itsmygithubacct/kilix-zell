@@ -235,6 +235,12 @@ initiates a provider check; the Mana console's automatic reading, described
 below, is the one background check and can be turned off. Zell requests serialize; independent external
 Claudex writers retain their existing cache behavior.
 
+The DJ's *Find a playlist or creator in a browser window* opens the Chawan
+text browser inside Zell's floating window, on a search for the words given,
+an `@handle`, or a full address. Like the floating terminal it can be
+minimized to a button on the bottom row and maximized; minimized, the page
+stays open. Zell holds one floating window at a time.
+
 The **Mana console** in the Command Center is a small computer whose screen
 shows what Codex, Claude and Grok each have left. Its tasks zoom into the
 screen and open the usage dashboard or a provider's own usage page in a

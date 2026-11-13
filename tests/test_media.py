@@ -111,5 +111,30 @@ class MediaTests(unittest.TestCase):
         with patch.object(media,'voice_runtime',side_effect=RuntimeError('no model')),patch.object(media.subprocess,'Popen') as launch:
             self.assertIsNone(media.start_transcript(self.ui,'https://example.org/a.mp3'))
             launch.assert_not_called()
+    def test_browser_url_takes_words_a_handle_or_an_address(self):
+        self.assertIsNone(media.browser_url('   '))
+        self.assertEqual(media.browser_url(' https://example.org/list?a=1 '),'https://example.org/list?a=1')
+        self.assertEqual(media.browser_url('@some.creator'),'https://www.youtube.com/@some.creator')
+        words=media.browser_url('slow  jazz & rain')
+        self.assertTrue(words.startswith('https://html.duckduckgo.com/html/?q=slow+jazz+%26+rain+'))
+        # An address with a space or a non-http scheme is searched for, never opened.
+        self.assertTrue(media.browser_url('file:///etc/passwd').startswith('https://html.duckduckgo.com/html/?q=file%3A'))
+        self.assertTrue(media.browser_url('https://a.example/ --flag').startswith('https://html.duckduckgo.com/html/?q='))
+    def test_the_browser_runs_in_the_floating_window(self):
+        import zell_terminal
+        pages=[];ui=type('UI',(),{'page_text':staticmethod(pages.append)})
+        with patch('builtins.input',return_value='@some.creator'),patch.object(media,'__name__',media.__name__), \
+                patch('shutil.which',return_value='/usr/local/bin/kilix'), \
+                patch.object(zell_terminal,'terminal_loop',return_value=0) as loop:
+            self.assertEqual(media.find_in_browser(ui),0)
+        self.assertEqual(loop.call_args.args[1],['kilix','chawan','https://www.youtube.com/@some.creator'])
+        self.assertIn('Browser',loop.call_args.kwargs['title'])
+        self.assertIn('Follow a creator or playlist',pages[-1])
+        with patch('builtins.input',return_value=''),patch('shutil.which',return_value='/usr/local/bin/kilix'), \
+                patch.object(zell_terminal,'terminal_loop') as loop:
+            self.assertIsNone(media.find_in_browser(ui));loop.assert_not_called()
+        with patch('shutil.which',return_value=None),patch.object(zell_terminal,'terminal_loop') as loop:
+            media.find_in_browser(ui);loop.assert_not_called()
+        self.assertIn('kilix command',pages[-1])
 
 if __name__=='__main__':unittest.main()

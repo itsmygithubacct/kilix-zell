@@ -339,6 +339,38 @@ def follow(ui, library):
     for error in library.refresh([source]):print(error)
 
 
+def browser_url(text):
+    """The page to open for search words, an @handle, or a full URL."""
+    from urllib.parse import quote_plus, urlsplit
+    text = ' '.join(str(text).split())
+    if not text:
+        return None
+    parts = urlsplit(text)
+    if parts.scheme in ('http', 'https') and parts.netloc and not any(ord(c) < 33 or ord(c) > 126 for c in text):
+        return text
+    if text.startswith('@') and ' ' not in text:
+        return 'https://www.youtube.com/' + quote_plus(text, safe='@')
+    # A plain results page: script-driven search pages show nothing in a text browser.
+    return 'https://html.duckduckgo.com/html/?q=' + quote_plus(text + ' YouTube playlist OR channel')
+
+
+def find_in_browser(ui):
+    """Look for a playlist or creator in a text browser inside Zell's floating window."""
+    import shutil
+    from zell_terminal import terminal_loop
+    if shutil.which('kilix') is None:
+        return ui.page_text('The browser window needs the kilix command, which was not found.')
+    url = browser_url(input('Search words, an @handle, or an HTTP(S) URL: '))
+    if url is None:
+        return None
+    status = terminal_loop(ui, ['kilix', 'chawan', url],
+                           title='Browser / keys go to the page / q quits / minimize keeps it open')
+    if status is not None:
+        ui.page_text('The browser window is closed.\n\nTo follow what you found, open '
+                     '"Follow a creator or playlist" and paste its handle or address.')
+    return status
+
+
 def hub(ui, add=False):
     library=Library(ui)
     if add:follow(ui,library)

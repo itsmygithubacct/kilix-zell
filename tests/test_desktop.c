@@ -294,6 +294,17 @@ int main(void) {
         /* Minimized: the old button positions are dead, only the bar button works. */
         t.mouse_click=true;assert(!zell_terminal_click(&t)&&t.terminal_minimized);
         assert(l.tab.y+l.tab.h<=t.height-30&&l.tab.y>t.height/2);
+        /* The button starts the bottom row and is as wide as its title needs. */
+        {
+            zell_terminal_layout named;char saved[96];memcpy(saved,t.terminal_title,sizeof saved);
+            snprintf(t.terminal_title,sizeof t.terminal_title,"Browser");zell_terminal_layout_for(&t,t.width,t.height,&named);
+            assert(named.tab.x==ZELL_WINDOW_ROW_X&&named.tab.w==7*8+36);
+            snprintf(t.terminal_title,sizeof t.terminal_title,"A very long window title that would not fit a button");
+            zell_terminal_layout_for(&t,t.width,t.height,&named);assert(named.tab.w==236);
+            memcpy(t.terminal_title,saved,sizeof saved);
+        }
+        assert(zell_desktop_actions(ZELL_DJ_STATION)==10);
+        assert(strstr(zell_desktop_action(ZELL_DJ_STATION,ZELL_DJ_BROWSER_ACTION),"browser window"));
         t.mouse_x=l.tab.x+5;t.mouse_y=l.tab.y+5;t.mouse_click=true;
         assert(zell_terminal_click(&t)&&!t.terminal_minimized&&t.mode==ZELL_MODE_SERVICE);
         /* No terminal, no buttons: the same press is ignored. */

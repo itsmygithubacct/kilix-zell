@@ -146,7 +146,7 @@ static void service_start_mode(desktop_service *p,zell_scene *s,bool monitor){
     s->desktop_launch=false;s->mode=ZELL_MODE_SERVICE;s->service_phase=0;
     s->terminal_maximized=s->terminal_minimized=false;
     s->terminal_private=p->sensitive;
-    snprintf(s->terminal_title,sizeof s->terminal_title,"%s",zell_stations[s->station].name);
+    snprintf(s->terminal_title,sizeof s->terminal_title,"%s",s->station==ZELL_DJ_STATION&&s->menu_index==ZELL_DJ_BROWSER_ACTION?"Browser":zell_stations[s->station].name);
     s->service_text[0]=s->service_title[0]=s->service_input[0]=0;
     s->service_scroll=0;s->service_send=s->service_cancel=false;
     }

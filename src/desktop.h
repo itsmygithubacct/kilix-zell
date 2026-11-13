@@ -49,6 +49,11 @@ void zell_monitor_layout(int screen,zell_rect *frame,zell_rect *display);
 void zell_mana_console_layout(zell_rect *frame,zell_rect *display);
 void zell_command_switch_layout(int index,zell_rect *frame);
 bool zell_desktop_click(zell_scene *s);
+/* Left edge of the bottom row of minimized-window buttons. */
+#define ZELL_WINDOW_ROW_X 12
+/* The DJ task that opens a text browser in the floating window. */
+#define ZELL_DJ_STATION 4
+#define ZELL_DJ_BROWSER_ACTION 9
 typedef struct { zell_rect frame, image, minimize, maximize, tab; } zell_terminal_layout;
 void zell_terminal_layout_for(const zell_scene *s,int width,int height,zell_terminal_layout *out);
 void zell_terminal_cells(const zell_scene *s,int *cols,int *rows);

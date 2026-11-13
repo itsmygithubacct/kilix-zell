@@ -61,7 +61,7 @@ static const char *const actions[ZELL_STATIONS][17]={
  {"System journal","User service journal","Boot warnings","Browse agent rollouts","Browse Kilix transcripts","Search a log","Open another log",NULL},
  {"Kilix settings","Software and models (Merchant)","Language, region and font size","System and user services","Connections (Signalman)","GPU and model settings","Update OS in floating terminal","Health, fatigue and mana",NULL},
  {"System health report","Disk usage","Largest home folders","Preview and clean old thumbnails","Process monitor","Clean downloaded package cache","Stop one of my processes","Startup applications",NULL},
- {"Open Kilix Amp","Play a file or URL","Playlists and creators","Follow a creator or playlist","Volume controls","Transcribe media","Transcripts and jobs","Music library on disk","Zell background music",NULL},
+ {"Open Kilix Amp","Play a file or URL","Playlists and creators","Follow a creator or playlist","Volume controls","Transcribe media","Transcripts and jobs","Music library on disk","Zell background music","Find a playlist or creator in a browser window",NULL},
  {"Books and documents library","Find a document","OCR an image","OCR a PDF","Read text aloud","Document converter","Export a text audiobook","How to find and add files",NULL},
  {"Open Kilix TUI",NULL}, {"Open Kilix shell",NULL},
  {"Application launcher","Home folder","Downloads","Web browser","Weather on the map","Screenshot or screen region capture",NULL},
@@ -326,7 +326,11 @@ void zell_terminal_layout_for(const zell_scene *s,int width,int height,zell_term
  out->frame=(zell_rect){out->image.x-8,out->image.y-30,w+16,h+58};
  out->maximize=(zell_rect){out->frame.x+out->frame.w-34,out->frame.y+5,26,20};
  out->minimize=(zell_rect){out->maximize.x-30,out->frame.y+5,26,20};
- out->tab=(zell_rect){12,height-64,236,26};
+ /* Window buttons share the bottom row and line up from the left. The
+  * button is as wide as its title. */
+ int title=(int)strlen(s->terminal_title[0]?s->terminal_title:"Neuronte terminal")*8+36;
+ if(title>236)title=236;
+ out->tab=(zell_rect){ZELL_WINDOW_ROW_X,height-64,title,26};
 }
 void zell_terminal_restore(zell_scene *s){
  if(!s->terminal_minimized)return;

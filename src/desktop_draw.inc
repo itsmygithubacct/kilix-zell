@@ -351,7 +351,7 @@ static void desktop_terminal_tab(const zell_scene *s,sr_canvas *c){
  sr_stroke_rect(c,(float)l.tab.x,(float)l.tab.y,(float)l.tab.w,(float)l.tab.h,2,0x74b8a9u,1);
  /* A blinking lamp says the command is still running behind the button. */
  sr_fill_rect(c,(float)(l.tab.x+8),(float)(l.tab.y+9),8,8,(s->flame_tick/16)%2?0x7bd88fu:0x2f6b45u,1);
- char title[120];snprintf(title,sizeof title,"%s: click",s->terminal_title[0]?s->terminal_title:"Neuronte terminal");
+ char title[120];snprintf(title,sizeof title,"%s",s->terminal_title[0]?s->terminal_title:"Neuronte terminal");
  desktop_text(c,l.tab.x+24,l.tab.y+5,title,hover?0xf4ffe9u:0xe5cf98u,l.tab.w-30);
 }
 /* The scene keeps animating beneath every station conversation. */
