@@ -43,6 +43,7 @@ PACKAGES = {
     'cancel':'cups-client', 'setxkbmap':'x11-xkb-utils', 'xrandr':'x11-xserver-utils',
     'sensors':'lm-sensors', 'ffplay':'ffmpeg', 'ffmpeg':'ffmpeg',
     'brightnessctl':'brightnessctl', 'powerprofilesctl':'power-profiles-daemon',
+    'pleb':'pleb', 'xfconf-query':'xfconf', 'redshift':'redshift', 'kilix':'kilix',
     'passwd':'passwd', 'last':'wtmpdb', 'sudo':'sudo', 'modinfo':'kmod',
     'apt-get':'apt', 'apt-cache':'apt', 'apt-mark':'apt', 'dpkg-query':'dpkg',
     'zip':'zip', 'unzip':'unzip', 'tar':'tar', 'du':'coreutils', 'df':'coreutils',
@@ -125,7 +126,7 @@ def tool(name):
         raise FileNotFoundError(f'{name} is missing. Install {PACKAGES.get(name, name)} using Merchant.')
     return found
 
-def run(argv, *, capture=False, check=True, timeout=None, **kwargs):
+def run(argv, *, capture=False, check=True, timeout=None, detail=False, **kwargs):
     argv = list(map(str, argv))
     if not argv or any('\0' in arg for arg in argv):
         raise ValueError('Invalid command arguments.')
@@ -133,11 +134,16 @@ def run(argv, *, capture=False, check=True, timeout=None, **kwargs):
     if Path(argv[0]).name == 'sudo' and len(argv)>1:
         argv[1] = tool(argv[1])
     # No shell=True anywhere in the task execution path.
-    result = subprocess.run(argv, capture_output=capture, text=True,
+    result = subprocess.run(argv, capture_output=bool(capture or detail), text=True,
                             timeout=timeout if timeout is not None else (30 if capture else None), **kwargs)
     if check and result.returncode:
         # Do not include arbitrary stderr (which may contain a secret) in logs.
-        raise RuntimeError(f'{Path(argv[0]).name} exited with status {result.returncode}.')
+        message = f'{Path(argv[0]).name} exited with status {result.returncode}.'
+        if detail and result.stderr:
+            line = result.stderr.strip().splitlines()[0][:180]
+            if line and all(32 <= ord(c) < 127 for c in line):
+                message += ' '+line
+        raise RuntimeError(message)
     return result.stdout if capture else result.returncode
 
 def path_input(prompt, *, exists=True, directory=False):
