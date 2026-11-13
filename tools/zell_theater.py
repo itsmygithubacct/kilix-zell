@@ -560,9 +560,12 @@ class TheaterSession:
                 raise ProtocolError('bad path')
             if kind == 'folder':
                 entries = list_folder(path)
-                self._bump(clear=True)
-                self.items[identity] = _blank(kind, path)
-                return self.emit({'event': 'listing', 'id': identity, 'entries': entries, 'generation': self.generation})
+                # A listing is a query. It is not a queued item and it does
+                # not retire the picture, so the current movie keeps playing.
+                return self.emit({
+                    'event': 'listing', 'id': identity, 'entries': entries,
+                    'generation': self.generation,
+                })
             if not Path(path).is_file():
                 raise ProtocolError('file is missing')
             info = probe_file(path)

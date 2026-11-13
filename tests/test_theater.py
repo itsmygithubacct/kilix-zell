@@ -167,6 +167,7 @@ class TheaterTests(unittest.TestCase):
         session = self.session()
         listing = session.handle({'cmd': 'open', 'id': 'dir', 'source': {'kind': 'folder', 'path': str(self.root)}, 'browser': None})
         self.assertEqual([row['name'] for row in listing['entries']], ['movie.mp4'])
+        self.assertNotIn('dir', session.items)
         session.handle({'cmd': 'open', 'id': 'mov', 'source': {'kind': 'file', 'path': str(self.root / 'movie.mp4')}, 'browser': None})
         session.drain()
         session.handle({'cmd': 'use', 'id': 'mov'})
@@ -174,6 +175,53 @@ class TheaterTests(unittest.TestCase):
         self.assertEqual(text[-1]['text'], 'Hello there')
         hidden = [event for event in session.handle_line(b'{"cmd":"cc","on":false}') if event['event'] == 'caption']
         self.assertEqual(hidden[-1]['text'], '')
+
+    def test_folder_listing_leaves_the_current_movie_playing(self):
+        session = self.session()
+        session.items['a'] = theater._blank('file', str(self.file('a.mp4')), {
+            'width': 160, 'height': 96, 'duration_ms': 20000, 'audio': False, 'rate': 12,
+        })
+        session.items['a']['paused'] = False
+        session.items['a']['position_ms'] = 1750
+        session.active = 'a'
+        session.generation = 2
+        fd = os.memfd_create('theater')
+        session.attach(fd)
+        pixels = bytes([1, 2, 3, 255]) * (2 * 4)
+        session.write_frame(pixels, 2, 4, session.generation)
+        shown = session.shown
+        stopped = []
+        session.thread = threading.Thread(target=lambda: stopped.append(session.stop_playback.wait(2)))
+        session.thread.start()
+        folder = self.root / 'clips'
+        folder.mkdir()
+        (folder / 'movie.mp4').write_bytes(b'')
+        try:
+            listing = session.handle({
+                'cmd': 'open', 'id': 'dir', 'browser': None,
+                'source': {'kind': 'folder', 'path': str(folder)},
+            })
+            self.assertEqual(listing['event'], 'listing')
+            self.assertEqual(listing['generation'], 2)
+            self.assertEqual([row['name'] for row in listing['entries']], ['movie.mp4'])
+            self.assertNotIn('dir', session.items)
+            self.assertEqual(session.generation, 2)
+            self.assertEqual(session.active, 'a')
+            self.assertFalse(session.items['a']['paused'])
+            self.assertEqual(session.items['a']['position_ms'], 1750)
+            self.assertEqual(session.shown, shown)
+            self.assertFalse(session.stop_playback.is_set())
+            self.assertTrue(session.thread.is_alive())
+            os.lseek(fd, 0, os.SEEK_SET)
+            header = os.read(fd, theater.HEADER)
+            _magic, _version, width, height, seq, flags, pos, dur, _stride, _fmt, generation = struct.unpack_from('<4s10I', header)
+            self.assertEqual((width, height, flags, pos, dur, generation), (2, 4, 0, 1750, 20000, 2))
+            self.assertGreater(seq, 0)
+            self.assertEqual(seq % 2, 0)
+        finally:
+            session.stop_playback.set()
+            session.thread.join(timeout=1)
+            os.close(fd)
 
     def test_bad_caption_does_not_stop_playback(self):
         path = self.file('clip.mp4')
@@ -250,7 +298,10 @@ class TheaterTests(unittest.TestCase):
         ready['on'] = True
         done = session.handle_line(json.dumps({'cmd': 'install_result', 'id': 'web', 'ok': True}).encode())
         self.assertEqual(page.launches[0][0], '/usr/bin/google-chrome-stable')
-        self.assertIn('--new-window', page.launches[0])
+        self.assertNotIn('--new-window', page.launches[0])
+        self.assertIn('--kiosk', page.launches[0])
+        self.assertEqual(page.launches[0][-1], 'https://example.com/a')
+        self.assertTrue(any(part.startswith('--user-data-dir=') for part in page.launches[0]))
         self.assertIn('web', session.items)
         self.assertEqual(session.items['web']['paused'], True)
         self.assertTrue(any(event.get('phase') == 'done' for event in done if event['event'] == 'install'))
