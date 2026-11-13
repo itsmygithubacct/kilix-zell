@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <ctype.h>
+#include <time.h>
 #include "draw.h"
 #include "desktop_assets.h"
 const zell_station zell_stations[ZELL_STATIONS]={
@@ -706,4 +707,43 @@ bool zell_update_apply(zell_scene *s,const char *text){
  s->update_total=total;
  memcpy(s->update_state,state,sizeof s->update_state);
  return true;
+}
+
+static bool notice_clock_fixed;
+static int64_t notice_clock_value;
+
+int64_t zell_notice_clock_ms(void){
+ struct timespec ts;
+ if(notice_clock_fixed)return notice_clock_value;
+ clock_gettime(CLOCK_MONOTONIC,&ts);
+ return (int64_t)ts.tv_sec*1000+(int64_t)(ts.tv_nsec/1000000L);
+}
+void zell_notice_set_clock(int64_t ms){
+ notice_clock_fixed=true;
+ notice_clock_value=ms;
+}
+/* Identity of the full notice text, so a shared prefix is still a change. */
+static void notice_identity(const char *text,char *out,size_t cap){
+ uint64_t hash=14695981039346656037ull;
+ for(const unsigned char *p=(const unsigned char *)text;*p;p++){
+  hash^=(uint64_t)(*p);
+  hash*=1099511628211ull;
+ }
+ snprintf(out,cap,"%016llx",(unsigned long long)hash);
+}
+void zell_notice_apply(zell_scene *s,const char *text){
+ char incoming[320];
+ if(!s)return;
+ if(!text)text="";
+ snprintf(incoming,sizeof incoming,"%.319s",text);
+ if(!incoming[0]){
+  s->notice_until_ms=0;
+  s->notice_key[0]=0;
+  s->notice_text[0]=0;
+  return;
+ }
+ if(s->notice_key[0]&&strcmp(incoming,s->notice_text)==0)return;
+ snprintf(s->notice_text,sizeof s->notice_text,"%s",incoming);
+ notice_identity(s->notice_text,s->notice_key,sizeof s->notice_key);
+ s->notice_until_ms=zell_notice_clock_ms()+8000;
 }

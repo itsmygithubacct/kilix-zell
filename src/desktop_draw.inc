@@ -264,6 +264,32 @@ static void desktop_present_room(const zell_scene *s,sr_canvas *dst,const sr_can
   dst->px[(size_t)sy*(size_t)dst->w+(size_t)sx]=world->px[(size_t)iy*(size_t)world->w+(size_t)ix];
  }
 }
+/* Right side of the bottom strip. Hints stay on the left. Elapsed time, not frames. */
+static void zell_notice_show(const zell_scene *s,sr_canvas *c,const char *hint){
+ char line[160];
+ int hint_w,left,right,room,width;
+ size_t len;
+ if(!s->notice_text[0]||s->notice_until_ms<=zell_notice_clock_ms())return;
+ hint_w=hint&&hint[0]?sr_text_width_in(SR_FONT_FIXED_8X16,hint,1):0;
+ if(hint_w<0)hint_w=0;
+ left=12+hint_w+16;
+ right=c->w-12;
+ if(right-left<8)return;
+ room=right-left;
+ len=strlen(s->notice_text);
+ if(len>159)len=159;
+ memcpy(line,s->notice_text,len);
+ line[len]=0;
+ while(len>0&&sr_text_width_in(SR_FONT_FIXED_8X16,line,1)>room){
+  len--;
+  line[len]=0;
+  if(len>=3)memcpy(line+len-3,"...",3);
+ }
+ if(!line[0])return;
+ width=sr_text_width_in(SR_FONT_FIXED_8X16,line,1);
+ if(width<1||width>room)return;
+ sr_text(c,(float)(right-width),(float)(c->h-22),line,0xe9d49fu,1,1);
+}
 static void desktop_world_layer(const zell_scene *s,sr_canvas *c,int cx,int cy){
  static sr_canvas backgrounds[5];
  int room=s->room>=0&&s->room<5?s->room:0;
@@ -329,14 +355,14 @@ static void desktop_chrome(const zell_scene *s,sr_canvas *c,int cx,int cy){
  sr_fill_rect(c,0,0,(float)c->w,30,0x0c1921u,.97f);
  sr_text(c,12,7,s->room==1?"ZELL / COMMAND":s->room==2?"ZELL / LAUNDRY":s->room==3?"ZELL / VAULT":s->room==4?"ZELL / WORKSHOP":"ZELL / " ZELL_VERSION,0xf0d69bu,1,1);
  if(s->dictation_on)desktop_label(c,c->w/2,82,"Listening / click dictation to finish",0xb7f3d5u);
- /* L8 calls zell_notice_show. */
- else if(s->notice_count>0&&s->mode==ZELL_MODE_WALK)desktop_text(c,12,104,s->notice_text,0xe9d49fu,c->w-165);
  char status[100];time_t now=time(NULL);struct tm local;localtime_r(&now,&local);
  snprintf(status,sizeof status,"%02d:%02d  %d fps",local.tm_hour,local.tm_min,s->frame_rate);
  int sw=sr_text_width_in(SR_FONT_FIXED_8X16,status,1);sr_text(c,(float)(c->w-sw-12),7,status,0xa6d9ccu,1,1);
  sr_fill_rect(c,0,(float)(c->h-ZELL_ROOM_STATUS_STRIP),(float)c->w,ZELL_ROOM_STATUS_STRIP,0x0c1921u,.97f);
  const char *hint=s->mode==ZELL_MODE_WALK&&s->running?"Dashing | Release Shift to stop":s->mode==ZELL_MODE_WALK&&s->run_charge>0?"Charging dash... | Release Shift to cancel":s->mode==ZELL_MODE_SERVICE?"Station window | Esc back":near>=0?"Enter interact | Tab stations":c->w<500?"WASD | Shift run | Tab":"WASD walk | Hold Shift run | Tab stations";
  sr_text(c,12,(float)(c->h-22),hint,0xc7d8dau,1,1);
+ /* L8 calls zell_notice_show. */
+ zell_notice_show(s,c,hint);
  desktop_vitals(s,c);
 }
 static void desktop_base(const zell_scene *s,sr_canvas *c){

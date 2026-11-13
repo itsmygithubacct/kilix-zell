@@ -86,4 +86,9 @@ bool zell_fleet_apply(zell_scene *s,const char *text);
 void zell_fleet_board_layout(zell_rect *board);
 bool zell_fleet_board_line(const zell_scene *s,int index,char *text,size_t capacity);
 bool zell_update_apply(zell_scene *s,const char *text);
+/* Monotonic milliseconds. zell_notice_set_clock pins this for tests. */
+int64_t zell_notice_clock_ms(void);
+void zell_notice_set_clock(int64_t ms);
+/* Empty text clears the deadline. The same text again does not move it. */
+void zell_notice_apply(zell_scene *s,const char *text);
 #endif
