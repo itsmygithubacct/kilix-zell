@@ -1107,21 +1107,52 @@ static int cue_ink_outside(const sr_canvas *before,const sr_canvas *after,zell_r
     }
     return n;
 }
+static int rgb_count(const sr_canvas *c,zell_rect r,uint32_t rgb){
+    int n=0,x0=r.x,y0=r.y,x1=r.x+r.w,y1=r.y+r.h;
+    if(x0<0)x0=0;
+    if(y0<0)y0=0;
+    if(x1>c->w)x1=c->w;
+    if(y1>c->h)y1=c->h;
+    for(int y=y0;y<y1;y++)for(int x=x0;x<x1;x++)
+        if((canvas_px(c,x,y)&0xffffffu)==rgb)n++;
+    return n;
+}
 static void check_two_line_cue(int width,int height,bool fullscreen){
     zell_scene s;
     zell_controls key={0};
     sr_canvas before,after;
-    zell_rect bar,line0,line1;
+    zell_rect bar,line0,line1,queue,nav;
+    char cue_buf[384];
     const char *cue="{\"event\":\"caption\",\"id\":\"cue\",\"text\":\"The train leaves at midnight.\\nDo not miss the last car.\",\"generation\":1}";
+    bool had_nav=false;
     zell_theater_test_reset();
     zell_scene_init(&s,width,height);zell_desktop_init(&s);
     s.room=6;s.mode=ZELL_MODE_WALK;s.mouse_valid=true;s.flame_tick=0;
     zell_room_view_identity(&s);
     if(fullscreen){
-        click_world(&s,886.f,862.f);
-        assert(zell_desktop_click(&s)&&zell_theater_menu_open());
+        zell_rect overlap;
+        int notice_y;
+        /* Queued items and an error used to cover this bar. Fullscreen hides them. */
+        for(int i=0;i<8;i++){
+            snprintf(cue_buf,sizeof cue_buf,"{\"event\":\"status\",\"id\":\"q%d\",\"state\":\"paused\",\"generation\":%d,\"browser\":null}",i+1,i+1);
+            assert(zell_theater_apply_line(&s,cue_buf)==0);
+        }
+        assert(zell_theater_queue_count()==8&&strcmp(zell_theater_picture(),"q1")==0);
+        assert(zell_theater_apply_line(&s,"{\"event\":\"install\",\"id\":\"q1\",\"phase\":\"request\",\"argv\":[\"sudo\"]}")==0);
+        assert(strstr(zell_theater_error(),"refused")&&!s.theater_install_request);
+        zell_theater_queue_rect(0,width,height,&queue);
+        zell_theater_fullscreen_layout(width,height,NULL,&overlap,NULL,NULL);
+        assert(queue.w>0&&rects_overlap(&queue,&overlap));
+        notice_y=height-ZELL_ROOM_STATUS_STRIP-18;
+        assert(notice_y<overlap.y+overlap.h&&notice_y+16>overlap.y);
+        had_nav=zell_theater_queue_nav(width,height,1,&nav);
         key.fullscreen_key=true;
         assert(zell_desktop_tick(&s,&key)==1&&zell_theater_fullscreen());
+        zell_theater_queue_rect(0,width,height,&queue);
+        assert(queue.w==0);
+        assert(!zell_theater_queue_nav(width,height,-1,&nav)&&!zell_theater_queue_nav(width,height,1,&nav));
+        snprintf(cue_buf,sizeof cue_buf,"{\"event\":\"caption\",\"id\":\"q1\",\"text\":\"The train leaves at midnight.\\nDo not miss the last car.\",\"generation\":8}");
+        cue=cue_buf;
     }
     assert(sr_canvas_init(&before,width,height)&&sr_canvas_init(&after,width,height));
     zell_draw(&s,&before);
@@ -1144,6 +1175,21 @@ static void check_two_line_cue(int width,int height,bool fullscreen){
     assert(cue_ink(&before,&after,line0)>12);
     assert(cue_ink(&before,&after,line1)>12);
     assert(cue_ink_outside(&before,&after,bar)==0);
+    if(fullscreen){
+        zell_rect help,whole=(zell_rect){0,0,width,height};
+        zell_theater_fullscreen_layout(width,height,NULL,NULL,&help,NULL);
+        assert(rgb_count(&after,whole,0xe8ffe9u)==0);
+        assert(rgb_count(&after,whole,0xffb4a8u)==0);
+        assert(rgb_count(&after,help,0xf0d69bu)>0);
+        memset(&key,0,sizeof key);key.cancel=true;
+        assert(zell_desktop_tick(&s,&key)==1&&!zell_theater_fullscreen());
+        zell_theater_queue_rect(0,width,height,&queue);
+        assert(queue.w>0&&zell_theater_queue_nav(width,height,1,&nav)==had_nav);
+        s.flame_tick=0;
+        zell_draw(&s,&before);
+        assert(rgb_count(&before,whole,0xe8ffe9u)>0);
+        assert(rgb_count(&before,whole,0xffb4a8u)>0);
+    }
     sr_canvas_free(&before);sr_canvas_free(&after);
     zell_theater_test_reset();
 }
@@ -1223,11 +1269,53 @@ static void test_theater(void){
     put_le32(map+16,4);put_le32(map+40,9);
     assert(zell_theater_present(map,sizeof map)==0);
     assert(!zell_theater_submit(&s,"{\"cmd\":\"use\",\"id\":\"q1\"}"));
-    assert(zell_theater_caption()[0]==0);
+    assert(strcmp(zell_theater_caption(),"hello")==0);
     assert(strstr(zell_theater_last_command(),"\"cmd\":\"use\""));
     assert(strstr(zell_theater_error(),"theater helper"));
     put_le32(map+16,6);put_le32(map+40,3);
+    assert(zell_theater_present(map,sizeof map)==1);
+    /* Folder listing and a rejected open keep this picture. A newer
+     * generation is the switch, and the old frames stop after that. */
+    zell_theater_test_reset();
+    zell_scene_init(&s,960,600);zell_desktop_init(&s);
+    assert(zell_theater_apply_line(&s,"{\"event\":\"status\",\"id\":\"movie\",\"state\":\"playing\",\"generation\":4,\"browser\":null}")==0);
+    assert(strcmp(zell_theater_picture(),"movie")==0&&zell_theater_playing());
+    assert(zell_theater_apply_line(&s,"{\"event\":\"caption\",\"id\":\"movie\",\"text\":\"on screen\",\"generation\":4}")==0);
+    map[0]='Z';map[1]='T';map[2]='H';map[3]='R';
+    put_le32(map+4,1);put_le32(map+8,2);put_le32(map+12,2);put_le32(map+16,2);
+    put_le32(map+32,8);put_le32(map+36,1);put_le32(map+40,4);
+    memset(map+64,0x22,16);
+    assert(zell_theater_present(map,sizeof map)==1);
+    assert(!zell_theater_submit(&s,"{\"cmd\":\"open\",\"id\":\"fold\",\"browser\":null,\"source\":{\"kind\":\"folder\",\"path\":\"/clips\"}}"));
+    assert(zell_theater_apply_line(&s,"{\"event\":\"listing\",\"id\":\"fold\",\"entries\":[{\"name\":\"b.mp4\",\"path\":\"/clips/b.mp4\"}]}")==0);
+    assert(zell_theater_listing_count()==1);
+    assert(strcmp(zell_theater_picture(),"movie")==0&&strcmp(zell_theater_caption(),"on screen")==0);
+    put_le32(map+16,4);
+    assert(zell_theater_present(map,sizeof map)==1);
+    assert(zell_theater_apply_line(&s,"{\"event\":\"error\",\"error\":\"decode\",\"id\":\"bad\",\"detail\":\"file has no video\"}")==0);
+    assert(strstr(zell_theater_error(),"file has no video"));
+    assert(strcmp(zell_theater_picture(),"movie")==0&&strcmp(zell_theater_caption(),"on screen")==0);
+    put_le32(map+16,6);
+    assert(zell_theater_present(map,sizeof map)==1);
+    assert(zell_theater_apply_line(&s,"{\"event\":\"error\",\"error\":\"install\",\"detail\":\"cancelled\"}")==0);
+    assert(strcmp(zell_theater_picture(),"movie")==0&&strcmp(zell_theater_caption(),"on screen")==0);
+    assert(!zell_theater_submit(&s,"{\"cmd\":\"use\",\"id\":\"missing\"}"));
+    assert(zell_theater_apply_line(&s,"{\"event\":\"error\",\"error\":\"malformed\",\"detail\":\"unknown id\"}")==0);
+    assert(!zell_theater_submit(&s,"{\"cmd\":\"close\",\"id\":\"movie\"}"));
+    assert(zell_theater_apply_line(&s,"{\"event\":\"error\",\"error\":\"malformed\",\"detail\":\"unknown id\"}")==0);
+    assert(strcmp(zell_theater_picture(),"movie")==0&&strcmp(zell_theater_caption(),"on screen")==0);
+    put_le32(map+16,8);
+    assert(zell_theater_present(map,sizeof map)==1);
+    assert(zell_theater_apply_line(&s,"{\"event\":\"status\",\"id\":\"next\",\"state\":\"playing\",\"generation\":5,\"browser\":null}")==0);
+    assert(strcmp(zell_theater_picture(),"next")==0&&zell_theater_caption()[0]==0);
+    put_le32(map+16,10);put_le32(map+40,4);
     assert(zell_theater_present(map,sizeof map)==0);
+    put_le32(map+16,2);put_le32(map+40,5);
+    assert(zell_theater_present(map,sizeof map)==1);
+    assert(zell_theater_apply_line(&s,"{\"event\":\"caption\",\"id\":\"movie\",\"text\":\"stale\",\"generation\":4}")==0);
+    assert(zell_theater_caption()[0]==0);
+    assert(zell_theater_apply_line(&s,"{\"event\":\"caption\",\"id\":\"next\",\"text\":\"next cue\",\"generation\":5}")==0);
+    assert(strcmp(zell_theater_caption(),"next cue")==0);
     assert(zell_theater_format_open_file(line,sizeof line,"q1","clips/reel.mp4")>0);
     assert(strstr(line,"\"cmd\":\"open\"")&&strstr(line,"clips/reel.mp4")&&strstr(line,"\"browser\":null"));
     assert(zell_theater_install_action_ok("chrome","install-chrome-deb","google-chrome-stable_current_amd64.deb"));
@@ -1383,6 +1471,7 @@ static void test_theater(void){
     check_two_line_cue(640,400,false);
     check_two_line_cue(960,600,false);
     check_two_line_cue(1536,1024,false);
+    check_two_line_cue(640,400,true);
     check_two_line_cue(960,600,true);
     {
         sr_canvas cut,kept;

@@ -235,3 +235,7 @@ class InstallTests(unittest.TestCase):
         flat = [item for argv in host.commands for item in argv]
         self.assertNotIn(host.typed, flat)
         self.assertNotIn('sudo', flat)
+
+
+if __name__ == '__main__':
+    unittest.main()

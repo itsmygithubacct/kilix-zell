@@ -475,7 +475,8 @@ static void desktop_world_layer(const zell_scene *s,sr_canvas *c,int cx,int cy){
 static void desktop_chrome(const zell_scene *s,sr_canvas *c,int cx,int cy){
  int near=zell_desktop_near(s);
  (void)cx;(void)cy;
- if(c->w>=500&&s->mode==ZELL_MODE_WALK){
+ /* The theater picture reaches this corner at 640. Other rooms keep the map. */
+ if(c->w>=500&&s->mode==ZELL_MODE_WALK&&s->room!=6){
   int mx=c->w-140,my=42;sr_fill_rect(c,(float)mx,(float)my,128,88,0x0c1921u,.9f);
   sr_stroke_rect(c,(float)mx,(float)my,128,88,1,0x4b7777u,1);
   for(int i=0;i<ZELL_STATIONS;i++)if((i<ZELL_WORKSHOP_COMPUTER||(i>=ZELL_GAME_HATCH&&i<=ZELL_LIBRARY_HATCH))&&zell_desktop_station_visible(s,i))sr_fill_circle(c,(float)(mx+4)+zell_stations[i].x*120,(float)(my+4)+zell_stations[i].y*80,2,0xd9ba79u,1);
