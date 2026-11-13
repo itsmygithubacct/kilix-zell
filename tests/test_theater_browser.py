@@ -1,4 +1,5 @@
 """Private browser adapter. Live browser checks use a local silent fixture."""
+import json
 import os
 from pathlib import Path
 import shutil
@@ -67,13 +68,45 @@ video{position:absolute;left:0;top:68%;width:100%;height:32%;background:#000;obj
 <input id="field" type="text">
 <button id="btn" type="button">add</button>
 <div id="counter">0</div>
-<video id="v" src="silent-neuronte.mp4" muted playsinline></video>
+<video id="v" src="silent-neuronte.mp4" muted playsinline preload="auto"></video>
 <script>
 let n = 0;
 document.getElementById('btn').addEventListener('click', () => {
   n += 1;
   document.getElementById('counter').textContent = String(n);
 });
+</script>
+</body></html>
+"""
+
+PLAYER_PAGE = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>player</title></head>
+<body style="margin:0;background:#000">
+<video id="player" src="silent-neuronte.mp4" autoplay muted playsinline preload="auto"></video>
+</body></html>
+"""
+
+EMBED_PAGE = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>embed</title></head>
+<body style="margin:0;background:#102030">
+<iframe id="stage" src="%s" width="640" height="480"></iframe>
+</body></html>
+"""
+
+AUTOPLAY_PAGE = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>autoplay</title></head>
+<body>
+<video id="early" src="silent-neuronte.mp4" autoplay playsinline preload="auto"></video>
+<script>
+setTimeout(() => {
+  const video = document.createElement('video');
+  video.id = 'late';
+  video.autoplay = true;
+  video.playsInline = true;
+  video.preload = 'auto';
+  video.src = 'silent-neuronte.mp4';
+  document.body.appendChild(video);
+}, 800);
 </script>
 </body></html>
 """
@@ -114,13 +147,29 @@ class QuietHandler(SimpleHTTPRequestHandler):
         return
 
 
+class RedirectHandler(QuietHandler):
+    def do_GET(self):
+        path = self.path.split('?', 1)[0]
+        if path == '/redirect':
+            self.send_response(302)
+            self.send_header('Location', '/video')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
+        if path == '/video':
+            self.path = '/index.html'
+        super().do_GET()
+
+
 class LocalPage:
-    def __init__(self, root):
+    def __init__(self, root, handler=None):
+        handler = handler or QuietHandler
         self.httpd = ThreadingHTTPServer(
-            ('127.0.0.1', 0), lambda *args, **kwargs: QuietHandler(*args, directory=str(root), **kwargs))
+            ('127.0.0.1', 0), lambda *args, **kwargs: handler(*args, directory=str(root), **kwargs))
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()
-        self.url = f'http://127.0.0.1:{self.httpd.server_address[1]}/index.html'
+        self.origin = f'http://127.0.0.1:{self.httpd.server_address[1]}'
+        self.url = f'{self.origin}/index.html'
 
     def close(self):
         self.httpd.shutdown()
@@ -183,6 +232,23 @@ class BrowserAdapterTests(unittest.TestCase):
                          'google-chrome-stable_current_amd64.deb')
         self.assertNotIn('google-chrome-stable', browser.chrome_privilege_argv('local.deb')[:-1])
         self.assertEqual(browser.firefox_privilege_argv()[-1], 'firefox-esr')
+        self.assertNotIn('field', browser._MEDIA_JS)
+        self.assertNotIn('counter', browser._MEDIA_JS)
+        self.assertNotIn('getElementById', browser._MEDIA_JS)
+        self.assertIn('contentDocument', browser._MEDIA_JS)
+
+    def test_frame_media_merges_the_embedded_player(self):
+        parent = {'present': False, 'paused': None, 'position_ms': None, 'duration_ms': None}
+        child = {'present': True, 'paused': True, 'position_ms': 2, 'duration_ms': 20000}
+        self.assertEqual(browser._merge_media([parent, child]), {
+            'paused': True, 'position_ms': 2, 'duration_ms': 20000, 'present': True,
+        })
+        playing = {'present': True, 'paused': False, 'position_ms': 500, 'duration_ms': 20000}
+        merged = browser._merge_media([child, playing])
+        self.assertFalse(merged['paused'])
+        self.assertEqual(merged['position_ms'], 2)
+        self.assertTrue(browser._same_url('http://127.0.0.1:9/player/', 'http://127.0.0.1:9/player'))
+        self.assertFalse(browser._same_url('http://127.0.0.1:9/player', 'http://127.0.0.1:8/player'))
 
     def test_missing_browser_does_not_launch(self):
         page = browser.PrivateBrowser(session_type=FakeSession, which=lambda _name: None)
@@ -204,6 +270,12 @@ class BrowserAdapterTests(unittest.TestCase):
         self.assertTrue(page.session.kwargs['isolate_bus'])
         self.assertFalse(page.session.kwargs['clipboard'])
         self.assertNotIn('new-tab', argv)
+        self.assertNotIn('--autoplay-policy=no-user-gesture-required', argv)
+        self.assertEqual(argv[-1], 'about:blank')
+        self.assertNotIn('http://127.0.0.1/a', argv)
+        self.assertTrue(any(arg.startswith('--load-extension=') and arg.endswith('/zell-hold') for arg in argv))
+        self.assertTrue(any(
+            arg.startswith('--disable-extensions-except=') and arg.endswith('/zell-hold') for arg in argv))
         profile = next(arg.split('=', 1)[1] for arg in argv if arg.startswith('--user-data-dir='))
         self.assertTrue(profile.startswith(tempfile.gettempdir()))
         page.launch('firefox-esr', 'http://127.0.0.1/b', 320, 200)
@@ -211,7 +283,17 @@ class BrowserAdapterTests(unittest.TestCase):
         self.assertEqual(firefox[0], '/usr/bin/firefox-esr')
         self.assertIn('--profile', firefox)
         self.assertIn('--no-remote', firefox)
+        self.assertEqual(firefox[-1], 'about:blank')
+        self.assertNotIn('http://127.0.0.1/b', firefox)
         self.assertNotIn('--user-data-dir', ' '.join(firefox))
+        page.launch('chrome', 'http://127.0.0.1/a', 320, 200)
+
+        def comparable(command):
+            prefixes = ('--user-data-dir=', '--load-extension=', '--disable-extensions-except=')
+            return [arg for arg in command[1:] if not arg.startswith(prefixes)]
+
+        self.assertEqual(comparable(page.launches[-1]), comparable(argv))
+        self.assertTrue(page.launches[-1][0].endswith('google-chrome-stable'))
         stub = FakeInjector()
 
         class Session(FakeSession):
@@ -279,7 +361,7 @@ class BrowserAdapterTests(unittest.TestCase):
                 shutil.rmtree(record_dir, ignore_errors=True)
 
     def test_installed_browser_frames_input_and_pause(self):
-        for name in ('chromium', 'firefox-esr', 'chrome'):
+        for name in ('chromium', 'firefox-esr'):
             reason = live_reason(name)
             with self.subTest(browser=name):
                 if reason:
@@ -324,6 +406,31 @@ class BrowserAdapterTests(unittest.TestCase):
                 first.close()
                 second.close()
                 site.close()
+
+    def test_inactive_open_holds_autoplay_and_delayed_media(self):
+        for name in ('chromium', 'firefox-esr'):
+            reason = live_reason(name)
+            with self.subTest(browser=name):
+                if reason:
+                    self.skipTest(reason)
+                self._hold_inactive(name)
+
+    def test_redirect_lands_held_on_the_destination(self):
+        for name in ('chromium', 'firefox-esr'):
+            reason = live_reason(name)
+            with self.subTest(browser=name):
+                if reason:
+                    self.skipTest(reason)
+                self._hold_redirect(name)
+
+    def test_embedded_player_follows_the_hold(self):
+        missing = [name for name in ('chromium', 'firefox-esr') if live_reason(name)]
+        if missing:
+            self.skipTest(', '.join(missing))
+        for name in ('chromium', 'firefox-esr'):
+            for cross_origin in (False, True):
+                with self.subTest(browser=name, cross_origin=cross_origin):
+                    self._embedded_player(name, cross_origin)
 
     def test_parent_death_reaps_the_private_display(self):
         reason = live_reason('chromium')
@@ -437,11 +544,171 @@ os.kill(os.getpid(), 9)
                 page.close()
                 site.close()
 
+    def _hold_inactive(self, name):
+        with tempfile.TemporaryDirectory(prefix='zell-browser-autoplay-') as root:
+            root_path = Path(root)
+            (root_path / 'index.html').write_text(AUTOPLAY_PAGE, encoding='utf-8')
+            (root_path / 'silent-neuronte.mp4').write_bytes(fixture_video().read_bytes())
+            site = LocalPage(root_path)
+            page = browser.PrivateBrowser()
+            try:
+                page.launch(name, site.url, 640, 480)
+                early = self._wait_video(page, 'early')
+                self.assertLessEqual(early['position_ms'], 300)
+                late = self._wait_video(page, 'late')
+                self.assertLessEqual(late['position_ms'], 300)
+                state = page.media_state()
+                self.assertTrue(state['present'])
+                self.assertTrue(state['paused'])
+                self.assertLessEqual(state['position_ms'], 300)
+                time.sleep(1.0)
+                again_early = self._video(page, 'early')
+                again_late = self._video(page, 'late')
+                self.assertTrue(again_early['paused'])
+                self.assertTrue(again_late['paused'])
+                self.assertEqual(again_early['position_ms'], early['position_ms'])
+                self.assertEqual(again_late['position_ms'], late['position_ms'])
+                stayed = page.media_state()
+                self.assertTrue(stayed['paused'])
+                self.assertEqual(stayed['position_ms'], state['position_ms'])
+                public = set(stayed)
+                self.assertEqual(public, {'paused', 'position_ms', 'duration_ms', 'present'})
+            finally:
+                page.close()
+                site.close()
+
+    def _hold_redirect(self, name):
+        with tempfile.TemporaryDirectory(prefix='zell-browser-redirect-') as root:
+            root_path = Path(root)
+            (root_path / 'index.html').write_text(AUTOPLAY_PAGE, encoding='utf-8')
+            (root_path / 'silent-neuronte.mp4').write_bytes(fixture_video().read_bytes())
+            site = LocalPage(root_path, RedirectHandler)
+            page = browser.PrivateBrowser()
+            try:
+                page.launch(name, f'{site.origin}/redirect', 640, 480)
+                self.assertEqual(page.url, f'{site.origin}/redirect')
+                landed = page._page_value('location.href')
+                self.assertTrue(str(landed).endswith('/video'), landed)
+                early = self._wait_video(page, 'early')
+                self.assertLessEqual(early['position_ms'], 300)
+                late = self._wait_video(page, 'late')
+                self.assertLessEqual(late['position_ms'], 300)
+                state = page.media_state()
+                self.assertTrue(state['paused'])
+                self.assertLessEqual(state['position_ms'] or 0, 300)
+                time.sleep(1.0)
+                stayed = page.media_state()
+                self.assertTrue(stayed['paused'])
+                self.assertEqual(stayed['position_ms'], state['position_ms'])
+                self.assertEqual(self._video(page, 'late')['position_ms'], late['position_ms'])
+            finally:
+                page.close()
+                site.close()
+
+    def _embedded_player(self, name, cross_origin):
+        with tempfile.TemporaryDirectory(prefix='zell-browser-embed-') as root:
+            root_path = Path(root)
+            player = root_path / 'player'
+            player.mkdir()
+            (player / 'silent-neuronte.mp4').write_bytes(fixture_video().read_bytes())
+            player_site = None
+            if cross_origin:
+                (player / 'index.html').write_text(PLAYER_PAGE, encoding='utf-8')
+                player_site = LocalPage(player)
+                parent = root_path / 'parent'
+                parent.mkdir()
+                (parent / 'index.html').write_text(
+                    EMBED_PAGE % f'{player_site.origin}/index.html', encoding='utf-8')
+                site = LocalPage(parent)
+            else:
+                (player / 'player.html').write_text(PLAYER_PAGE, encoding='utf-8')
+                (player / 'index.html').write_text(EMBED_PAGE % 'player.html', encoding='utf-8')
+                site = LocalPage(player)
+            page = browser.PrivateBrowser()
+            try:
+                page.launch(name, site.url, 640, 480)
+                self.assertEqual(page._page_value('document.querySelectorAll("video, audio").length'), 0)
+                self.assertEqual(page._page_value('document.querySelectorAll("iframe, frame").length'), 1)
+                held = self._wait_held_player(page)
+                time.sleep(1.0)
+                stayed = page.media_state()
+                self.assertTrue(stayed['paused'])
+                self.assertEqual(stayed['position_ms'], held['position_ms'])
+                self.assertLessEqual(stayed['position_ms'], 300)
+                if not cross_origin:
+                    child = self._frame_video(page)
+                    self.assertTrue(child['paused'])
+                    self.assertEqual(child['position_ms'], stayed['position_ms'])
+                played = wait_playing(page, max(300, (held['position_ms'] or 0) + 250))
+                self.assertFalse(played['paused'])
+                self.assertGreaterEqual(played['position_ms'], 300)
+                if not cross_origin:
+                    child = self._frame_video(page)
+                    self.assertFalse(child['paused'])
+                    self.assertGreaterEqual(child['position_ms'], 300)
+                paused = page.pause()
+                self.assertTrue(paused['paused'])
+                time.sleep(1.0)
+                quiet = page.media_state()
+                self.assertTrue(quiet['paused'])
+                self.assertEqual(quiet['position_ms'], paused['position_ms'])
+                self.assertEqual(set(quiet), {'paused', 'position_ms', 'duration_ms', 'present'})
+                if not cross_origin:
+                    child = self._frame_video(page)
+                    self.assertTrue(child['paused'])
+                    self.assertEqual(child['position_ms'], quiet['position_ms'])
+            finally:
+                page.close()
+                site.close()
+                if player_site is not None:
+                    player_site.close()
+
+    def _wait_held_player(self, page):
+        deadline = time.monotonic() + 12
+        last = None
+        while time.monotonic() < deadline:
+            last = page.media_state()
+            if (last['present'] and last['paused'] is True and last['duration_ms'] == 20000
+                    and last['position_ms'] is not None and last['position_ms'] <= 300):
+                return last
+            time.sleep(0.15)
+        raise AssertionError(last)
+
+    def _frame_video(self, page):
+        return page._page_value(
+            '(() => {'
+            ' const frame = document.getElementById("stage");'
+            ' const doc = frame && frame.contentDocument;'
+            ' const node = doc && doc.getElementById("player");'
+            ' if (!node) return null;'
+            ' const position = Number.isFinite(node.currentTime) ? Math.round(node.currentTime * 1000) : null;'
+            ' return {paused: !!node.paused, position_ms: position};'
+            '})()'
+        )
+
+    def _video(self, page, ident):
+        return page._page_value(
+            '(() => { const node = document.getElementById(%s);'
+            ' if (!node) return null;'
+            ' const position = Number.isFinite(node.currentTime) ? Math.round(node.currentTime * 1000) : null;'
+            ' return {paused: !!node.paused, position_ms: position}; })()' % json.dumps(ident)
+        )
+
+    def _wait_video(self, page, ident):
+        deadline = time.monotonic() + 8
+        last = None
+        while time.monotonic() < deadline:
+            last = self._video(page, ident)
+            if last and last['paused'] and last['position_ms'] is not None:
+                return last
+            time.sleep(0.15)
+        raise AssertionError(last)
+
     def _reach_page(self, page):
         deadline = time.monotonic() + 15
         last = None
         while time.monotonic() < deadline:
-            last = page._read_page('state')
+            last = page.media_state()
             if last['present'] and last['duration_ms'] == 20000:
                 break
             time.sleep(0.2)
@@ -456,7 +723,10 @@ os.kill(os.getpid(), 9)
         page.pointer(120, 250, 1, 'down')
         page.pointer(120, 250, 1, 'up')
         time.sleep(0.4)
-        sample = page._read_page('state')
+        sample = page._page_value(
+            "({field: (document.getElementById('field') || {}).value || '',"
+            " counter: (document.getElementById('counter') || {}).textContent || ''})"
+        )
         self.assertEqual(sample['field'], 'ab', sample)
         self.assertEqual(sample['counter'], '1', sample)
 
