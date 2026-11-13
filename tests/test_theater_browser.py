@@ -86,6 +86,26 @@ PLAYER_PAGE = """<!DOCTYPE html>
 </body></html>
 """
 
+DELAY_PARENT = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>delay</title></head>
+<body style="margin:0;background:#102030">
+<script>
+window.addPlayer = (src) => {
+  const frame = document.createElement('iframe');
+  frame.id = 'stage';
+  frame.width = '640';
+  frame.height = '480';
+  frame.src = src;
+  document.body.appendChild(frame);
+};
+window.swapPlayer = (src) => {
+  const frame = document.getElementById('stage');
+  frame.src = src;
+};
+</script>
+</body></html>
+"""
+
 EMBED_PAGE = """<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>embed</title></head>
 <body style="margin:0;background:#102030">
@@ -423,6 +443,14 @@ class BrowserAdapterTests(unittest.TestCase):
                     self.skipTest(reason)
                 self._hold_redirect(name)
 
+    def test_delayed_cross_origin_player_inherits_active_policy(self):
+        missing = [name for name in ('chromium', 'firefox-esr') if live_reason(name)]
+        if missing:
+            self.skipTest(', '.join(missing))
+        for name in ('chromium', 'firefox-esr'):
+            with self.subTest(browser=name):
+                self._delayed_cross_origin(name)
+
     def test_embedded_player_follows_the_hold(self):
         missing = [name for name in ('chromium', 'firefox-esr') if live_reason(name)]
         if missing:
@@ -604,6 +632,78 @@ os.kill(os.getpid(), 9)
             finally:
                 page.close()
                 site.close()
+
+    def _delayed_cross_origin(self, name):
+        with tempfile.TemporaryDirectory(prefix='zell-browser-delay-') as root:
+            root_path = Path(root)
+            player = root_path / 'player'
+            parent = root_path / 'parent'
+            player.mkdir()
+            parent.mkdir()
+            (player / 'silent-neuronte.mp4').write_bytes(fixture_video().read_bytes())
+            (player / 'active.html').write_text(PLAYER_PAGE, encoding='utf-8')
+            (player / 'later.html').write_text(PLAYER_PAGE, encoding='utf-8')
+            (parent / 'index.html').write_text(DELAY_PARENT, encoding='utf-8')
+            player_site = LocalPage(player)
+            site = LocalPage(parent)
+            page = browser.PrivateBrowser()
+            try:
+                page.launch(name, site.url, 640, 480)
+                self.assertFalse(page.media_state()['present'])
+                opened = page.resume()
+                self.assertFalse(opened['present'])
+                active = f'{player_site.origin}/active.html'
+                page._page_value('addPlayer(%s)' % json.dumps(active))
+                played = self._wait_advanced(page)
+                self.assertGreaterEqual(played['position_ms'], 300)
+                self.assertEqual(played['duration_ms'], 20000)
+                self.assertEqual(
+                    page._page_value('document.querySelectorAll("video, audio").length'), 0)
+                paused = page.pause()
+                self.assertTrue(paused['paused'])
+                self.assertGreaterEqual(paused['position_ms'], 300)
+                time.sleep(1.0)
+                stayed = page.media_state()
+                self.assertTrue(stayed['paused'])
+                self.assertEqual(stayed['position_ms'], paused['position_ms'])
+                later = f'{player_site.origin}/later.html'
+                page._page_value('swapPlayer(%s)' % json.dumps(later))
+                held = self._wait_reloaded_hold(page, later)
+                self.assertLessEqual(held['position_ms'], 300)
+                self.assertEqual(held['duration_ms'], 20000)
+                time.sleep(1.0)
+                quiet = page.media_state()
+                self.assertTrue(quiet['paused'])
+                self.assertEqual(quiet['position_ms'], held['position_ms'])
+                self.assertEqual(set(quiet), {'paused', 'position_ms', 'duration_ms', 'present'})
+            finally:
+                page.close()
+                site.close()
+                player_site.close()
+
+    def _wait_advanced(self, page, minimum=300):
+        deadline = time.monotonic() + 12
+        last = None
+        while time.monotonic() < deadline:
+            last = page.media_state()
+            if last['present'] and last['paused'] is False and (last['position_ms'] or 0) >= minimum:
+                return last
+            time.sleep(0.15)
+        raise AssertionError(last)
+
+    def _wait_reloaded_hold(self, page, url):
+        deadline = time.monotonic() + 12
+        last = None
+        while time.monotonic() < deadline:
+            last = page.media_state()
+            src = page._page_value(
+                '(document.getElementById("stage") || {}).src || ""')
+            if (str(src) == url and last['present'] and last['paused'] is True
+                    and last['duration_ms'] == 20000 and last['position_ms'] is not None
+                    and last['position_ms'] <= 300):
+                return last
+            time.sleep(0.15)
+        raise AssertionError((last, url))
 
     def _embedded_player(self, name, cross_origin):
         with tempfile.TemporaryDirectory(prefix='zell-browser-embed-') as root:
