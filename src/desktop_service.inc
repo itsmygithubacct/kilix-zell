@@ -74,7 +74,17 @@ static void service_frame(zell_scene *s,char *frame,int origin){
             s->coding_yolo_ready=n==1&&(decoded[0]=='0'||decoded[0]=='1');
             s->coding_yolo=s->coding_yolo_ready&&decoded[0]=='1';return;
         }
-    if(kind=='N'){int count=0;if(sscanf(decoded,"%d",&count)==1&&count>=0&&count<=200){s->notice_count=count;char *text=strchr(decoded,' ');snprintf(s->notice_text,sizeof s->notice_text,"%.319s",text?text+1:"");}return;}
+    if(kind=='N'){
+        int count=0;
+        if(sscanf(decoded,"%d",&count)==1&&count>=0&&count<=200){
+            char *text=strchr(decoded,' ');
+            const char *body=text?text+1:"";
+            s->notice_count=count;
+            /* A later sample of the same words does not move the deadline. */
+            zell_notice_apply(s,count>0&&body[0]?body:"");
+        }
+        return;
+    }
     if(kind=='A'){int muted,active;if(sscanf(decoded,"%d %d",&muted,&active)==2){s->music_muted=muted==1;s->dj_active=active==1;}return;}
     if(kind=='W'){
         /* Each reading replaces the previous one, including location removal. */

@@ -94,6 +94,113 @@ static void test_contract_fixtures(void){
         assert(!zell_window_accepts_frame(&slots,1,9));
     }
 }
+static int region_changes(const sr_canvas *a,const sr_canvas *b,int x0,int x1,int y0,int y1){
+    int changes=0;
+    if(x0<0)x0=0;
+    if(y0<0)y0=0;
+    if(x1>a->w)x1=a->w;
+    if(y1>a->h)y1=a->h;
+    for(int y=y0;y<y1;y++)for(int x=x0;x<x1;x++){
+        size_t at=(size_t)y*(size_t)a->w+(size_t)x;
+        if(a->px[at]!=b->px[at])changes++;
+    }
+    return changes;
+}
+static void walk_notice_scene(zell_scene *s){
+    zell_scene_init(s,640,400);
+    zell_desktop_init(s);
+    s->mode=ZELL_MODE_WALK;
+    s->x=40;s->y=40;
+    s->running=false;s->run_charge=0;s->flame_tick=0;s->room=0;
+    s->mouse_valid=false;s->dictation_on=false;
+    assert(zell_desktop_near(s)<0);
+    assert(s->width==640&&s->height==400&&s->room_view.scale==1.f);
+}
+static void test_notice_deadlines(void){
+    zell_scene s;
+    char key[64];
+    zell_scene_init(&s,640,400);
+    zell_notice_set_clock(5000);
+    zell_notice_apply(&s,"Job finished");
+    assert(!strcmp(s.notice_text,"Job finished"));
+    assert(s.notice_until_ms==13000&&s.notice_key[0]);
+    memcpy(key,s.notice_key,sizeof key);
+    zell_notice_set_clock(9000);
+    zell_notice_apply(&s,"Job finished");
+    assert(s.notice_until_ms==13000&&!memcmp(s.notice_key,key,sizeof key));
+    zell_notice_set_clock(10000);
+    zell_notice_apply(&s,"Other notice");
+    assert(!strcmp(s.notice_text,"Other notice")&&s.notice_until_ms==18000);
+    assert(memcmp(s.notice_key,key,sizeof key)!=0);
+    zell_notice_set_clock(18000);
+    zell_notice_apply(&s,"Other notice");
+    assert(s.notice_until_ms==18000);
+    zell_notice_apply(&s,"");
+    assert(!s.notice_until_ms&&!s.notice_key[0]&&!s.notice_text[0]);
+    zell_notice_set_clock(20000);
+    zell_notice_apply(&s,"Job finished");
+    assert(!strcmp(s.notice_text,"Job finished")&&s.notice_until_ms==28000&&s.notice_key[0]);
+}
+static void test_notice_pixels(void){
+    zell_scene s;
+    sr_canvas plain,shown,later,expired,again,clipped;
+    const char *hint="WASD walk | Hold Shift run | Tab stations";
+    const char *toast="Notice";
+    int hint_w=(int)strlen(hint)*8,left=12+hint_w+16,right=640-12;
+    int text_x=right-(int)strlen(toast)*8;
+    int strip=400-30;
+    char long_text[301];
+    char key[64];
+    walk_notice_scene(&s);
+    assert(sr_canvas_init(&plain,640,400)&&sr_canvas_init(&shown,640,400));
+    assert(sr_canvas_init(&later,640,400)&&sr_canvas_init(&expired,640,400));
+    assert(sr_canvas_init(&again,640,400)&&sr_canvas_init(&clipped,640,400));
+    zell_notice_set_clock(5000);
+    zell_draw(&s,&plain);
+    zell_notice_apply(&s,toast);
+    assert(s.notice_until_ms==13000);
+    memcpy(key,s.notice_key,sizeof key);
+    zell_draw(&s,&shown);
+    /* Room image, including the old (12, 104) spot, stays put. Hints stay put. */
+    assert(region_changes(&plain,&shown,0,640,30,strip)==0);
+    assert(region_changes(&plain,&shown,0,text_x,strip,400)==0);
+    assert(region_changes(&plain,&shown,text_x,right,strip,400)>0);
+    assert(region_changes(&plain,&shown,right,640,strip,400)==0);
+    zell_notice_set_clock(9000);
+    zell_notice_apply(&s,toast);
+    assert(s.notice_until_ms==13000&&!memcmp(s.notice_key,key,sizeof key));
+    /* Hundreds of frames do not expire it. The clock does, on the millisecond. */
+    s.flame_tick=400;
+    zell_notice_set_clock(12999);
+    zell_draw(&s,&later);
+    zell_notice_set_clock(13000);
+    zell_draw(&s,&expired);
+    assert(region_changes(&later,&expired,0,640,30,strip)==0);
+    assert(region_changes(&later,&expired,text_x,right,strip,400)>0);
+    zell_notice_apply(&s,"");
+    assert(!s.notice_until_ms&&!s.notice_key[0]);
+    zell_notice_set_clock(20000);
+    zell_notice_apply(&s,toast);
+    assert(s.notice_until_ms==28000&&s.notice_key[0]);
+    s.flame_tick=400;
+    zell_draw(&s,&again);
+    assert(region_changes(&expired,&again,text_x,right,strip,400)>0);
+    memset(long_text,'M',300);long_text[300]=0;
+    zell_notice_set_clock(30000);
+    zell_notice_apply(&s,long_text);
+    assert(strlen(s.notice_text)==300&&s.notice_until_ms==38000);
+    s.flame_tick=0;
+    zell_draw(&s,&clipped);
+    zell_notice_apply(&s,"");
+    s.flame_tick=0;
+    zell_draw(&s,&plain);
+    assert(region_changes(&plain,&clipped,0,640,30,strip)==0);
+    assert(region_changes(&plain,&clipped,0,left,strip,400)==0);
+    assert(region_changes(&plain,&clipped,left,right,strip,400)>0);
+    assert(region_changes(&plain,&clipped,right,640,strip,400)==0);
+    sr_canvas_free(&plain);sr_canvas_free(&shown);sr_canvas_free(&later);
+    sr_canvas_free(&expired);sr_canvas_free(&again);sr_canvas_free(&clipped);
+}
 int main(void) {
     zell_scene s;
     zell_controls c={0};
@@ -487,10 +594,12 @@ int main(void) {
             assert(shown>40);
         }
         sr_canvas_free(&before);sr_canvas_free(&after);
+        test_notice_pixels();
     }
 #ifdef ZELL_RENDER_NEURONTE
     zell_neuronte_close();
 #endif
+    test_notice_deadlines();
     test_contract_fixtures();
     puts("desktop world, camera, alpha, idle/walk animation, launcher and voice: ok");
     return 0;

@@ -45,7 +45,7 @@ static void dictation_sync(desktop_dictation *d,zell_scene *s){
    close(d->fd);d->fd=-1;d->pid=0;s->dictation_on=false;
    while(d->used&&d->text[d->used-1]==' ')d->text[--d->used]=0;
    d->ready=WIFEXITED(status)&&WEXITSTATUS(status)==0&&d->used>0;
-   if(!d->ready){snprintf(s->notice_text,sizeof s->notice_text,"Dictation heard no text. Check microphone and Kilix STT settings.");s->notice_count++;}
+   if(!d->ready){zell_notice_apply(s,"Dictation heard no text. Check microphone and Kilix STT settings.");s->notice_count++;}
   }else if(now_ms()-d->started>75000){dictation_stop(d);s->dictation_on=false;}
  }
  if(d->ready&&(s->mode==ZELL_MODE_WALK||s->mode==ZELL_MODE_QUESTION)){

@@ -328,6 +328,61 @@ static void send_text(const frame_peer *peer,desktop_service *svc,zell_scene *sc
     frame_line(line,sizeof line,kind,text);
     peer_pump(peer,svc,scene,line);
 }
+static void test_notice_timer(void){
+    zell_scene scene;
+    frame_peer mon=frame_peer_open();
+    frame_peer job=frame_peer_open();
+    desktop_service mon_svc=peer_service(&mon,true);
+    desktop_service job_svc=peer_service(&job,false);
+    char key[64],payload[128],longer[80],changed[80];
+    zell_scene_init(&scene,640,400);
+    zell_notice_set_clock(5000);
+    send_text(&mon,&mon_svc,&scene,'N',"1 Job finished");
+    assert(scene.notice_count==1&&!strcmp(scene.notice_text,"Job finished"));
+    assert(scene.notice_until_ms==13000&&scene.notice_key[0]);
+    memcpy(key,scene.notice_key,sizeof key);
+    /* The monitor repeats the same words with a new count. That must not rearm. */
+    zell_notice_set_clock(10000);
+    send_text(&mon,&mon_svc,&scene,'N',"2 Job finished");
+    assert(scene.notice_count==2&&scene.notice_until_ms==13000);
+    assert(!memcmp(scene.notice_key,key,sizeof key));
+    zell_notice_set_clock(11000);
+    send_text(&mon,&mon_svc,&scene,'N',"1 A different notice");
+    assert(!strcmp(scene.notice_text,"A different notice"));
+    assert(scene.notice_until_ms==19000&&memcmp(scene.notice_key,key,sizeof key)!=0);
+    memcpy(key,scene.notice_key,sizeof key);
+    zell_notice_set_clock(12000);
+    send_text(&job,&job_svc,&scene,'N',"1 Job finished");
+    send_text(&mon,&mon_svc,&scene,'N',"201 ignored");
+    assert(scene.notice_until_ms==19000&&!strcmp(scene.notice_text,"A different notice"));
+    assert(!memcmp(scene.notice_key,key,sizeof key));
+    /* Past the deadline, the same sample still must not move it. */
+    zell_notice_set_clock(19000);
+    send_text(&mon,&mon_svc,&scene,'N',"1 A different notice");
+    assert(scene.notice_until_ms==19000);
+    zell_notice_set_clock(20000);
+    send_text(&mon,&mon_svc,&scene,'N',"0 ");
+    assert(scene.notice_count==0&&!scene.notice_text[0]);
+    assert(scene.notice_until_ms==0&&!scene.notice_key[0]);
+    zell_notice_set_clock(21000);
+    send_text(&mon,&mon_svc,&scene,'N',"1 Job finished");
+    assert(!strcmp(scene.notice_text,"Job finished")&&scene.notice_until_ms==29000);
+    assert(scene.notice_key[0]);
+    memset(longer,'Q',70);longer[70]=0;
+    memcpy(changed,longer,71);changed[63]='Z';
+    zell_notice_set_clock(30000);
+    snprintf(payload,sizeof payload,"1 %s",longer);
+    send_text(&mon,&mon_svc,&scene,'N',payload);
+    assert(strlen(scene.notice_text)==70&&scene.notice_until_ms==38000);
+    memcpy(key,scene.notice_key,sizeof key);
+    zell_notice_set_clock(31000);
+    snprintf(payload,sizeof payload,"1 %s",changed);
+    send_text(&mon,&mon_svc,&scene,'N',payload);
+    assert(scene.notice_text[63]=='Z'&&scene.notice_until_ms==39000);
+    assert(memcmp(scene.notice_key,key,sizeof key)!=0);
+    peer_reap(&job,&job_svc);
+    peer_reap(&mon,&mon_svc);
+}
 static void test_contract_frames(zell_scene *scene){
     frame_peer job=frame_peer_open();
     frame_peer mon=frame_peer_open();
@@ -542,6 +597,7 @@ int main(void)
     test_terminal_transport(&scene);
     test_menu_and_mana(&scene);
     test_contract_frames(&scene);
+    test_notice_timer();
     puts("process test ok");
     return 0;
 }

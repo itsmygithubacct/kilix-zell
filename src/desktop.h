@@ -72,4 +72,9 @@ bool zell_provider_apply(zell_scene *s,const char *text);
 bool zell_provider_check_apply(zell_scene *s,const char *text);
 bool zell_fleet_apply(zell_scene *s,const char *text);
 bool zell_update_apply(zell_scene *s,const char *text);
+/* Monotonic milliseconds. zell_notice_set_clock pins this for tests. */
+int64_t zell_notice_clock_ms(void);
+void zell_notice_set_clock(int64_t ms);
+/* Empty text clears the deadline. The same text again does not move it. */
+void zell_notice_apply(zell_scene *s,const char *text);
 #endif
