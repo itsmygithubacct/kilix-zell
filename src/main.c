@@ -944,6 +944,7 @@ static bool present_scene(zell_scene *scene, sr_canvas *canvas, uint8_t **rgba,
         *rgba = grown;
         *rgba_bytes = bytes;
     }
+    if(scene->desktop)zell_room_view_identity(scene);
     zell_draw(scene, canvas);
     if (!sr_pack_rgba(canvas, *rgba, bytes)) {
         return false;

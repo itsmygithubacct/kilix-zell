@@ -174,13 +174,10 @@ def _create(ui, state, snapshot, cwd, index=None, role='Coding session', prompt=
         stored = dict(pane)
         state['sessions'].append(dict(receipt=receipt, project=str(cwd), role=role))
     else:
+        # Fleet launch settings stay in the vault. The journal keeps the pane
+        # identity only, after the client has already been started.
         stored = {key: pane[key] for key in ('pane_id', 'tab_id', 'broker')}
-        if isinstance(pane.get('agent'), str):
-            stored['agent'] = pane['agent']
-        state['sessions'].append(dict(
-            receipt=dict(status='created', pane=dict(stored)),
-            project=str(cwd), role=role, agent=launch['agent'], model=launch['model'],
-            effort=launch.get('effort') or 'none'))
+        state['sessions'].append(dict(receipt=dict(status='created', pane=dict(stored))))
     if index is not None:
         previous = state['screens'].get(str(index))
         if _identity(previous):

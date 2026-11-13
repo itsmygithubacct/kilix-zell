@@ -1,11 +1,12 @@
-"""Save and resume fleet launch metadata.
+"""Save and resume fleet launch configuration.
 
-Startup instructions are stored as an encrypted kilix-secrets vault reference.
-The fleet file records that reference and the vault policy, never the
-instruction text. A settings-only save still asks for the text again, and that
-path is not the stored policy. Account eligibility is not chosen here. A fleet
-file never holds a prompt body, a credential, an environment snapshot, or a raw
-argv receipt, and saving one does not change the shared YOLO switch.
+Launch settings and custom instructions are sealed in one kilix-secrets record.
+fleets.json keeps the vault reference and the fields needed to find the fleet.
+It does not keep model, effort, cwd, role, agent, or instruction text. A
+settings-only save still seals the launch settings and asks for instructions
+again. Account eligibility is not chosen here. A fleet file never holds a
+prompt body, a credential, an environment snapshot, or a raw argv receipt, and
+saving one does not change the shared YOLO switch.
 """
 from __future__ import annotations
 
@@ -55,14 +56,20 @@ REENTER_TEXT = ('Custom instructions for this worker were not stored. '
                 'Wait for the user to type them. Do not invent a task.')
 WORKER_KEYS = {'slot', 'role', 'agent', 'model', 'effort', 'cwd', 'prompt_ref'}
 INPUT_KEYS = WORKER_KEYS | {'instructions'}
-BINDING_KEYS = {'slot', 'pane_id', 'tab_id', 'broker', 'agent'}
-FLEET_KEYS = {'id', 'name', 'project', 'created', 'updated', 'storage_used', 'workers', 'bindings'}
+BINDING_KEYS = {'slot', 'pane_id', 'tab_id', 'broker'}
+FLEET_KEYS = {'id', 'name', 'project', 'created', 'updated', 'storage_used', 'config_ref', 'worker_count', 'bindings'}
 ROOT_KEYS = {'version', 'instruction_storage', 'revision', 'fleets'}
-FORBIDDEN = {
-    'prompt', 'prompts', 'credential', 'credentials', 'secret', 'secrets', 'password',
-    'token', 'api_key', 'apikey', 'env', 'environment', 'environ', 'argv', 'transcript',
+# These belong in the sealed record, never in fleets.json.
+# prompt and the credential keys are rejected even on an old unselected file.
+# model, effort, cwd, role, agent, workers, and prompt_ref are rejected only after
+# the file has already selected the vault store, so an unselected file keeps the
+# storage error and its original bytes.
+_SECRET_KEYS = {
+    'prompt', 'prompts', 'credential', 'credentials', 'secret', 'secrets',
+    'password', 'token', 'api_key', 'apikey', 'env', 'environment', 'environ', 'argv', 'transcript',
     'authorization', 'cookie', 'yolo', 'coding_yolo', 'account_mode', 'instructions',
 }
+FORBIDDEN = _SECRET_KEYS | {'prompt_ref', 'workers', 'model', 'effort', 'cwd', 'role', 'agent'}
 _VAULT_REF = re.compile(r'vault:([0-9a-f]{32}):([0-9a-f]{16})\Z')
 _TEMPLATE_REF = re.compile(r'template:(role\.(?:controller|worker|coordinator|implementer|reviewer|coding)|reenter)\Z')
 _FLEET_ID = re.compile(r'[A-Za-z0-9._-]{1,63}\Z')
@@ -207,15 +214,17 @@ def _bad_field(key):
     return FleetError('Unsupported field. It was not stored and no default was substituted.')
 
 
-def _forbid(value):
+def _forbid(value, banned=None):
+    if banned is None:
+        banned = FORBIDDEN
     if isinstance(value, dict):
         for key, item in value.items():
-            if key in FORBIDDEN:
+            if key in banned:
                 raise _bad_field(key)
-            _forbid(item)
+            _forbid(item, banned)
     elif isinstance(value, list):
         for item in value:
-            _forbid(item)
+            _forbid(item, banned)
 
 
 def _label(value, what):
@@ -282,27 +291,28 @@ def _validate_worker(worker, *, storage):
     return kind
 
 
-def _validate_binding(binding, slots):
+def _validate_binding(binding):
     if not isinstance(binding, dict) or set(binding) != BINDING_KEYS:
         raise StoreCorrupt('A fleet binding is invalid. The last file was left unchanged.')
-    if type(binding['slot']) is not int or binding['slot'] not in slots:
+    if type(binding['slot']) is not int or binding['slot'] not in range(5):
         raise StoreCorrupt('A fleet binding does not match a worker. The last file was left unchanged.')
     if type(binding['pane_id']) is not int or type(binding['tab_id']) is not int or binding['pane_id'] <= 0 or binding['tab_id'] <= 0:
         raise StoreCorrupt('A fleet binding identity is invalid. The last file was left unchanged.')
     broker = binding['broker']
     if not isinstance(broker, str) or not 1 <= len(broker) <= 200 or any(ord(c) < 32 for c in broker):
         raise StoreCorrupt('A fleet binding identity is invalid. The last file was left unchanged.')
-    if binding['agent'] not in AGENTS:
-        raise StoreCorrupt('A fleet binding client is invalid. The last file was left unchanged.')
 
 
 def _validate_document(document):
     if not isinstance(document, dict) or set(document) != ROOT_KEYS:
         raise StoreCorrupt('fleets.json has an unexpected shape. The last file was left unchanged.')
-    _forbid(document)
-    if document['version'] != VERSION or document['instruction_storage'] != INSTRUCTION_STORAGE:
+    # A plaintext prompt fails before the version check. Model and worker metadata
+    # on an unselected file still get the vault-store message, and the bytes stay.
+    _forbid(document, _SECRET_KEYS)
+    if document.get('version') != VERSION or document.get('instruction_storage') != INSTRUCTION_STORAGE:
         raise StoreCorrupt('fleets.json version or instruction storage is not the vault store. '
                            'The last file was left unchanged.')
+    _forbid(document)
     if type(document['revision']) is not int or not 0 <= document['revision'] <= REVISION_LIMIT:
         raise StoreCorrupt('fleets.json revision is invalid. The last file was left unchanged.')
     if not isinstance(document['fleets'], list):
@@ -320,17 +330,19 @@ def _validate_document(document):
         _stamp(fleet['updated'])
         if fleet['storage_used'] not in {STORAGE_VAULT, STORAGE_SETTINGS}:
             raise StoreCorrupt('A fleet instruction path is invalid. The last file was left unchanged.')
-        if not isinstance(fleet['workers'], list) or not fleet['workers'] or not isinstance(fleet['bindings'], list):
+        try:
+            kind, _detail = parse_prompt_ref(fleet['config_ref'])
+        except FleetError:
             raise StoreCorrupt('A fleet record is invalid. The last file was left unchanged.')
-        slots = []
-        for worker in fleet['workers']:
-            _validate_worker(worker, storage=fleet['storage_used'])
-            slots.append(worker['slot'])
-        if len(slots) != len(set(slots)):
-            raise StoreCorrupt('A fleet repeats a worker slot. The last file was left unchanged.')
+        if kind != 'vault':
+            raise StoreCorrupt('A fleet record is invalid. The last file was left unchanged.')
+        if type(fleet['worker_count']) is not int or fleet['worker_count'] not in range(1, 6):
+            raise StoreCorrupt('A fleet record is invalid. The last file was left unchanged.')
+        if not isinstance(fleet['bindings'], list) or len(fleet['bindings']) > fleet['worker_count']:
+            raise StoreCorrupt('A fleet record is invalid. The last file was left unchanged.')
         bound = []
         for binding in fleet['bindings']:
-            _validate_binding(binding, set(slots))
+            _validate_binding(binding)
             bound.append(binding['slot'])
         if len(bound) != len(set(bound)):
             raise StoreCorrupt('A fleet repeats a bound slot. The last file was left unchanged.')
@@ -390,14 +402,69 @@ def _binding(fleet, slot):
     return matches[0] if len(matches) == 1 else None
 
 
-def _vault_ids(document):
+def _config_record_id(fleet):
+    try:
+        kind, detail = parse_prompt_ref(fleet.get('config_ref'))
+    except FleetError:
+        return None
+    if kind != 'vault':
+        return None
+    return detail[0]
+
+
+def _nested_vault_ids(text):
+    """Vault ids named inside one sealed config. None means the seal is not a config."""
+    try:
+        payload = json.loads(text)
+    except (UnicodeError, json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(payload, dict) or not isinstance(payload.get('workers'), list):
+        return None
     found = []
-    for fleet in document['fleets']:
-        for worker in fleet['workers']:
-            kind, detail = parse_prompt_ref(worker['prompt_ref'])
-            if kind == 'vault':
-                found.append(detail[0])
+    for worker in payload['workers']:
+        if not isinstance(worker, dict):
+            return None
+        try:
+            kind, detail = parse_prompt_ref(worker.get('prompt_ref'))
+        except FleetError:
+            return None
+        if kind == 'vault':
+            found.append(detail[0])
     return found
+
+
+def _referenced_record_ids(document, vault):
+    """Ids still required by published fleets. None means a seal could not be read."""
+    if vault is None:
+        return None
+    found = set()
+    for fleet in document['fleets']:
+        record_id = _config_record_id(fleet)
+        if not record_id:
+            return None
+        found.add(record_id)
+        try:
+            nested = _nested_vault_ids(_read_record_text(vault, record_id))
+        except (VaultLocked, VaultMissing, OSError):
+            return None
+        if nested is None:
+            return None
+        found.update(nested)
+    return found
+
+
+def _drop_unreferenced(record_ids, document, vault):
+    if vault is None or not record_ids:
+        return
+    still = _referenced_record_ids(document, vault)
+    if still is None:
+        return
+    for record_id in record_ids:
+        if record_id not in still:
+            try:
+                vault.delete(record_id)
+            except OSError:
+                pass
 
 
 def _instruction_bytes(value):
@@ -520,7 +587,8 @@ def default_vault():
     return SecretsVault()
 
 
-def _prepare_worker(spec, storage, vault, new_records):
+def _assemble_worker(spec, storage):
+    """Validate one worker. Custom vault text stays on the sealed copy only."""
     if not isinstance(spec, dict):
         raise FleetError('A worker record must be an object.')
     extra = set(spec) - INPUT_KEYS
@@ -531,10 +599,12 @@ def _prepare_worker(spec, storage, vault, new_records):
     body = _instruction_bytes(spec.get('instructions'))
     try:
         cwd = str(zell_rooms._project_path(spec.get('cwd', '')))
+        instructions = None
         if body is not None and storage == STORAGE_SETTINGS:
             prompt_ref = 'template:reenter'
         elif body is not None and storage == STORAGE_VAULT:
             prompt_ref = 'none'
+            instructions = bytes(body).decode()
         elif body is not None:
             raise InstructionStorageUnselected(
                 'Instruction storage is unselected. Choose the vault path or the settings-only path for this save.')
@@ -547,23 +617,58 @@ def _prepare_worker(spec, storage, vault, new_records):
             'model': spec.get('model'), 'effort': spec['effort'], 'cwd': cwd, 'prompt_ref': prompt_ref,
         }
         _validate_worker(worker, storage=storage)
-        if body is not None and storage == STORAGE_VAULT:
-            if vault is None:
-                raise FleetError('The vault path was requested without a vault boundary.')
-            descriptor = _seal(body)
-            try:
-                record_id = vault.add_fd(descriptor)
-            finally:
-                os.close(descriptor)
-            if not re.fullmatch(r'[0-9a-f]{32}', record_id):
-                raise FleetError('The vault did not return a record id. The fleet was not published.')
-            new_records.append(record_id)
-            worker['prompt_ref'] = f'vault:{record_id}:{uuid.uuid4().hex[:16]}'
-            _validate_worker(worker, storage=storage)
-        return worker
+        sealed = dict(worker)
+        if instructions is not None:
+            sealed['instructions'] = instructions
+        return sealed
     finally:
         if body is not None:
             body[:] = b'\0' * len(body)
+
+
+def _public_workers(sealed_workers, config_ref):
+    """In-memory workers. A custom vault body is addressed by the fleet seal, not copied out."""
+    public = []
+    for sealed in sealed_workers:
+        worker = {key: sealed[key] for key in WORKER_KEYS}
+        if isinstance(sealed.get('instructions'), str) and sealed['instructions']:
+            worker['prompt_ref'] = config_ref
+        public.append(worker)
+    return public
+
+
+def _peek_store():
+    """Parse the current file under the fleet lock. A bad file raises before any seal."""
+    root = _directory()
+    if not root.exists():
+        return _empty()
+    if root.is_symlink() or not stat.S_ISDIR(root.lstat().st_mode):
+        raise StoreCorrupt('The fleet directory is invalid. The last file was left unchanged.')
+    fd = _lock(root)
+    try:
+        raw = _read_bytes(root)
+        return _empty() if raw is None else _parse(raw)
+    finally:
+        _unlock(fd)
+
+
+def _seal_config(storage, workers, vault):
+    if vault is None:
+        raise FleetError('The vault path was requested without a vault boundary.')
+    raw = bytearray(json.dumps({
+        'version': VERSION, 'storage': storage, 'workers': workers,
+    }, sort_keys=True).encode())
+    try:
+        descriptor = _seal(raw)
+        try:
+            record_id = vault.add_fd(descriptor)
+        finally:
+            os.close(descriptor)
+        if not isinstance(record_id, str) or not re.fullmatch(r'[0-9a-f]{32}', record_id):
+            raise FleetError('The vault did not return a record id. The fleet was not published.')
+        return record_id
+    finally:
+        raw[:] = b'\0' * len(raw)
 
 
 def _require_storage(storage):
@@ -575,63 +680,74 @@ def _require_storage(storage):
     return storage
 
 
+def _owned_record_ids(fleet, vault):
+    record_id = _config_record_id(fleet)
+    if not record_id or vault is None:
+        return []
+    owned = [record_id]
+    try:
+        nested = _nested_vault_ids(_read_record_text(vault, record_id))
+    except (VaultLocked, VaultMissing, OSError):
+        return owned
+    if nested:
+        owned.extend(nested)
+    return owned
+
+
 def save_fleet(*, name, project, workers, storage, vault=None, fleet_id=None):
     storage = _require_storage(storage)
-    if vault is None and storage == STORAGE_VAULT:
-        vault = default_vault()
     name, project = _label(name, 'Fleet name'), _label(project, 'Project label')
     if not isinstance(workers, list) or not workers:
         raise FleetError('A fleet needs at least one worker.')
-    new_records = []
-    try:
-        prepared = [_prepare_worker(spec, storage, vault, new_records) for spec in workers]
-    except Exception:
-        # A failed validation after a vault write must not delete that record here:
-        # the publish step is the only place a reference becomes visible, and a
-        # shared record is never removed because this save failed.
-        raise
-    slots = [worker['slot'] for worker in prepared]
+    # Validate every worker, including duplicate slots, before touching the vault.
+    sealed = [_assemble_worker(spec, storage) for spec in workers]
+    slots = [worker['slot'] for worker in sealed]
     if len(slots) != len(set(slots)):
         raise FleetError('A fleet repeats a worker slot. Nothing was published.')
     fleet_id = fleet_id or str(uuid.uuid4())
     if not _FLEET_ID.fullmatch(fleet_id):
         raise FleetError('The fleet id is not valid. Nothing was published.')
-    previous_ids = []
+    if vault is None:
+        vault = default_vault()
+    # A corrupt or locked file fails here, before a new seal is written.
+    _peek_store()
+    record_id = _seal_config(storage, sealed, vault)
+    config_ref = f'vault:{record_id}:{uuid.uuid4().hex[:16]}'
+    public = _public_workers(sealed, config_ref)
+    previous = []
 
     def mutate(current):
-        nonlocal previous_ids
+        nonlocal previous
         now = _now()
         existing = next((fleet for fleet in current['fleets'] if fleet['id'] == fleet_id), None)
         if existing:
-            previous_ids = [item for item in _vault_ids({'fleets': [existing]})]
+            previous = [existing]
             created = existing['created']
+            bindings = [item for item in existing['bindings'] if item['slot'] in set(slots)]
             current['fleets'] = [fleet for fleet in current['fleets'] if fleet['id'] != fleet_id]
         else:
             created = now
+            bindings = []
         current['fleets'].append({
             'id': fleet_id, 'name': name, 'project': project, 'created': created, 'updated': now,
-            'storage_used': storage, 'workers': prepared,
-            'bindings': existing['bindings'] if existing else [],
+            'storage_used': storage, 'config_ref': config_ref, 'worker_count': len(public),
+            'bindings': bindings,
         })
-        kept = {worker['slot'] for worker in prepared}
-        current['fleets'][-1]['bindings'] = [item for item in current['fleets'][-1]['bindings'] if item['slot'] in kept]
         return current
 
     try:
         document = commit_document(mutate)
     except Exception:
-        # New vault records stay. A failed metadata publish does not delete them,
-        # and it does not delete a record another fleet already references.
+        # The new seal stays. A failed publish does not delete it and does not
+        # replace the previous file.
         raise
-    if vault is not None:
-        published = set(_vault_ids(document))
-        for record_id in previous_ids:
-            if record_id not in published:
-                try:
-                    vault.delete(record_id)
-                except OSError:
-                    pass
-    return _find(document, fleet_id)
+    owned = []
+    for fleet in previous:
+        owned.extend(_owned_record_ids(fleet, vault))
+    _drop_unreferenced(owned, document, vault)
+    view = dict(_find(document, fleet_id))
+    view['workers'] = public
+    return view
 
 
 def rename_fleet(fleet_id, name):
@@ -651,7 +767,7 @@ def delete_fleet(fleet_id, confirmation, vault=None):
     fleet = _find(document, fleet_id)
     if confirmation != fleet['name']:
         raise FleetError('Deletion was not confirmed. The fleet and its instruction records were kept.')
-    owned = _vault_ids({'fleets': [fleet]})
+    owned = _owned_record_ids(fleet, vault)
 
     def mutate(current):
         _find(current, fleet_id)
@@ -659,29 +775,83 @@ def delete_fleet(fleet_id, confirmation, vault=None):
         return current
 
     updated = commit_document(mutate)
-    if vault is not None:
-        still = set(_vault_ids(updated))
-        for record_id in owned:
-            if record_id not in still:
-                try:
-                    vault.delete(record_id)
-                except OSError:
-                    pass
+    _drop_unreferenced(owned, updated, vault)
     return updated
 
 
-def open_project(fleet_id):
+def _sealed_workers(fleet, vault):
+    """Read the fleet seal. A missing or unreadable seal waits; it is not replaced."""
+    if vault is None:
+        vault = default_vault()
+    record_id = _config_record_id(fleet)
+    if not record_id:
+        raise VaultMissing('The instruction record is missing. That worker is waiting. '
+                           'No default instructions were substituted.')
+    try:
+        text = _read_record_text(vault, record_id)
+    except (VaultLocked, VaultMissing):
+        raise
+    except OSError:
+        raise VaultMissing('The instruction record is missing. That worker is waiting. '
+                           'No default instructions were substituted.')
+    try:
+        payload = json.loads(text)
+    except (UnicodeError, json.JSONDecodeError, TypeError):
+        raise VaultMissing('The instruction record is missing. That worker is waiting. '
+                           'No default instructions were substituted.')
+    if (not isinstance(payload, dict) or payload.get('version') != VERSION
+            or payload.get('storage') != fleet['storage_used'] or not isinstance(payload.get('workers'), list)):
+        raise VaultMissing('The instruction record is missing. That worker is waiting. '
+                           'No default instructions were substituted.')
+    sealed = []
+    for worker in payload['workers']:
+        if not isinstance(worker, dict):
+            raise VaultMissing('The instruction record is missing. That worker is waiting. '
+                               'No default instructions were substituted.')
+        extra = set(worker) - WORKER_KEYS - {'instructions'}
+        if extra or not WORKER_KEYS <= set(worker):
+            raise VaultMissing('The instruction record is missing. That worker is waiting. '
+                               'No default instructions were substituted.')
+        try:
+            _validate_worker({key: worker[key] for key in WORKER_KEYS}, storage=fleet['storage_used'])
+        except FleetError:
+            raise VaultMissing('The instruction record is missing. That worker is waiting. '
+                               'No default instructions were substituted.')
+        item = {key: worker[key] for key in WORKER_KEYS}
+        instructions = worker.get('instructions')
+        if instructions is not None:
+            if fleet['storage_used'] != STORAGE_VAULT or not isinstance(instructions, str) or not instructions:
+                raise VaultMissing('The instruction record is missing. That worker is waiting. '
+                                   'No default instructions were substituted.')
+            item['instructions'] = instructions
+        sealed.append(item)
+    if len(sealed) != fleet['worker_count'] or len({item['slot'] for item in sealed}) != len(sealed):
+        raise VaultMissing('The instruction record is missing. That worker is waiting. '
+                           'No default instructions were substituted.')
+    return sealed
+
+
+def _hydrate(fleet, vault):
+    return _public_workers(_sealed_workers(fleet, vault), fleet['config_ref'])
+
+
+def open_project(fleet_id, vault=None):
     """Validate the saved directories. This does not launch a client or edit the project."""
     fleet = _find(read_store(), fleet_id)
-    return [str(zell_rooms._project_path(worker['cwd'])) for worker in fleet['workers']]
+    workers = _hydrate(fleet, vault)
+    return [str(zell_rooms._project_path(worker['cwd'])) for worker in workers]
 
 
-def configuration_matches(fleet_id, snapshot):
+def configuration_matches(fleet_id, snapshot, vault=None):
     """True only when every saved slot is the verified live pane, not merely the same folder label."""
-    fleet = _find(read_store(), fleet_id)
-    if not isinstance(snapshot, dict) or not fleet['workers']:
+    try:
+        fleet = _find(read_store(), fleet_id)
+        workers = _hydrate(fleet, vault)
+    except (FleetError, OSError):
         return False
-    for worker in fleet['workers']:
+    if not isinstance(snapshot, dict) or not workers:
+        return False
+    for worker in workers:
         binding = _binding(fleet, worker['slot'])
         live = zell_rooms._live(binding, snapshot) if binding else None
         if not live or live.get('agent') != worker['agent']:
@@ -723,14 +893,17 @@ def reload_instruction(fleet_id, slot, vault=None):
     fleet = _find(read_store(), fleet_id)
     if fleet['storage_used'] != STORAGE_VAULT:
         raise FleetError('This fleet did not store instructions in the vault.')
-    worker = next((item for item in fleet['workers'] if item['slot'] == slot), None)
+    if vault is None:
+        vault = default_vault()
+    worker = next((item for item in _sealed_workers(fleet, vault) if item['slot'] == slot), None)
     if worker is None:
         raise FleetError('That worker is not in the saved fleet.')
+    instructions = worker.get('instructions')
+    if isinstance(instructions, str) and instructions:
+        return instructions
     kind, detail = parse_prompt_ref(worker['prompt_ref'])
     if kind != 'vault':
         raise FleetError('That worker has no vault instruction reference.')
-    if vault is None:
-        vault = default_vault()
     return _read_record_text(vault, detail[0])
 
 
@@ -765,13 +938,20 @@ def _classify(worker, fleet, state, snapshot):
 
 def resume_fleet(ui, fleet_id, *, storage, rebind=False, reentry=False, vault=None):
     storage = _require_storage(storage)
-    fleet = _find(read_store(), fleet_id)
-    if fleet['storage_used'] != storage:
+    stored = _find(read_store(), fleet_id)
+    if stored['storage_used'] != storage:
         raise FleetError('This fleet uses a different instruction path. The vault policy was not changed.')
-    for worker in fleet['workers']:
-        zell_rooms._project_path(worker['cwd'])
-    if vault is None and storage == STORAGE_VAULT:
+    if vault is None:
         vault = default_vault()
+    try:
+        workers = _hydrate(stored, vault)
+    except (VaultLocked, VaultMissing):
+        return ResumeReport('waiting', 'A locked or missing instruction record left that worker waiting. '
+                             'No worker was launched and no default text was substituted.')
+    fleet = dict(stored)
+    fleet['workers'] = workers
+    for worker in workers:
+        zell_rooms._project_path(worker['cwd'])
     snapshot = zell_rooms._snapshot()
     state = zell_rooms._state(ui)
     plan = []
@@ -856,7 +1036,7 @@ def resume_fleet(ui, fleet_id, *, storage, rebind=False, reentry=False, vault=No
 
 def _publish_binding(fleet_id, worker, pane):
     binding = {'slot': worker['slot'], 'pane_id': pane['pane_id'], 'tab_id': pane['tab_id'],
-               'broker': pane['broker'], 'agent': worker['agent']}
+               'broker': pane['broker']}
 
     def mutate(current):
         fleet = _find(current, fleet_id)
@@ -873,10 +1053,8 @@ def _live_count(fleet, snapshot):
     if not isinstance(snapshot, dict):
         return 0
     count = 0
-    for worker in fleet['workers']:
-        binding = _binding(fleet, worker['slot'])
-        live = zell_rooms._live(binding, snapshot) if binding else None
-        if live and live.get('agent') == worker['agent']:
+    for binding in fleet['bindings']:
+        if zell_rooms._live(binding, snapshot):
             count += 1
     return count
 
@@ -896,7 +1074,7 @@ def monitor_frame(snapshot=None, offset=0):
         name, project = fleet['name'], fleet['project']
         if any(ord(c) < 32 or ord(c) == 127 for c in name + project):
             return None
-        lines.append(f"{fleet['id']}\t{name}\t{project}\t{len(fleet['workers'])}\t{_live_count(fleet, snapshot)}")
+        lines.append(f"{fleet['id']}\t{name}\t{project}\t{fleet['worker_count']}\t{_live_count(fleet, snapshot)}")
     text = '\n'.join(lines)
     if len(text.encode()) > 3500:
         return None

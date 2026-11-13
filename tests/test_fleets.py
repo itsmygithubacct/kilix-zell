@@ -168,13 +168,19 @@ class FleetTests(unittest.TestCase):
         self.assertEqual(document['version'], 1)
         raw = json.loads((self.state / 'fleets' / 'fleets.json').read_text())
         self.assertNotIn('prompt', keys_of(raw))
-        self.assertIn('prompt_ref', keys_of(raw))
+        self.assertNotIn('prompt_ref', keys_of(raw))
+        self.assertNotIn('workers', keys_of(raw))
+        for key in ('model', 'effort', 'cwd', 'role', 'agent', 'instructions'):
+            self.assertNotIn(key, keys_of(raw))
+        self.assertEqual(raw['fleets'][0]['worker_count'], 1)
+        self.assertTrue(raw['fleets'][0]['config_ref'].startswith('vault:'))
+        self.assertNotIn('gpt-6-astra', json.dumps(raw))
         info = (self.state / 'fleets').stat()
         file_info = (self.state / 'fleets' / 'fleets.json').stat()
         self.assertTrue(stat.S_ISDIR(info.st_mode))
         self.assertEqual(info.st_mode & 0o777, 0o700)
         self.assertEqual(file_info.st_mode & 0o777, 0o600)
-        self.assertEqual(self.vault.added, 0)
+        self.assertEqual(self.vault.added, 1)
         self.assertIs(rooms._create, self.create)
 
     def test_heterogeneous_launch_argv_without_yolo(self):
@@ -212,9 +218,18 @@ class FleetTests(unittest.TestCase):
         self.assertNotIn('argv', keys_of(journal))
         self.assertNotIn('env', keys_of(journal))
         self.snapshot_value = dict(caller_pane=1, panes=[pane(1), *self.created])
-        self.assertTrue(fleets.configuration_matches(fleet['id'], self.snapshot_value))
+        self.assertTrue(fleets.configuration_matches(fleet['id'], self.snapshot_value, vault=self.vault))
         self.snapshot_value['panes'][1] = dict(self.snapshot_value['panes'][1], cwd='/tmp/other-folder')
-        self.assertFalse(fleets.configuration_matches(fleet['id'], self.snapshot_value))
+        self.assertFalse(fleets.configuration_matches(fleet['id'], self.snapshot_value, vault=self.vault))
+        stored = (self.state / 'fleets' / 'fleets.json').read_text()
+        journal = (self.state / 'rooms.json').read_text()
+        for surface in (stored, journal):
+            self.assertNotIn('gpt-6-astra', surface)
+            self.assertNotIn('grok-4', surface)
+            self.assertNotIn('reviewer', surface)
+            self.assertNotIn(cwd, surface)
+            for key in ('model', 'effort', 'cwd', 'role', 'agent', 'workers', 'prompt_ref', 'instructions'):
+                self.assertNotIn(key, keys_of(json.loads(surface)))
 
     def test_yolo_on_adds_the_flag_without_changing_the_switch(self):
         stacked = patch.object(zell_agents, 'yolo_state', return_value=1)
@@ -306,13 +321,33 @@ class FleetTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), raw)
             self.assertNotIn('OLD-PROMPT-BODY-7c1', str(caught.exception))
         self.assertEqual(self.vault.added, 0)
+        legacy = json.dumps({
+            'version': 1, 'instruction_storage': 'vault', 'revision': 1,
+            'fleets': [{
+                'id': 'old', 'name': 'Old', 'project': 'Old', 'created': '2026-01-01T00:00:00Z',
+                'updated': '2026-01-01T00:00:00Z', 'storage_used': 'vault', 'bindings': [],
+                'workers': [{
+                    'slot': 0, 'role': 'reviewer', 'agent': 'codex', 'model': 'model-canary-q8n4',
+                    'effort': 'xhigh', 'cwd': '/tmp/cwd-canary-p3', 'prompt_ref': 'template:reenter',
+                }],
+            }],
+        }).encode() + b'\n'
+        path.write_bytes(legacy)
+        os.chmod(path, 0o600)
+        with self.assertRaises(fleets.FleetError):
+            fleets.read_store()
+        self.assertEqual(path.read_bytes(), legacy)
+        with self.assertRaises(fleets.FleetError):
+            self.save([self.worker()])
+        self.assertEqual(path.read_bytes(), legacy)
+        self.assertEqual(self.vault.added, 0)
 
     def test_duplicate_slot_is_not_published(self):
         spec = self.worker(slot=0, instructions=CANARY)
         with self.assertRaises(fleets.FleetError):
             self.save([spec, dict(spec, instructions=CANARY + '-b')], storage='vault')
         self.assertFalse((self.state / 'fleets' / 'fleets.json').exists())
-        self.assertGreaterEqual(self.vault.added, 1)
+        self.assertEqual(self.vault.added, 0)
         self.assertEqual(self.outside(CANARY), [])
 
     def test_lock_blocks_the_second_save(self):
@@ -339,7 +374,8 @@ class FleetTests(unittest.TestCase):
         self.assertNotIn(CANARY, fleet['workers'][0]['prompt_ref'])
         self.assertEqual(self.outside(CANARY), [])
         record = fleet['workers'][0]['prompt_ref'].split(':')[1]
-        self.assertIn(CANARY.encode(), (self.state / 'vault' / record).read_bytes())
+        original = (self.state / 'vault' / record).read_bytes()
+        self.assertIn(CANARY.encode(), original)
         self.assertEqual((self.state / 'vault' / record).stat().st_mode & 0o777, 0o600)
         self.vault.locked = True
         waiting = fleets.resume_fleet(self.ui, fleet['id'], storage='vault', vault=self.vault)
@@ -354,6 +390,12 @@ class FleetTests(unittest.TestCase):
         self.assertEqual(self.calls, [])
         (self.state / 'vault' / record).write_bytes(CANARY.encode())
         os.chmod(self.state / 'vault' / record, 0o600)
+        poisoned = fleets.resume_fleet(self.ui, fleet['id'], storage='vault', vault=self.vault)
+        self.assertEqual(poisoned.status, 'waiting')
+        self.assertEqual(self.calls, [])
+        self.assertNotIn(CANARY, poisoned.message)
+        (self.state / 'vault' / record).write_bytes(original)
+        os.chmod(self.state / 'vault' / record, 0o600)
         report = fleets.resume_fleet(self.ui, fleet['id'], storage='vault', vault=self.vault)
         self.assertEqual(report.status, 'launched')
         self.assertNotIn('--prompt', self.calls[0])
@@ -367,7 +409,9 @@ class FleetTests(unittest.TestCase):
         project = (self.state / 'ledger').resolve()
         fleet = self.save([self.worker(cwd=project, instructions=CANARY)], storage='settings')
         self.assertEqual(fleet['workers'][0]['prompt_ref'], 'template:reenter')
-        self.assertEqual(self.vault.added, 0)
+        self.assertEqual(self.vault.added, 1)
+        sealed = (self.state / 'vault' / fleet['config_ref'].split(':')[1]).read_bytes()
+        self.assertNotIn(CANARY.encode(), sealed)
         self.assertEqual(self.outside(CANARY), [])
         held = fleets.resume_fleet(self.ui, fleet['id'], storage='settings', vault=self.vault)
         self.assertEqual(held.status, 'needs_reentry')
@@ -400,7 +444,7 @@ class FleetTests(unittest.TestCase):
         ref = first['workers'][0]['prompt_ref']
         record = ref.split(':')[1]
         second = self.save([self.worker(cwd=project, prompt_ref=ref, effort='none')], storage='vault', name='Beta')
-        self.assertEqual(self.vault.added, 1)
+        self.assertEqual(self.vault.added, 2)
         self.assertEqual(second['workers'][0]['prompt_ref'], ref)
         with self.assertRaises(fleets.FleetError):
             fleets.delete_fleet(first['id'], 'nope', vault=self.vault)
@@ -418,7 +462,8 @@ class FleetTests(unittest.TestCase):
         added = self.vault.added
         renamed = fleets.rename_fleet(fleet['id'], 'Renamed')
         self.assertEqual(renamed['name'], 'Renamed')
-        self.assertEqual(renamed['workers'][0]['prompt_ref'], fleet['workers'][0]['prompt_ref'])
+        self.assertEqual(renamed['config_ref'], fleet['config_ref'])
+        self.assertNotIn('workers', renamed)
         self.assertEqual(self.vault.added, added)
         self.assertEqual(self.outside(CANARY), [])
 
@@ -496,8 +541,8 @@ class FleetTests(unittest.TestCase):
         binding = fleets.read_store()['fleets'][0]['bindings'][0]
         self.assertEqual(binding['pane_id'], 4)
         self.assertEqual(binding['broker'], 'broker-4')
-        self.assertEqual(binding['agent'], 'codex')
-        self.assertTrue(fleets.configuration_matches(fleet['id'], self.snapshot_value))
+        self.assertNotIn('agent', binding)
+        self.assertTrue(fleets.configuration_matches(fleet['id'], self.snapshot_value, vault=self.vault))
 
     def test_open_project_does_not_edit_or_launch(self):
         project = self.state / 'ledger'
@@ -505,7 +550,7 @@ class FleetTests(unittest.TestCase):
         (project / 'keep.txt').write_text('keep')
         before = sorted(path.name for path in project.iterdir())
         fleet = self.save([self.worker(cwd=project, effort='none')])
-        opened = fleets.open_project(fleet['id'])
+        opened = fleets.open_project(fleet['id'], vault=self.vault)
         self.assertEqual(opened, [str(project.resolve())])
         self.assertEqual(sorted(path.name for path in project.iterdir()), before)
         self.assertEqual((project / 'keep.txt').read_text(), 'keep')
