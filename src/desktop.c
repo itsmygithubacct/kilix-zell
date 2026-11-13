@@ -381,25 +381,24 @@ void zell_command_switch_layout(int index,zell_rect *frame){
 bool zell_desktop_click(zell_scene *s){
  if(!s->desktop||!s->mouse_valid||!s->mouse_click||s->mode!=ZELL_MODE_WALK)return false;
  int cx,cy;zell_desktop_camera(s,&cx,&cy);
- float hit_x,hit_y;
- zell_screen_to_world(s,(float)s->mouse_x,(float)s->mouse_y,&hit_x,&hit_y);
- /* Identity view ignores the avatar camera, so that pan is still applied. */
+ /* The cave is still drawn with the avatar camera, so its switches use
+  * screen pixels. Command Center hits use the fitted view. */
  if(s->room==0){
   const int ids[3]={10,44,45};
   for(int i=0;i<3;i++){
    zell_rect hit={88+i*21-cx,298-cy,21,77};
-   if(rect_holds(&hit,(int)hit_x,(int)hit_y)){s->mouse_click=false;open_station(s,ids[i]);return true;}
+   if(rect_holds(&hit,s->mouse_x,s->mouse_y)){s->mouse_click=false;open_station(s,ids[i]);return true;}
   }
  }
  if(s->room!=1)return false;
- hit_x+=(float)cx;hit_y+=(float)cy;
+ float wx,wy;zell_screen_to_world(s,(float)s->mouse_x,(float)s->mouse_y,&wx,&wy);
  for(int i=0;i<2;i++){
   zell_rect frame;zell_command_switch_layout(i,&frame);
-  if(rect_holds(&frame,(int)hit_x,(int)hit_y)){s->mouse_click=false;open_station(s,46+i);return true;}
+  if(rect_holds(&frame,(int)floorf(wx),(int)floorf(wy))){s->mouse_click=false;open_station(s,46+i);return true;}
  }
  for(int i=0;i<5;i++){
   zell_rect frame,display;zell_monitor_layout(i,&frame,&display);
-  if(rect_holds(&frame,(int)hit_x,(int)hit_y)){s->mouse_click=false;open_station(s,15+i);return true;}
+  if(rect_holds(&frame,(int)floorf(wx),(int)floorf(wy))){s->mouse_click=false;open_station(s,15+i);return true;}
  }
  return false;
 }
@@ -421,19 +420,10 @@ bool zell_terminal_click(zell_scene *s){
  return false;
 }
 
+#include "desktop_command.inc"
 /* L3 replaces zell_room_view_identity with the fit in src/desktop_command.inc. */
 void zell_room_view_identity(zell_scene *s){
- s->room_view.logical_x=0;
- s->room_view.logical_y=0;
- s->room_view.logical_w=ZELL_WORLD_W;
- s->room_view.logical_h=ZELL_WORLD_H;
- s->room_view.viewport_x=0;
- s->room_view.viewport_y=0;
- s->room_view.viewport_w=s->width;
- s->room_view.viewport_h=s->height;
- s->room_view.scale=1.f;
- s->room_view.offset_x=0;
- s->room_view.offset_y=0;
+ zell_room_view_fit(s);
 }
 void zell_world_to_screen(const zell_scene *s,float world_x,float world_y,float *screen_x,float *screen_y){
  const zell_room_view *v=&s->room_view;
