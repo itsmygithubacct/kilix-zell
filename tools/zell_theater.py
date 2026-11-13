@@ -461,6 +461,7 @@ class TheaterSession:
         self.audio_child = None
         self.decoder = None
         self.thread = None
+        self.audio_held = False
         self.stop_playback = threading.Event()
         self.socket_dirs = []
         self.audio_socket = None
@@ -693,6 +694,13 @@ class TheaterSession:
     def use_item(self, identity):
         if identity not in self.items:
             raise ProtocolError('unknown id')
+        # The leaving page must actually pause before this id becomes audible.
+        detail = self._silence_other_pages(identity)
+        if detail:
+            self.emit({'event': 'error', 'error': 'capture', 'detail': detail})
+            if self.active is None:
+                return None
+            return self.status(self.active, self._activity_state(self.active))
         self.halt_playback()
         with self.lock:
             self.generation = (self.generation + 1) & 0xffffffff
@@ -700,6 +708,8 @@ class TheaterSession:
             self.active = identity
             for other, row in self.items.items():
                 row['paused'] = other != identity
+                if other == identity:
+                    row.pop('ended', None)
         self._emit_caption(identity)
         self.begin_playback()
         self._sync_shown_header()
@@ -709,19 +719,25 @@ class TheaterSession:
         if self.active is None:
             raise ProtocolError('nothing playing')
         if paused:
+            if self.items[self.active].get('kind') == 'url':
+                try:
+                    silenced = self._pause_page(self.active)
+                except Exception as error:
+                    self.emit({'event': 'error', 'error': 'capture', 'detail': _clean(error)})
+                    return self.status(self.active, 'playing')
+                if not silenced:
+                    self.emit({'event': 'error', 'error': 'capture', 'detail': 'browser stayed audible'})
+                    return self.status(self.active, 'playing')
             self.halt_playback()
             with self.lock:
                 self.items[self.active]['paused'] = True
-            if self.items[self.active].get('kind') == 'url':
-                try:
-                    self._apply_media(self.active, self._call_page(self.active, 'pause'))
-                except Exception as error:
-                    self.emit({'event': 'error', 'error': 'capture', 'detail': _clean(error)})
-            self.hold_audio(False, os.getpid())
+            self._set_hold(False)
             self._sync_shown_header()
         else:
             with self.lock:
-                self.items[self.active]['paused'] = False
+                item = self.items[self.active]
+                item['paused'] = False
+                item.pop('ended', None)
             self.begin_playback()
             self._sync_shown_header()
         if paused:
@@ -737,6 +753,7 @@ class TheaterSession:
         playing = not item['paused']
         if playing:
             self.halt_playback()
+        item.pop('ended', None)
         item['position_ms'] = position
         self._emit_caption(self.active)
         if playing:
@@ -755,7 +772,7 @@ class TheaterSession:
             self.items.pop(identity)
             if closing_active:
                 self.active = None
-                self.hold_audio(False, os.getpid())
+                self._set_hold(False)
             self._clear_shown()
         if kind == 'url':
             page = self.pages.pop(identity, None)
@@ -805,15 +822,24 @@ class TheaterSession:
             raise ProtocolError('no picture')
         x, y = command.get('x'), command.get('y')
         action = command.get('action')
-        if not isinstance(x, int) or not isinstance(y, int) or action not in ('down', 'up', 'move'):
+        button = command.get('button', 0)
+        if button is None:
+            button = 0
+        # bool is an int subclass. A JSON true coordinate must not become 1.
+        if (isinstance(x, bool) or isinstance(y, bool) or isinstance(button, bool)
+                or not isinstance(x, int) or not isinstance(y, int) or not isinstance(button, int)
+                or action not in ('down', 'up', 'move')):
             raise ProtocolError('bad pointer')
         item = self.items[self.active]
-        src_w, src_h = self._pointer_source(item)
-        content_w, content_h = contain(src_w, src_h, *self.dest)
-        point = map_pointer(x, y, self.dest[0], self.dest[1], content_w, content_h, src_w, src_h)
+        try:
+            src_w, src_h = self._pointer_source(item)
+            content_w, content_h = contain(src_w, src_h, *self.dest)
+            point = map_pointer(x, y, self.dest[0], self.dest[1], content_w, content_h, src_w, src_h)
+        except ValueError as error:
+            raise ProtocolError('bad pointer') from error
         page = self._active_page()
         if point is not None and item.get('kind') == 'url' and page is not None and getattr(page, 'session', None) is not None:
-            page.pointer(point[0], point[1], int(command.get('button') or 0), action)
+            page.pointer(point[0], point[1], button, action)
         return self.status(self.active, 'playing' if not item['paused'] else 'paused')
 
     def send_key(self, command):
@@ -882,15 +908,49 @@ class TheaterSession:
             return None
         return method()
 
-    def _suspend_other_pages(self, identity):
-        """Pause every other page's media and keep the currentTime it returns."""
+    def _set_hold(self, active):
+        self.hold_audio(bool(active), os.getpid())
+        self.audio_held = bool(active)
+
+    def _confirmed_paused(self, state):
+        """True when pause returned without saying the page is still playing.
+
+        A stand-in may return nothing. A real page that returns paused false,
+        or a present video with no boolean, is still audible.
+        """
+        if not isinstance(state, dict):
+            return True
+        if state.get('paused') is False:
+            return False
+        if state.get('present') is True and state.get('paused') is not True:
+            return False
+        return True
+
+    def _pause_page(self, identity):
+        """Pause one page. False means it is still audible. An exception propagates."""
+        page = self.pages.get(identity)
+        if page is None or not hasattr(page, 'pause'):
+            return True
+        state = page.pause()
+        if not self._confirmed_paused(state):
+            return False
+        self._apply_media(identity, state)
+        item = self.items.get(identity)
+        if item is not None:
+            item['paused'] = True
+        return True
+
+    def _silence_other_pages(self, identity):
+        """Pause every other page. Return an error detail when one stays audible."""
         for key in list(self.pages):
             if key == identity:
                 continue
             try:
-                self._apply_media(key, self._call_page(key, 'pause'))
-            except Exception:
-                pass
+                if not self._pause_page(key):
+                    return 'browser stayed audible'
+            except Exception as error:
+                return _clean(error) or 'browser stayed audible'
+        return ''
 
     def render_rgb(self, rgb, generation=None):
         """Fit one RGB array through MultiInk and publish it, or drop a stale generation."""
@@ -941,6 +1001,7 @@ class TheaterSession:
         if item.get('paused'):
             return
         item.pop('decode_error', None)
+        item.pop('ended', None)
         identity = self.active
         if item.get('kind') == 'url':
             self._begin_url(identity)
@@ -957,13 +1018,17 @@ class TheaterSession:
             })
             self._fail_start(identity, 'file has no video')
             return
+        detail = self._silence_other_pages(None)
+        if detail:
+            self.emit({'event': 'error', 'error': 'capture', 'detail': detail})
+            self._fail_start(identity, detail)
+            return
         if self.play_frames and item.get('src_w') and item.get('src_h'):
             self._ensure_ink()
             if self.ink is None:
-                self._fail_start(identity, 'model')
+                self._fail_start(identity, 'model', release_hold=self.audio_held)
                 return
-        self._suspend_other_pages(None)
-        self.hold_audio(True, os.getpid())
+        self._set_hold(True)
         self.audio_socket = None
         if self.audio_launcher is not None:
             child = self.audio_launcher(item)
@@ -997,18 +1062,22 @@ class TheaterSession:
         self.thread.start()
 
     def _begin_url(self, identity):
+        detail = self._silence_other_pages(identity)
+        if detail:
+            self.emit({'event': 'error', 'error': 'capture', 'detail': detail})
+            self._fail_start(identity, detail)
+            return
         if self.play_frames:
             page = self.pages.get(identity)
             if page is None or not hasattr(page, 'frame'):
                 self.emit({'event': 'error', 'error': 'capture', 'detail': 'browser frames are not available'})
-                self._fail_start(identity, 'browser frames are not available')
+                self._fail_start(identity, 'browser frames are not available', release_hold=self.audio_held)
                 return
             self._ensure_ink()
             if self.ink is None:
-                self._fail_start(identity, 'model')
+                self._fail_start(identity, 'model', release_hold=self.audio_held)
                 return
-        self.hold_audio(True, os.getpid())
-        self._suspend_other_pages(identity)
+        self._set_hold(True)
         try:
             state = self._call_page(identity, 'resume')
         except Exception as error:
@@ -1034,9 +1103,9 @@ class TheaterSession:
         self._drop_children()
         if release_hold:
             try:
-                self.hold_audio(False, os.getpid())
+                self._set_hold(False)
             except Exception:
-                pass
+                self.audio_held = False
         self._sync_shown_header()
 
     def _drop_children(self):
@@ -1129,9 +1198,9 @@ class TheaterSession:
             self.status(identity, 'error')
         self._sync_shown_header()
         try:
-            self.hold_audio(False, os.getpid())
+            self._set_hold(False)
         except Exception:
-            pass
+            self.audio_held = False
         self._drop_children()
 
     def _decode(self, proc, identity, generation, width, height, rate, origin_ms, socket_path):
@@ -1196,19 +1265,67 @@ class TheaterSession:
         else:
             self._finish_media(identity, generation, False, f'decode exit {code}')
 
-    def _browser_position(self, page, identity, origin, started):
+    def _read_media(self, page):
         state_fn = getattr(page, 'media_state', None)
-        if state_fn is not None:
-            try:
-                state = state_fn()
-            except Exception:
-                state = None
-            if isinstance(state, dict):
-                self._apply_media(identity, state)
-                pos = state.get('position_ms')
-                if isinstance(pos, (int, float)) and not isinstance(pos, bool) and pos >= 0:
-                    return float(pos)
-        return (origin + (time.monotonic() - started)) * 1000
+        if state_fn is None:
+            return None
+        try:
+            state = state_fn()
+        except Exception:
+            return None
+        if not isinstance(state, dict):
+            return None
+        return state
+
+    def _at_end(self, state):
+        if not isinstance(state, dict) or state.get('present') is False:
+            return False
+        duration = state.get('duration_ms')
+        position = state.get('position_ms')
+        if isinstance(duration, bool) or not isinstance(duration, (int, float)) or duration <= 0:
+            return False
+        if isinstance(position, bool) or not isinstance(position, (int, float)):
+            return False
+        return position >= duration
+
+    def _browser_position(self, page, identity, origin, started):
+        state = self._read_media(page)
+        if state is not None:
+            self._apply_media(identity, state)
+            pos = state.get('position_ms')
+            if isinstance(pos, (int, float)) and not isinstance(pos, bool) and pos >= 0:
+                return float(pos), state
+        return (origin + (time.monotonic() - started)) * 1000, state
+
+    def _complete_browser(self, identity, generation, state):
+        """The page reached its duration. Pause it, then drop the theater hold."""
+        confirmed = isinstance(state, dict) and state.get('paused') is True
+        try:
+            silenced = self._pause_page(identity)
+        except Exception as error:
+            silenced = False
+            if not confirmed:
+                self.emit({
+                    'event': 'error', 'error': 'capture',
+                    'detail': _clean(error) or 'browser stayed audible',
+                })
+                return
+        if not silenced and not confirmed:
+            self.emit({'event': 'error', 'error': 'capture', 'detail': 'browser stayed audible'})
+            return
+        self._finish_media(identity, generation, True, '')
+
+    def _fail_capture(self, identity, generation, detail):
+        """A dead capture must not drop the hold while the page is still playing."""
+        try:
+            silenced = self._pause_page(identity)
+        except Exception as error:
+            silenced = False
+            detail = _clean(error) or detail
+        if not silenced:
+            self.emit({'event': 'error', 'error': 'capture', 'detail': detail or 'capture'})
+            return
+        self._finish_media(identity, generation, False, detail or 'capture', 'capture')
 
     def _capture(self, identity, generation):
         page = self.pages.get(identity)
@@ -1221,13 +1338,16 @@ class TheaterSession:
         last_status = -10 ** 9
         last_text = self._current_caption(identity)
         while not self.stop_playback.is_set():
-            position_ms = self._browser_position(page, identity, origin, started)
+            position_ms, state = self._browser_position(page, identity, origin, started)
+            if self._at_end(state):
+                self._complete_browser(identity, generation, state)
+                return
             if not self._note_position(identity, generation, position_ms):
                 break
             try:
                 frame = page.frame(0.1)
             except Exception as error:
-                self._finish_media(identity, generation, False, _clean(error), 'capture')
+                self._fail_capture(identity, generation, _clean(error))
                 return
             if frame is not None:
                 try:
@@ -1241,7 +1361,7 @@ class TheaterSession:
                             shown['src_h'] = int(height)
                     self.render_rgb(rgb, generation)
                 except Exception as error:
-                    self._finish_media(identity, generation, False, _clean(error), 'capture')
+                    self._fail_capture(identity, generation, _clean(error))
                     return
             pos = (self.items.get(identity) or {}).get('position_ms', 0)
             if pos - last_status >= 100:
@@ -1269,9 +1389,9 @@ class TheaterSession:
     def shutdown(self):
         self.halt_playback()
         try:
-            self.hold_audio(False, os.getpid())
+            self._set_hold(False)
         except Exception:
-            pass
+            self.audio_held = False
         for page in list(self.pages.values()):
             try:
                 page.close()
