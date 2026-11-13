@@ -35,6 +35,12 @@ SHEETS = (
     ('vault', [None]),
     ('workshop', [None]),
     ('extra_room_props', [76, 76, 142, 142]),
+    # Delivered round-two sheets. Cells keep a shared anchor. None keeps the
+    # painted cell size. Alpha cleanup still clears sub-visible glass.
+    ('floor_panels', [None] * 8),
+    ('monitor_frames', [None] * 2),
+    ('mana_button', [None] * 6),
+    ('workshop_stool', [None]),
 )
 
 HEADER = MARK + '''#ifndef ZELL_DESKTOP_ART_H
@@ -185,7 +191,29 @@ def load_images():
     sheet=Image.open(ROOM_ASSETS/'extra-room-props.png').convert('RGBA')
     for row in range(2):
         for col in range(2):images.append((cutout if row else top_piece)(sheet.crop((col*sheet.width//2,row*sheet.height//2,(col+1)*sheet.width//2,(row+1)*sheet.height//2))))
+    images.extend(fixed_cells('command-floor-panels.png', 4, 2))
+    images.extend(fixed_cells('command-monitor-frames.png', 2, 1))
+    images.extend(fixed_cells('mana-check-button.png', 3, 2))
+    images.append(quiet_alpha(Image.open(ROOM_ASSETS / 'workshop-stool-overlay.png')))
     return images
+
+
+def quiet_alpha(cell):
+    """Drop sub-visible alpha and keep the cell's anchor."""
+    cell = cell.convert('RGBA')
+    cell.putalpha(cell.getchannel('A').point(lambda a: 0 if a <= 3 else a))
+    return cell
+
+
+def fixed_cells(name, columns, rows):
+    sheet = Image.open(ROOM_ASSETS / name).convert('RGBA')
+    cells = []
+    for row in range(rows):
+        for col in range(columns):
+            cells.append(quiet_alpha(sheet.crop((
+                col * sheet.width // columns, row * sheet.height // rows,
+                (col + 1) * sheet.width // columns, (row + 1) * sheet.height // rows))))
+    return cells
 
 
 def sheet_source(name, pictures):
@@ -210,9 +238,20 @@ def main():
     images = load_images()
     # The four cave hatches are drawn at one width. The Vault and Workshop
     # hatches are squarer than the first two, so they are taller at that width.
+    # The extra-room hatches share the command hatch's width. Find them by
+    # sheet so later sheets do not move these two indexes.
+    index = 0
+    extra_hatches = None
+    for name, sheet in SHEETS:
+        if name == 'extra_room_props':
+            extra_hatches = (index, index + 1)
+            break
+        index += len(sheet)
+    if extra_hatches is None:
+        raise ValueError('extra room hatches are not in the atlas')
     command = heights.index(76)
     width = images[command].width * 76 / images[command].height
-    for index in (len(heights) - 4, len(heights) - 3):
+    for index in extra_hatches:
         heights[index] = round(width * images[index].height / images[index].width)
     if len(images) != len(heights):
         raise ValueError('Asset dimensions do not match the atlas')

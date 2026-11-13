@@ -86,6 +86,26 @@ int main(void) {
             assert((rgba&255u)<=alpha);
         }
     }
+    /* Round-two sheets append after the workshop stairs. Cells keep the
+     * painted anchor: floor 384x512, monitors 768x1024, button 512x512,
+     * stool the full 1536x1024 canvas. Monitor glass is cleared. */
+    assert(ZELL_ART_COMMAND_ROOM==33);
+    assert(ZELL_ART_FLOOR_OFF==ZELL_ART_WORKSHOP_STAIRS+1);
+    assert(zell_art_get(ZELL_ART_FLOOR_OFF)->width==384&&zell_art_get(ZELL_ART_FLOOR_OFF)->height==512);
+    assert(zell_art_get(ZELL_ART_FLOOR_SPARE)->width==384&&zell_art_get(ZELL_ART_FLOOR_SPARE)->height==512);
+    assert(zell_art_get(ZELL_ART_MONITOR_CONTROLLER)->width==768&&zell_art_get(ZELL_ART_MONITOR_CONTROLLER)->height==1024);
+    assert(zell_art_get(ZELL_ART_MONITOR_WORKER)->width==768&&zell_art_get(ZELL_ART_MONITOR_WORKER)->height==1024);
+    assert(zell_art_get(ZELL_ART_CHECK_IDLE)->width==512&&zell_art_get(ZELL_ART_CHECK_IDLE)->height==512);
+    assert(zell_art_get(ZELL_ART_CHECK_BUSY_LL)->width==512&&zell_art_get(ZELL_ART_CHECK_BUSY_LL)->height==512);
+    assert(zell_art_get(ZELL_ART_WORKSHOP_STOOL)->width==1536&&zell_art_get(ZELL_ART_WORKSHOP_STOOL)->height==1024);
+    {
+        const zell_art *glass=zell_art_get(ZELL_ART_MONITOR_CONTROLLER);
+        uint32_t px=glass->pixels[400*glass->width+200];
+        assert((px>>24)==0);
+        glass=zell_art_get(ZELL_ART_MONITOR_WORKER);
+        px=glass->pixels[400*glass->width+200];
+        assert((px>>24)==0);
+    }
     zell_scene_init(&s,640,400);zell_desktop_init(&s);
     for (int actor=-1; actor<6; actor++) {
         s.flame_tick=0;zell_actor_pose a=zell_desktop_pose(&s,actor);

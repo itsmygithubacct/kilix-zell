@@ -37,6 +37,12 @@ static const zell_art_source *const sources[] = {
     zell_art_vault + 0,
     zell_art_workshop + 0,
     zell_art_extra_room_props + 0, zell_art_extra_room_props + 1, zell_art_extra_room_props + 2, zell_art_extra_room_props + 3,
+    zell_art_floor_panels + 0, zell_art_floor_panels + 1, zell_art_floor_panels + 2, zell_art_floor_panels + 3,
+    zell_art_floor_panels + 4, zell_art_floor_panels + 5, zell_art_floor_panels + 6, zell_art_floor_panels + 7,
+    zell_art_monitor_frames + 0, zell_art_monitor_frames + 1,
+    zell_art_mana_button + 0, zell_art_mana_button + 1, zell_art_mana_button + 2, zell_art_mana_button + 3,
+    zell_art_mana_button + 4, zell_art_mana_button + 5,
+    zell_art_workshop_stool + 0,
 };
 _Static_assert(sizeof sources / sizeof *sources == ZELL_ART_COUNT,
                "the art sheets and desktop_assets.h disagree");
