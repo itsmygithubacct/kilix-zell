@@ -1,4 +1,4 @@
-"""Fleet metadata: both unselected instruction paths, through the real launch argv."""
+"""Fleet metadata: vault-reference startup instructions, through the real launch argv."""
 import fcntl
 import json
 import os
@@ -164,7 +164,7 @@ class FleetTests(unittest.TestCase):
         self.assertEqual(fleet['workers'][0]['prompt_ref'], 'template:role.worker')
         self.assertEqual(fleet['storage_used'], 'settings')
         document = fleets.read_store()
-        self.assertEqual(document['instruction_storage'], 'unselected')
+        self.assertEqual(document['instruction_storage'], 'vault')
         self.assertEqual(document['version'], 1)
         raw = json.loads((self.state / 'fleets' / 'fleets.json').read_text())
         self.assertNotIn('prompt', keys_of(raw))
@@ -284,7 +284,7 @@ class FleetTests(unittest.TestCase):
         cases = [
             b'{',
             b'{"version":2,"instruction_storage":"unselected","revision":0,"fleets":[]}\n',
-            b'{"version":1,"instruction_storage":"vault","revision":0,"fleets":[]}\n',
+            b'{"version":1,"instruction_storage":"settings","revision":0,"fleets":[]}\n',
             json.dumps({
                 'version': 1, 'instruction_storage': 'unselected', 'revision': 1,
                 'fleets': [{
@@ -535,16 +535,32 @@ class FleetTests(unittest.TestCase):
         with self.assertRaises(fleets.StoreCorrupt):
             fleets.monitor_frame()
 
+    def test_new_save_reloads_the_vault_instruction(self):
+        project = (self.state / 'ledger').resolve()
+        fleet = fleets.save_fleet(
+            name='Night', project='Ledger',
+            workers=[self.worker(cwd=project, instructions=CANARY)],
+            storage=None, vault=self.vault)
+        document = fleets.read_store()
+        raw = (self.state / 'fleets' / 'fleets.json').read_text()
+        self.assertEqual(document['instruction_storage'], 'vault')
+        self.assertNotEqual(document['instruction_storage'], 'unselected')
+        self.assertNotEqual(document['instruction_storage'], 'settings')
+        self.assertEqual(fleet['storage_used'], 'vault')
+        self.assertTrue(fleet['workers'][0]['prompt_ref'].startswith('vault:'))
+        self.assertNotIn(CANARY, raw)
+        self.assertNotIn(CANARY, fleet['workers'][0]['prompt_ref'])
+        self.assertEqual(fleets.reload_instruction(fleet['id'], 0, self.vault), CANARY)
+        self.assertEqual(self.ui.prompts, [])
+
     def test_storage_must_be_chosen_per_call(self):
-        with self.assertRaises(fleets.InstructionStorageUnselected):
-            fleets.save_fleet(name='A', project='B', workers=[self.worker()], storage=None, vault=self.vault)
         with self.assertRaises(fleets.InstructionStorageUnselected):
             fleets.save_fleet(name='A', project='B', workers=[self.worker()], storage='unselected', vault=self.vault)
         self.assertFalse((self.state / 'fleets' / 'fleets.json').exists())
         settings = self.save([self.worker(effort='none')], storage='settings', name='Settings')
         vaulted = self.save([self.worker(slot=1, effort='none')], storage='vault', name='Vaulted')
         document = fleets.read_store()
-        self.assertEqual(document['instruction_storage'], 'unselected')
+        self.assertEqual(document['instruction_storage'], 'vault')
         self.assertEqual({item['storage_used'] for item in document['fleets']}, {'settings', 'vault'})
         before = (self.state / 'fleets' / 'fleets.json').read_bytes()
         with self.assertRaises(fleets.FleetError):

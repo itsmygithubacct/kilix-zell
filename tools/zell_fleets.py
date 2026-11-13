@@ -1,11 +1,11 @@
 """Save and resume fleet launch metadata.
 
-The owner has not chosen how custom startup instructions are kept. Both paths
-exist and neither is the stored policy: a vault record reference, or settings
-only with the text requested again on resume. Account eligibility is not chosen
-here. A fleet file never holds a prompt body, a credential, an environment
-snapshot, or a raw argv receipt, and saving one does not change the shared
-YOLO switch.
+Startup instructions are stored as an encrypted kilix-secrets vault reference.
+The fleet file records that reference and the vault policy, never the
+instruction text. A settings-only save still asks for the text again, and that
+path is not the stored policy. Account eligibility is not chosen here. A fleet
+file never holds a prompt body, a credential, an environment snapshot, or a raw
+argv receipt, and saving one does not change the shared YOLO switch.
 """
 from __future__ import annotations
 
@@ -26,9 +26,9 @@ from zell_paths import state_root
 
 FILE_NAME = 'fleets.json'
 VERSION = 1
-INSTRUCTION_STORAGE = 'unselected'
 STORAGE_VAULT = 'vault'
 STORAGE_SETTINGS = 'settings'
+INSTRUCTION_STORAGE = STORAGE_VAULT
 REVISION_LIMIT = 1000000000
 SECRET_LIMIT = 65536
 # Kilix agent-control puts --prompt on the client argv. There is no descriptor
@@ -301,7 +301,7 @@ def _validate_document(document):
         raise StoreCorrupt('fleets.json has an unexpected shape. The last file was left unchanged.')
     _forbid(document)
     if document['version'] != VERSION or document['instruction_storage'] != INSTRUCTION_STORAGE:
-        raise StoreCorrupt('fleets.json version or instruction storage is not the unselected store. '
+        raise StoreCorrupt('fleets.json version or instruction storage is not the vault store. '
                            'The last file was left unchanged.')
     if type(document['revision']) is not int or not 0 <= document['revision'] <= REVISION_LIMIT:
         raise StoreCorrupt('fleets.json revision is invalid. The last file was left unchanged.')
@@ -567,9 +567,11 @@ def _prepare_worker(spec, storage, vault, new_records):
 
 
 def _require_storage(storage):
+    if storage is None:
+        return INSTRUCTION_STORAGE
     if storage not in {STORAGE_VAULT, STORAGE_SETTINGS}:
         raise InstructionStorageUnselected(
-            'Instruction storage is unselected. Choose the vault path or the settings-only path for this save.')
+            'Instruction storage is not the vault policy. Choose the vault path for this save.')
     return storage
 
 
@@ -694,7 +696,7 @@ def configuration_matches(fleet_id, snapshot):
     return True
 
 
-def _readable(vault, record_id):
+def _read_record_text(vault, record_id):
     fd = vault.read_fd(record_id)
     blob = bytearray()
     try:
@@ -706,9 +708,30 @@ def _readable(vault, record_id):
         if not blob or len(blob) > SECRET_LIMIT:
             raise VaultMissing('The instruction record is missing. That worker is waiting. '
                                'No default instructions were substituted.')
+        return bytes(blob).decode()
     finally:
         blob[:] = b'\0' * len(blob)
         os.close(fd)
+
+
+def _readable(vault, record_id):
+    _read_record_text(vault, record_id)
+
+
+def reload_instruction(fleet_id, slot, vault=None):
+    """Return the startup instruction for one saved worker. The fleet file is not the source."""
+    fleet = _find(read_store(), fleet_id)
+    if fleet['storage_used'] != STORAGE_VAULT:
+        raise FleetError('This fleet did not store instructions in the vault.')
+    worker = next((item for item in fleet['workers'] if item['slot'] == slot), None)
+    if worker is None:
+        raise FleetError('That worker is not in the saved fleet.')
+    kind, detail = parse_prompt_ref(worker['prompt_ref'])
+    if kind != 'vault':
+        raise FleetError('That worker has no vault instruction reference.')
+    if vault is None:
+        vault = default_vault()
+    return _read_record_text(vault, detail[0])
 
 
 def _startup_text(worker):
@@ -744,7 +767,7 @@ def resume_fleet(ui, fleet_id, *, storage, rebind=False, reentry=False, vault=No
     storage = _require_storage(storage)
     fleet = _find(read_store(), fleet_id)
     if fleet['storage_used'] != storage:
-        raise FleetError('This fleet uses a different instruction path. The unselected policy was not changed.')
+        raise FleetError('This fleet uses a different instruction path. The vault policy was not changed.')
     for worker in fleet['workers']:
         zell_rooms._project_path(worker['cwd'])
     if vault is None and storage == STORAGE_VAULT:
@@ -910,7 +933,7 @@ def pilot_menu(ui):
 
 
 def _choose_storage(ui):
-    return ui.choose('Instruction storage is not selected. Choose a path for this action only.', [
+    return ui.choose('The stored policy is an encrypted vault reference. Choose a path for this action only.', [
         ('Encrypted vault reference', STORAGE_VAULT),
         ('Settings only; re-enter instructions on resume', STORAGE_SETTINGS)])
 
@@ -953,7 +976,7 @@ def _interactive_save(ui):
         workers.append(spec)
         slot += 1
     fleet = save_fleet(name=name, project=label, workers=workers, storage=storage)
-    ui.page_text(f'Saved fleet {fleet["name"]}. Instruction storage for the product remains unselected. '
+    ui.page_text(f'Saved fleet {fleet["name"]}. Startup instructions use the encrypted vault reference. '
                  'No task was dispatched.')
     return fleet
 
