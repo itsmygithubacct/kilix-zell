@@ -263,6 +263,7 @@ test: test-desktop
 test-desktop: $(BUILD)/test-desktop
 	$(BUILD)/test-desktop
 	python3 $(ROOT)/tests/test_desktop.py
+	python3 $(ROOT)/tests/test_round2_art.py
 	python3 $(ROOT)/tests/test_media.py
 	python3 $(ROOT)/tests/test_dialogue.py
 	python3 $(ROOT)/tests/test_library.py

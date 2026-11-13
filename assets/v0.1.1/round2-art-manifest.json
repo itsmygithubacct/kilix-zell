@@ -1,0 +1,387 @@
+{
+  "version": "0.1.1",
+  "tool": "built-in image_gen",
+  "license": "MIT, matching the project LICENSE; original generated artwork and prompts",
+  "status": "source assets delivered; runtime integration and in-room snapshot review pending",
+  "assets": [
+    {
+      "file": "command-floor-panels.png",
+      "sha256": "9973d86d2b09870b3369682d8019649d165453690ca7a070116db42430bcc1f8",
+      "dimensions": [
+        1536,
+        1024
+      ],
+      "mode": "RGBA",
+      "columns": 4,
+      "rows": 2,
+      "cell_size": [
+        384,
+        512
+      ],
+      "prompt_files": [
+        "floor-panels-prompt.txt",
+        "floor-panels-alpha-prompt.txt"
+      ],
+      "alpha_extrema": [
+        0,
+        254
+      ],
+      "transparent_pixels": 1151884,
+      "cells": [
+        {
+          "id": "off",
+          "cell": [
+            0,
+            0,
+            384,
+            512
+          ],
+          "alpha_gt_32_bounds": [
+            42,
+            217,
+            374,
+            370
+          ]
+        },
+        {
+          "id": "on-teal",
+          "cell": [
+            384,
+            0,
+            768,
+            512
+          ],
+          "alpha_gt_32_bounds": [
+            416,
+            216,
+            749,
+            370
+          ]
+        },
+        {
+          "id": "yolo-amber",
+          "cell": [
+            768,
+            0,
+            1152,
+            512
+          ],
+          "alpha_gt_32_bounds": [
+            791,
+            217,
+            1125,
+            370
+          ]
+        },
+        {
+          "id": "pressed",
+          "cell": [
+            1152,
+            0,
+            1536,
+            512
+          ],
+          "alpha_gt_32_bounds": [
+            1167,
+            216,
+            1500,
+            370
+          ]
+        },
+        {
+          "id": "agents-icon",
+          "cell": [
+            0,
+            512,
+            384,
+            1024
+          ],
+          "alpha_gt_32_bounds": [
+            48,
+            611,
+            370,
+            884
+          ]
+        },
+        {
+          "id": "yolo-icon",
+          "cell": [
+            384,
+            512,
+            768,
+            1024
+          ],
+          "alpha_gt_32_bounds": [
+            462,
+            599,
+            706,
+            898
+          ]
+        },
+        {
+          "id": "updates-icon",
+          "cell": [
+            768,
+            512,
+            1152,
+            1024
+          ],
+          "alpha_gt_32_bounds": [
+            819,
+            614,
+            1086,
+            884
+          ]
+        },
+        {
+          "id": "spare-icon",
+          "cell": [
+            1152,
+            512,
+            1536,
+            1024
+          ],
+          "alpha_gt_32_bounds": [
+            1202,
+            614,
+            1453,
+            886
+          ]
+        }
+      ],
+      "notes": "Four fixed-size shallow perspective panel states, not nine-slice. Keep common top-row cell anchor across states. Icons are separate bottom-row sprites; runtime renders labels."
+    },
+    {
+      "file": "command-monitor-frames.png",
+      "sha256": "b4c4f3eeea69cc64637e1efbc579ae012cb075995d31a8e5580e85fb65b64d4c",
+      "dimensions": [
+        1536,
+        1024
+      ],
+      "mode": "RGBA",
+      "columns": 2,
+      "rows": 1,
+      "cell_size": [
+        768,
+        1024
+      ],
+      "prompt_files": [
+        "monitor-frames-prompt.txt"
+      ],
+      "alpha_extrema": [
+        0,
+        254
+      ],
+      "transparent_pixels": 1264715,
+      "cells": [
+        {
+          "id": "controller",
+          "cell": [
+            0,
+            0,
+            768,
+            1024
+          ],
+          "alpha_gt_32_bounds": [
+            46,
+            261,
+            722,
+            736
+          ]
+        },
+        {
+          "id": "worker",
+          "cell": [
+            768,
+            0,
+            1536,
+            1024
+          ],
+          "alpha_gt_32_bounds": [
+            815,
+            274,
+            1490,
+            736
+          ]
+        }
+      ],
+      "notes": "Controller crest protrudes 15 px above the straight top edge; retain it in the top center slice. Inner glass has alpha at most 2, cleared by the existing compiler alpha<=3 cleanup; runtime paints glass beneath. Keep nine-slice borders fixed and preview text within inner glass.",
+      "inner_glass_rectangles": [
+        [
+          110,
+          340,
+          658,
+          670
+        ],
+        [
+          880,
+          340,
+          1428,
+          670
+        ]
+      ],
+      "inner_glass_alpha_max": [
+        2,
+        1
+      ]
+    },
+    {
+      "file": "mana-check-button.png",
+      "sha256": "57695a80f340f0bbdab866c0eb1c8e94d68fe77b1a5f8c4ebf86c2e4551d3b04",
+      "dimensions": [
+        1536,
+        1024
+      ],
+      "mode": "RGBA",
+      "columns": 3,
+      "rows": 2,
+      "cell_size": [
+        512,
+        512
+      ],
+      "prompt_files": [
+        "subscription-button-prompt.txt"
+      ],
+      "alpha_extrema": [
+        0,
+        254
+      ],
+      "transparent_pixels": 855369,
+      "cells": [
+        {
+          "id": "idle",
+          "cell": [
+            0,
+            0,
+            512,
+            512
+          ],
+          "alpha_gt_32_bounds": [
+            72,
+            65,
+            443,
+            439
+          ]
+        },
+        {
+          "id": "pressing",
+          "cell": [
+            512,
+            0,
+            1024,
+            512
+          ],
+          "alpha_gt_32_bounds": [
+            582,
+            65,
+            953,
+            439
+          ]
+        },
+        {
+          "id": "pressed",
+          "cell": [
+            1024,
+            0,
+            1536,
+            512
+          ],
+          "alpha_gt_32_bounds": [
+            1092,
+            66,
+            1463,
+            439
+          ]
+        },
+        {
+          "id": "release",
+          "cell": [
+            0,
+            512,
+            512,
+            1024
+          ],
+          "alpha_gt_32_bounds": [
+            72,
+            578,
+            443,
+            953
+          ]
+        },
+        {
+          "id": "busy-upper-right",
+          "cell": [
+            512,
+            512,
+            1024,
+            1024
+          ],
+          "alpha_gt_32_bounds": [
+            582,
+            578,
+            953,
+            953
+          ]
+        },
+        {
+          "id": "busy-lower-left",
+          "cell": [
+            1024,
+            512,
+            1536,
+            1024
+          ],
+          "alpha_gt_32_bounds": [
+            1092,
+            578,
+            1463,
+            953
+          ]
+        }
+      ],
+      "notes": "Keep equal 512x512 animation cells and common anchor instead of independently fitting every frame. Four press/release frames followed by two busy highlight frames."
+    },
+    {
+      "file": "workshop-stool-overlay.png",
+      "sha256": "5ec30d4f516464ce57d081e424e71f7c70b22dbd85771b7af78402898740beda",
+      "dimensions": [
+        1536,
+        1024
+      ],
+      "mode": "RGBA",
+      "columns": 1,
+      "rows": 1,
+      "cell_size": [
+        1536,
+        1024
+      ],
+      "prompt_files": [
+        "workshop-stool-prompt.txt"
+      ],
+      "alpha_extrema": [
+        0,
+        254
+      ],
+      "transparent_pixels": 1566470,
+      "cells": [
+        {
+          "id": "stool",
+          "cell": [
+            0,
+            0,
+            1536,
+            1024
+          ],
+          "alpha_gt_32_bounds": [
+            759,
+            291,
+            836,
+            384
+          ]
+        }
+      ],
+      "notes": "Original 1536x1024 room canvas preserved. Stool alpha>32 bounds are [759,291,836,384]. Composite at original world coordinates, never center this whole canvas as a small sprite. Renderer should select the front rim/legs subregion for foreground occlusion; whole-stool foreground would hide the seated avatar. Generated extraction is not guaranteed pixel-identical to the original; verify the aligned in-room composite."
+    }
+  ],
+  "compiler_alpha_note": "Existing compile_desktop.py clears alpha<=3 and finds sprite bounds at alpha>32. Preserve that cleanup; centers of both monitor frames become fully transparent after it."
+}

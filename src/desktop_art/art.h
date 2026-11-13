@@ -20,4 +20,8 @@ extern const zell_art_source zell_art_craft_staff[];
 extern const zell_art_source zell_art_vault[];
 extern const zell_art_source zell_art_workshop[];
 extern const zell_art_source zell_art_extra_room_props[];
+extern const zell_art_source zell_art_floor_panels[];
+extern const zell_art_source zell_art_monitor_frames[];
+extern const zell_art_source zell_art_mana_button[];
+extern const zell_art_source zell_art_workshop_stool[];
 #endif
