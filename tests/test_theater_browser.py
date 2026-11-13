@@ -270,6 +270,41 @@ class BrowserAdapterTests(unittest.TestCase):
         self.assertTrue(browser._same_url('http://127.0.0.1:9/player/', 'http://127.0.0.1:9/player'))
         self.assertFalse(browser._same_url('http://127.0.0.1:9/player', 'http://127.0.0.1:8/player'))
 
+    def test_held_state_read_pauses_and_active_read_does_not_play(self):
+        page = browser.PrivateBrowser()
+        seen = []
+        page.session = object()
+
+        def read(action):
+            seen.append(action)
+            return {
+                'paused': True, 'position_ms': 40, 'duration_ms': 20000, 'present': True,
+            }
+
+        page._read_page = read
+        page._held = True
+        held = page.media_state()
+        page._held = False
+        active = page.media_state()
+        self.assertEqual(seen, ['pause', 'state'])
+        self.assertTrue(held['paused'])
+        self.assertEqual(held['position_ms'], 40)
+        self.assertEqual(active['position_ms'], 40)
+        self.assertNotIn('play', seen)
+        self.assertIn('node.autoplay = false', browser._HOLD_JS)
+        self.assertIn("addEventListener('playing'", browser._HOLD_JS)
+        self.assertIn('"world": "MAIN"', browser._HOLD_MANIFEST)
+        self.assertIn('node.autoplay = false', browser._MEDIA_JS)
+        page._held = True
+        held_policy = page._policy_apply_script()
+        self.assertIn('const play = false', held_policy)
+        self.assertIn('node.autoplay = false', held_policy)
+        page._held = False
+        active_policy = page._policy_apply_script()
+        self.assertIn('const play = true', active_policy)
+        matched = active_policy.index('if (current === mark)')
+        self.assertLess(active_policy.index('return false', matched), active_policy.index('node.play()'))
+
     def test_missing_browser_does_not_launch(self):
         page = browser.PrivateBrowser(session_type=FakeSession, which=lambda _name: None)
         with self.assertRaises(FileNotFoundError):
