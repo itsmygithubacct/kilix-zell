@@ -3,9 +3,9 @@
 One PrivateBrowser is one URL item. The capture viewport stays at the size
 passed to launch. Popout and dock keep that same session and page. The
 orchestrator scales the fixed RGB frame. Launch installs a document-start
-hold before the URL loads. Pause and resume talk to the page's media
-elements through the browser's own control API, and the hold keeps later
-elements paused until resume.
+hold before the URL loads. Pause and resume reach media in the captured
+page, including its frames, through the browser's own control API. The
+hold keeps a new or inactive frame paused until resume.
 """
 import atexit
 import base64
@@ -101,29 +101,57 @@ _MEDIA_JS = r"""
 (() => {
   const action = %s;
   const key = 'zell-theater-hold';
-  if (action === 'pause' || action === 'play') {
-    const hold = action === 'pause';
-    window.__zellTheaterHold = hold;
-    try { sessionStorage.setItem(key, hold ? '1' : '0'); } catch (error) {}
-    const root = document.documentElement;
-    if (root) root.setAttribute('data-zell-hold-state', hold ? '1' : '0');
-  }
-  const nodes = Array.from(document.querySelectorAll('video, audio'));
-  for (const node of nodes) {
-    if (action === 'pause') node.pause();
-    if (action === 'play') {
-      const pending = node.play();
-      if (pending && pending.catch) pending.catch(() => {});
+  const missed = [];
+  const videos = [];
+  const seen = new Set();
+  function apply(doc) {
+    if (action === 'pause' || action === 'play') {
+      const hold = action === 'pause';
+      const view = doc.defaultView;
+      if (view) {
+        try { view.__zellTheaterHold = hold; } catch (error) {}
+        try { view.sessionStorage.setItem(key, hold ? '1' : '0'); } catch (error) {}
+      }
+      const root = doc.documentElement;
+      if (root) root.setAttribute('data-zell-hold-state', hold ? '1' : '0');
+    }
+    const nodes = Array.from(doc.querySelectorAll('video, audio'));
+    for (const node of nodes) {
+      if (action === 'pause') node.pause();
+      if (action === 'play') {
+        const pending = node.play();
+        if (pending && pending.catch) pending.catch(() => {});
+      }
+      if (node.tagName === 'VIDEO') videos.push(node);
     }
   }
-  const videos = nodes.filter((node) => node.tagName === 'VIDEO');
+  function walk(doc) {
+    if (!doc || seen.has(doc)) return;
+    seen.add(doc);
+    apply(doc);
+    const frames = doc.querySelectorAll('iframe, frame');
+    for (const frame of frames) {
+      let child = null;
+      try { child = frame.contentDocument; } catch (error) { child = null; }
+      if (child) {
+        walk(child);
+        continue;
+      }
+      try {
+        const href = new URL(frame.src, doc.baseURI || location.href).href;
+        if (href && href.indexOf('about:') !== 0) missed.push(href);
+      } catch (error) {}
+    }
+  }
+  walk(document);
   const primary = videos.length ? videos[0] : null;
   const millis = (value) => Number.isFinite(value) ? Math.round(value * 1000) : null;
   return {
     present: !!primary,
     paused: primary ? videos.every((node) => node.paused) : null,
     position_ms: primary ? millis(primary.currentTime) : null,
-    duration_ms: primary ? millis(primary.duration) : null
+    duration_ms: primary ? millis(primary.duration) : null,
+    unreachable: missed
   };
 })()
 """
@@ -503,6 +531,66 @@ def _public_media(state):
     return {key: state[key] for key in ('paused', 'position_ms', 'duration_ms', 'present')}
 
 
+def _merge_media(parts):
+    present = [part for part in parts if isinstance(part, dict) and part.get('present')]
+    if not present:
+        return {'paused': None, 'position_ms': None, 'duration_ms': None, 'present': False}
+    flags = [part.get('paused') for part in present]
+    if any(flag is False for flag in flags):
+        paused = False
+    elif all(flag is True for flag in flags):
+        paused = True
+    else:
+        paused = None
+    first = present[0]
+    return {
+        'paused': paused,
+        'position_ms': first.get('position_ms'),
+        'duration_ms': first.get('duration_ms'),
+        'present': True,
+    }
+
+
+def _same_url(left, right):
+    def norm(value):
+        text = str(value or '')
+        return text[:-1] if len(text) > 8 and text.endswith('/') else text
+    return bool(left) and bool(right) and norm(left) == norm(right)
+
+
+def _element_uuid(value):
+    if isinstance(value, str) and value:
+        return value
+    if isinstance(value, dict):
+        for key in ('element-6066-11e4-a52e-4f735466cecf', 'ELEMENT'):
+            if isinstance(value.get(key), str):
+                return value[key]
+        inner = value.get('value')
+        if inner is not value:
+            found = _element_uuid(inner)
+            if found:
+                return found
+    return None
+
+
+def _element_list(value):
+    if isinstance(value, dict) and _element_uuid(value) is None and 'value' in value:
+        value = value['value']
+    if isinstance(value, list):
+        return value
+    if _element_uuid(value):
+        return [value]
+    return []
+
+
+def _frame_nodes(node, found):
+    frame = node.get('frame') if isinstance(node, dict) else None
+    if isinstance(frame, dict) and frame.get('id'):
+        found.append(frame)
+    for child in (node.get('childFrames') or []) if isinstance(node, dict) else []:
+        _frame_nodes(child, found)
+
+
 def _read_raw_frame(fd, width, height, timeout, pending):
     need = width * height * 3
     deadline = time.monotonic() + timeout
@@ -595,6 +683,14 @@ class PrivateBrowser:
         self._log_path = None
         self._debug_port = None
         self._hold_installed = False
+        self._devtools_events = []
+        self._devtools_pending = {}
+        self._runtime_enabled = False
+        self._auto_attached = False
+        self._attached_sessions = set()
+        self._session_by_target = {}
+        self._url_by_session = {}
+        self._kind_by_session = {}
         self._lock = threading.RLock()
 
     def launch(self, browser, url, width, height):
@@ -841,16 +937,162 @@ class PrivateBrowser:
 
     def _apply_media(self, action):
         # DevTools treats only the resume evaluation as a user gesture.
-        value = self._eval(_MEDIA_JS % json.dumps(action), user_gesture=(action == 'play'))
-        return _normalize_media(value)
+        # The same action is repeated in cross-origin frames the top
+        # document cannot script. Same-origin frames are walked there.
+        parts = []
+        self._collect_media(action, parts, set(), 0, None)
+        return _normalize_media(_merge_media(parts))
 
-    def _eval(self, expression, user_gesture=False):
+    def _collect_media(self, action, parts, seen, depth, context_id=None, session_id=None):
+        raw = self._eval(
+            _MEDIA_JS % json.dumps(action),
+            user_gesture=(action == 'play'),
+            context_id=context_id,
+            session_id=session_id)
+        if not isinstance(raw, dict):
+            raise RuntimeError('browser media state is unreadable')
+        parts.append(raw)
+        if depth >= 6:
+            return
+        for url in raw.get('unreachable') or []:
+            if not isinstance(url, str) or url in seen:
+                continue
+            seen.add(url)
+            self._enter_frame(action, parts, seen, url, depth + 1)
+
+    def _enter_frame(self, action, parts, seen, url, depth):
+        # A frame this call cannot script stays on the document-start hold.
+        try:
+            if self._control_kind == 'marionette':
+                self._enter_marionette_frame(action, parts, seen, url, depth)
+            else:
+                self._enter_devtools_frame(action, parts, seen, url, depth)
+        except Exception:
+            return
+
+    def _enter_marionette_frame(self, action, parts, seen, url, depth):
+        found = self._marionette('WebDriver:FindElements', {
+            'using': 'css selector', 'value': 'iframe, frame'})
+        matched = None
+        for element in _element_list(found):
+            uuid = _element_uuid(element)
+            if not uuid:
+                continue
+            src = self._marionette('WebDriver:GetElementProperty', {'id': uuid, 'name': 'src'})
+            if isinstance(src, dict) and set(src) == {'value'}:
+                src = src['value']
+            if _same_url(src, url):
+                matched = uuid
+                break
+        if matched is None:
+            return
+        self._marionette('WebDriver:SwitchToFrame', {'element': matched})
+        try:
+            self._collect_media(action, parts, seen, depth, None)
+        finally:
+            self._marionette('WebDriver:SwitchToParentFrame', {})
+
+    def _enter_devtools_frame(self, action, parts, seen, url, depth):
+        contexts = self._devtools_contexts()
+        tree = self._devtools_command('Page.getFrameTree', {})
+        frames = []
+        _frame_nodes(tree.get('frameTree') or {}, frames)
+        if frames:
+            frames = frames[1:]
+        context_id = None
+        for frame in frames:
+            if _same_url(frame.get('url'), url):
+                context_id = contexts.get(frame.get('id'))
+                if context_id is not None:
+                    break
+        if context_id is not None:
+            try:
+                self._collect_media(action, parts, seen, depth, context_id)
+                return
+            except Exception:
+                pass
+        self._drain_devtools(0.05)
+        session_id = self._devtools_session_for(url)
+        if session_id is not None:
+            self._collect_media(action, parts, seen, depth, session_id=session_id)
+
+    def _devtools_contexts(self):
+        if not self._runtime_enabled:
+            self._devtools_command('Runtime.enable', {})
+            self._runtime_enabled = True
+            self._drain_devtools(0.4)
+        else:
+            self._drain_devtools(0.05)
+        found = {}
+        owners = {}
+        for message in self._devtools_events:
+            method = message.get('method')
+            params = message.get('params') or {}
+            if method == 'Runtime.executionContextDestroyed':
+                dead = params.get('executionContextId')
+                frame_id = owners.pop(dead, None)
+                if frame_id is not None and found.get(frame_id) == dead:
+                    found.pop(frame_id, None)
+                continue
+            if method != 'Runtime.executionContextCreated':
+                continue
+            ctx = params.get('context') or {}
+            aux = ctx.get('auxData') or {}
+            frame_id = aux.get('frameId')
+            ctx_id = ctx.get('id')
+            if aux.get('isDefault') and frame_id is not None and ctx_id is not None:
+                found[frame_id] = ctx_id
+                owners[ctx_id] = frame_id
+        return found
+
+    def _devtools_session_for(self, url):
+        for session_id, frame_url in self._url_by_session.items():
+            if _same_url(frame_url, url):
+                return session_id
+        probed = 0
+        for session_id, kind in list(self._kind_by_session.items()):
+            if kind not in ('iframe', 'page'):
+                continue
+            probed += 1
+            if probed > 8:
+                break
+            try:
+                href = self._devtools('location.href', session_id=session_id)
+            except Exception:
+                continue
+            if not isinstance(href, str):
+                continue
+            self._url_by_session[session_id] = href
+            if _same_url(href, url):
+                return session_id
+        return None
+
+    def _drain_devtools(self, timeout):
+        if self._control is None or self._control_kind != 'devtools':
+            return
+        previous = self._control.gettimeout()
+        self._control.settimeout(timeout)
+        try:
+            for _ in range(100):
+                try:
+                    message = json.loads(_ws_recv(self._control))
+                except (TimeoutError, socket.timeout):
+                    break
+                self._devtools_dispatch(message)
+        finally:
+            self._control.settimeout(5 if previous is None else previous)
+
+    def _eval(self, expression, user_gesture=False, context_id=None, session_id=None):
         if self._control_kind == 'marionette':
             value = self._marionette(
                 'WebDriver:ExecuteScript',
                 {'script': 'return (' + expression + ')', 'args': []})
         else:
-            value = self._devtools(expression, user_gesture=user_gesture)
+            value = self._devtools(
+                expression,
+                user_gesture=user_gesture,
+                context_id=context_id,
+                session_id=session_id)
         if isinstance(value, dict) and 'present' not in value and set(value) == {'value'}:
             return value['value']
         return value
@@ -925,6 +1167,7 @@ class PrivateBrowser:
                 else:
                     self._connect_devtools(port)
                     self._devtools_command('Page.enable', {})
+                    self._attach_related_targets()
                 self._install_hold()
                 return
             except Exception as error:
@@ -998,28 +1241,164 @@ class PrivateBrowser:
         except RuntimeError:
             pass
 
-    def _devtools_command(self, method, params):
+    def _devtools_command(self, method, params, session_id=None):
         self._message += 1
         ident = self._message
-        _ws_send(self._control, json.dumps({
-            'id': ident,
-            'method': method,
-            'params': params,
-        }))
+        message = {'id': ident, 'method': method, 'params': params}
+        if session_id:
+            message['sessionId'] = session_id
+        _ws_send(self._control, json.dumps(message))
         while True:
-            reply = json.loads(_ws_recv(self._control))
-            if reply.get('id') != ident:
+            cached = self._devtools_pending.pop(ident, None)
+            reply = cached if cached is not None else json.loads(_ws_recv(self._control))
+            got = reply.get('id')
+            if got == ident:
+                if reply.get('error'):
+                    raise RuntimeError(f'browser control failed: {reply["error"]}')
+                return reply.get('result') or {}
+            if got is not None:
+                self._devtools_pending[got] = reply
                 continue
-            if reply.get('error'):
-                raise RuntimeError(f'browser control failed: {reply["error"]}')
-            return reply.get('result') or {}
+            self._devtools_dispatch(reply)
 
-    def _devtools(self, script, user_gesture=False):
-        result = self._devtools_command('Runtime.evaluate', {
+    def _devtools_dispatch(self, reply):
+        if not isinstance(reply, dict):
+            return
+        method = reply.get('method')
+        params = reply.get('params') or {}
+        if method == 'Target.attachedToTarget':
+            self._on_attached_target(reply)
+            return
+        if method == 'Target.detachedFromTarget':
+            self._on_detached_target(params)
+            return
+        if method == 'Target.targetInfoChanged':
+            self._on_target_info(params.get('targetInfo') or {})
+            return
+        # Context ids from another session are not valid on the page target.
+        if reply.get('sessionId'):
+            return
+        if method in ('Runtime.executionContextCreated', 'Runtime.executionContextDestroyed'):
+            if len(self._devtools_events) < 500:
+                self._devtools_events.append(reply)
+
+    def _attach_related_targets(self):
+        if self._auto_attached:
+            return
+        self._set_auto_attach(None)
+        self._auto_attached = True
+
+    def _set_auto_attach(self, session_id):
+        # Flattened sessions let one socket reach an out-of-process frame.
+        # Those frames are not paused on attach: a control call is what
+        # reads the socket, and a waiting frame would never paint.
+        params = {
+            'autoAttach': True,
+            'waitForDebuggerOnStart': False,
+            'flatten': True,
+        }
+        try:
+            self._devtools_command('Target.setAutoAttach', params, session_id=session_id)
+        except RuntimeError:
+            shorter = dict(params)
+            shorter.pop('flatten', None)
+            self._devtools_command('Target.setAutoAttach', shorter, session_id=session_id)
+
+    def _on_attached_target(self, message):
+        params = message.get('params') or {}
+        session_id = params.get('sessionId')
+        info = params.get('targetInfo') or {}
+        if not session_id or session_id in self._attached_sessions:
+            return
+        self._attached_sessions.add(session_id)
+        target_id = info.get('targetId')
+        if isinstance(target_id, str):
+            self._session_by_target[target_id] = session_id
+        self._url_by_session[session_id] = str(info.get('url') or '')
+        kind = info.get('type') or ''
+        self._kind_by_session[session_id] = kind
+        if kind not in ('iframe', 'page'):
+            return
+        try:
+            self._install_frame_hold(session_id)
+        except Exception:
+            pass
+        try:
+            self._set_auto_attach(session_id)
+        except Exception:
+            pass
+        try:
+            self._push_frame_policy(session_id)
+        except Exception:
+            pass
+
+    def _on_detached_target(self, params):
+        session_id = params.get('sessionId')
+        target_id = params.get('targetId')
+        if session_id:
+            self._url_by_session.pop(session_id, None)
+            self._kind_by_session.pop(session_id, None)
+            self._attached_sessions.discard(session_id)
+        if target_id:
+            self._session_by_target.pop(target_id, None)
+
+    def _on_target_info(self, info):
+        if not isinstance(info, dict):
+            return
+        session_id = self._session_by_target.get(info.get('targetId'))
+        if session_id is None:
+            return
+        if 'url' in info:
+            self._url_by_session[session_id] = str(info.get('url') or '')
+        if info.get('type'):
+            self._kind_by_session[session_id] = info['type']
+
+    def _install_frame_hold(self, session_id):
+        self._devtools_command('Page.enable', {}, session_id=session_id)
+        params = {'source': _HOLD_JS, 'runImmediately': True}
+        try:
+            self._devtools_command(
+                'Page.addScriptToEvaluateOnNewDocument', params, session_id=session_id)
+        except RuntimeError:
+            self._devtools_command(
+                'Page.addScriptToEvaluateOnNewDocument',
+                {'source': _HOLD_JS},
+                session_id=session_id)
+
+    def _parent_hold_cleared(self):
+        try:
+            mark = self._devtools(
+                '(document.documentElement && '
+                'document.documentElement.getAttribute("data-zell-hold-state")) || ""')
+        except Exception:
+            return False
+        return mark == '0'
+
+    def _push_frame_policy(self, session_id):
+        # A frame that already started does not share the parent's storage.
+        # Copy the current policy in, and pause media while the parent is held.
+        mark = '0' if self._parent_hold_cleared() else '1'
+        script = (
+            '(() => {'
+            ' const root = document.documentElement;'
+            ' if (root) root.setAttribute("data-zell-hold-state", %s);'
+            ' try { sessionStorage.setItem("zell-theater-hold", %s); } catch (error) {}'
+            ' if (%s) return;'
+            ' const nodes = document.querySelectorAll("video, audio");'
+            ' for (const node of nodes) { try { node.pause(); } catch (error) {} }'
+            '})()'
+        ) % (json.dumps(mark), json.dumps(mark), 'true' if mark == '0' else 'false')
+        self._devtools(script, session_id=session_id)
+
+    def _devtools(self, script, user_gesture=False, context_id=None, session_id=None):
+        params = {
             'expression': script,
             'returnByValue': True,
             'userGesture': bool(user_gesture),
-        })
+        }
+        if context_id is not None and session_id is None:
+            params['contextId'] = context_id
+        result = self._devtools_command('Runtime.evaluate', params, session_id=session_id)
         details = result.get('exceptionDetails')
         value = result.get('result', {})
         if details or value.get('subtype') == 'error':
@@ -1062,6 +1441,14 @@ class PrivateBrowser:
         control = self._control
         self._control = None
         self._control_kind = None
+        self._devtools_events = []
+        self._devtools_pending = {}
+        self._runtime_enabled = False
+        self._auto_attached = False
+        self._attached_sessions = set()
+        self._session_by_target = {}
+        self._url_by_session = {}
+        self._kind_by_session = {}
         if control is not None:
             try:
                 control.close()

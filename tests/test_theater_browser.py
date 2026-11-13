@@ -79,6 +79,20 @@ document.getElementById('btn').addEventListener('click', () => {
 </body></html>
 """
 
+PLAYER_PAGE = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>player</title></head>
+<body style="margin:0;background:#000">
+<video id="player" src="silent-neuronte.mp4" autoplay muted playsinline preload="auto"></video>
+</body></html>
+"""
+
+EMBED_PAGE = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>embed</title></head>
+<body style="margin:0;background:#102030">
+<iframe id="stage" src="%s" width="640" height="480"></iframe>
+</body></html>
+"""
+
 AUTOPLAY_PAGE = """<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>autoplay</title></head>
 <body>
@@ -221,6 +235,20 @@ class BrowserAdapterTests(unittest.TestCase):
         self.assertNotIn('field', browser._MEDIA_JS)
         self.assertNotIn('counter', browser._MEDIA_JS)
         self.assertNotIn('getElementById', browser._MEDIA_JS)
+        self.assertIn('contentDocument', browser._MEDIA_JS)
+
+    def test_frame_media_merges_the_embedded_player(self):
+        parent = {'present': False, 'paused': None, 'position_ms': None, 'duration_ms': None}
+        child = {'present': True, 'paused': True, 'position_ms': 2, 'duration_ms': 20000}
+        self.assertEqual(browser._merge_media([parent, child]), {
+            'paused': True, 'position_ms': 2, 'duration_ms': 20000, 'present': True,
+        })
+        playing = {'present': True, 'paused': False, 'position_ms': 500, 'duration_ms': 20000}
+        merged = browser._merge_media([child, playing])
+        self.assertFalse(merged['paused'])
+        self.assertEqual(merged['position_ms'], 2)
+        self.assertTrue(browser._same_url('http://127.0.0.1:9/player/', 'http://127.0.0.1:9/player'))
+        self.assertFalse(browser._same_url('http://127.0.0.1:9/player', 'http://127.0.0.1:8/player'))
 
     def test_missing_browser_does_not_launch(self):
         page = browser.PrivateBrowser(session_type=FakeSession, which=lambda _name: None)
@@ -395,6 +423,15 @@ class BrowserAdapterTests(unittest.TestCase):
                     self.skipTest(reason)
                 self._hold_redirect(name)
 
+    def test_embedded_player_follows_the_hold(self):
+        missing = [name for name in ('chromium', 'firefox-esr') if live_reason(name)]
+        if missing:
+            self.skipTest(', '.join(missing))
+        for name in ('chromium', 'firefox-esr'):
+            for cross_origin in (False, True):
+                with self.subTest(browser=name, cross_origin=cross_origin):
+                    self._embedded_player(name, cross_origin)
+
     def test_parent_death_reaps_the_private_display(self):
         reason = live_reason('chromium')
         if reason:
@@ -567,6 +604,87 @@ os.kill(os.getpid(), 9)
             finally:
                 page.close()
                 site.close()
+
+    def _embedded_player(self, name, cross_origin):
+        with tempfile.TemporaryDirectory(prefix='zell-browser-embed-') as root:
+            root_path = Path(root)
+            player = root_path / 'player'
+            player.mkdir()
+            (player / 'silent-neuronte.mp4').write_bytes(fixture_video().read_bytes())
+            player_site = None
+            if cross_origin:
+                (player / 'index.html').write_text(PLAYER_PAGE, encoding='utf-8')
+                player_site = LocalPage(player)
+                parent = root_path / 'parent'
+                parent.mkdir()
+                (parent / 'index.html').write_text(
+                    EMBED_PAGE % f'{player_site.origin}/index.html', encoding='utf-8')
+                site = LocalPage(parent)
+            else:
+                (player / 'player.html').write_text(PLAYER_PAGE, encoding='utf-8')
+                (player / 'index.html').write_text(EMBED_PAGE % 'player.html', encoding='utf-8')
+                site = LocalPage(player)
+            page = browser.PrivateBrowser()
+            try:
+                page.launch(name, site.url, 640, 480)
+                self.assertEqual(page._page_value('document.querySelectorAll("video, audio").length'), 0)
+                self.assertEqual(page._page_value('document.querySelectorAll("iframe, frame").length'), 1)
+                held = self._wait_held_player(page)
+                time.sleep(1.0)
+                stayed = page.media_state()
+                self.assertTrue(stayed['paused'])
+                self.assertEqual(stayed['position_ms'], held['position_ms'])
+                self.assertLessEqual(stayed['position_ms'], 300)
+                if not cross_origin:
+                    child = self._frame_video(page)
+                    self.assertTrue(child['paused'])
+                    self.assertEqual(child['position_ms'], stayed['position_ms'])
+                played = wait_playing(page, max(300, (held['position_ms'] or 0) + 250))
+                self.assertFalse(played['paused'])
+                self.assertGreaterEqual(played['position_ms'], 300)
+                if not cross_origin:
+                    child = self._frame_video(page)
+                    self.assertFalse(child['paused'])
+                    self.assertGreaterEqual(child['position_ms'], 300)
+                paused = page.pause()
+                self.assertTrue(paused['paused'])
+                time.sleep(1.0)
+                quiet = page.media_state()
+                self.assertTrue(quiet['paused'])
+                self.assertEqual(quiet['position_ms'], paused['position_ms'])
+                self.assertEqual(set(quiet), {'paused', 'position_ms', 'duration_ms', 'present'})
+                if not cross_origin:
+                    child = self._frame_video(page)
+                    self.assertTrue(child['paused'])
+                    self.assertEqual(child['position_ms'], quiet['position_ms'])
+            finally:
+                page.close()
+                site.close()
+                if player_site is not None:
+                    player_site.close()
+
+    def _wait_held_player(self, page):
+        deadline = time.monotonic() + 12
+        last = None
+        while time.monotonic() < deadline:
+            last = page.media_state()
+            if (last['present'] and last['paused'] is True and last['duration_ms'] == 20000
+                    and last['position_ms'] is not None and last['position_ms'] <= 300):
+                return last
+            time.sleep(0.15)
+        raise AssertionError(last)
+
+    def _frame_video(self, page):
+        return page._page_value(
+            '(() => {'
+            ' const frame = document.getElementById("stage");'
+            ' const doc = frame && frame.contentDocument;'
+            ' const node = doc && doc.getElementById("player");'
+            ' if (!node) return null;'
+            ' const position = Number.isFinite(node.currentTime) ? Math.round(node.currentTime * 1000) : null;'
+            ' return {paused: !!node.paused, position_ms: position};'
+            '})()'
+        )
 
     def _video(self, page, ident):
         return page._page_value(
