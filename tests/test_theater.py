@@ -2,6 +2,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import socket
 import struct
 import subprocess
@@ -60,8 +61,29 @@ class TheaterTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
+        self._probe_file = theater.probe_file
+
+        def probe(path):
+            info = self._probe_file(path)
+            if theater._playable(info):
+                return info
+            # Empty stand-ins are not videos. Give them metadata so protocol
+            # tests can open one. Non-empty invalid bytes keep the real probe.
+            try:
+                empty = Path(path).is_file() and Path(path).stat().st_size == 0
+            except OSError:
+                empty = False
+            if not empty:
+                return info
+            return {
+                'width': 160, 'height': 96, 'duration_ms': 20000,
+                'audio': True, 'rate': 12.0,
+            }
+
+        theater.probe_file = probe
 
     def tearDown(self):
+        theater.probe_file = self._probe_file
         self.temp.cleanup()
 
     def session(self, **kwargs):
@@ -222,6 +244,55 @@ class TheaterTests(unittest.TestCase):
             session.stop_playback.set()
             session.thread.join(timeout=1)
             os.close(fd)
+
+    def test_invalid_file_is_rejected_before_audio_or_playing(self):
+        self.assertIsNotNone(shutil.which('ffprobe'))
+        path = self.root / 'invalid.mp4'
+        path.write_bytes(b'not a video\n')
+        probed = self._probe_file(str(path))
+        self.assertEqual((probed['width'], probed['height']), (0, 0))
+        holds, children = [], []
+
+        def hold(active, _owner):
+            holds.append(bool(active))
+            return False
+
+        def launch(_item):
+            proc = theater.spawn([sys.executable, '-c', 'import time; time.sleep(30)'])
+            children.append(proc)
+            return proc
+
+        session = self.session(play_frames=True, audio_launcher=launch, hold_audio=hold)
+        session.items['a'] = theater._blank('file', str(self.file('a.mp4')), {
+            'width': 160, 'height': 96, 'duration_ms': 20000, 'audio': False, 'rate': 12,
+        })
+        session.items['a']['paused'] = False
+        session.active = 'a'
+        session.generation = 2
+        try:
+            events = session.handle_line(json.dumps({
+                'cmd': 'open', 'id': 'bad', 'browser': None,
+                'source': {'kind': 'file', 'path': str(path)},
+            }).encode())
+            self.assertEqual(events, [{
+                'event': 'error', 'error': 'decode', 'id': 'bad',
+                'detail': 'file has no video',
+            }])
+            self.assertNotIn('bad', session.items)
+            self.assertEqual(session.active, 'a')
+            self.assertEqual(session.generation, 2)
+            self.assertFalse(session.items['a']['paused'])
+            used = session.handle_line(json.dumps({'cmd': 'use', 'id': 'bad'}).encode())
+            self.assertEqual(used[-1]['error'], 'malformed')
+            self.assertEqual(holds, [])
+            self.assertEqual(children, [])
+            self.assertIsNone(session.audio_child)
+            self.assertIsNone(session.decoder)
+            self.assertEqual(session.active, 'a')
+        finally:
+            for proc in children:
+                theater.reap(proc)
+            session.shutdown()
 
     def test_bad_caption_does_not_stop_playback(self):
         path = self.file('clip.mp4')
