@@ -1216,6 +1216,133 @@ int zell_theater_queue_count(void){return th.items;}
 const char *zell_theater_error(void){return th.error;}
 const char *zell_theater_caption(void){return th.caption;}
 const char *zell_theater_last_command(void){return th.last;}
+static void th_screen_span(const zell_scene *s,float x0,float y0,float x1,float y1,int *dx,int *dy,int *dw,int *dh);
+static int th_utf8_len(const char *s){
+    unsigned char c;int n,i;
+    if(!s||!s[0])return 0;
+    c=(unsigned char)s[0];
+    if((c&0x80u)==0)return 1;
+    if((c&0xe0u)==0xc0u)n=2;
+    else if((c&0xf0u)==0xe0u)n=3;
+    else if((c&0xf8u)==0xf0u)n=4;
+    else return 1;
+    for(i=1;i<n;i++)if(((unsigned char)s[i]&0xc0u)!=0x80u)return 1;
+    return n;
+}
+static int th_caption_lines(const char *text,const char **second){
+    const char *nl;
+    if(second)*second=NULL;
+    if(!text||!text[0])return 0;
+    nl=strchr(text,'\n');
+    if(!nl||!nl[1])return 1;
+    if(second)*second=nl+1;
+    return 2;
+}
+static void th_piece(char *dst,size_t cap,const char *start,const char *end){
+    size_t n=0;
+    if(!dst||cap<1)return;
+    dst[0]=0;
+    if(!start)return;
+    if(!end)end=start+strlen(start);
+    while(start<end){
+        int k=th_utf8_len(start);
+        if(start+k>end||n+(size_t)k>=cap)break;
+        memcpy(dst+n,start,(size_t)k);
+        n+=(size_t)k;start+=k;
+    }
+    dst[n]=0;
+}
+static void th_world_screen(const zell_scene *s,zell_rect world,int *x,int *y,int *w,int *h){
+    th_screen_span(s,(float)world.x,(float)world.y,(float)(world.x+world.w),(float)(world.y+world.h),x,y,w,h);
+}
+static bool th_line_box(zell_rect bar,int index,int lines,zell_rect *out){
+    int pad,y,w;
+    if(!out||lines<1||index<0||index>=lines||bar.h<lines*16)return false;
+    pad=(bar.h-lines*16)/2;
+    y=bar.y+pad+index*16;
+    w=bar.w-16;
+    if(w<8)w=bar.w;
+    if(w<8||y<bar.y||y+16>bar.y+bar.h)return false;
+    *out=(zell_rect){bar.x+(bar.w-w)/2,y,w,16};
+    return true;
+}
+static void th_caption_bar(const zell_scene *s,int width,int height,int lines,zell_rect *bar){
+    zell_rect world,picture,remote;
+    int dx,dy,dw,dh,px,py,pw,ph,rx,ry,rw,rh,need,limit,top,bot;
+    if(!bar)return;
+    *bar=(zell_rect){0,0,0,0};
+    if(!s||width<1||height<1)return;
+    if(lines<1)lines=1;
+    if(th.fullscreen){
+        zell_rect shown,caption,help,drop;
+        zell_theater_fullscreen_layout(width,height,&shown,&caption,&help,&drop);
+        *bar=caption;
+        return;
+    }
+    /* The 44px world strip scales below the 8x16 font on a short window.
+     * Grow the screen bar in the gap under the picture so two lines stay
+     * inside it, and do not cover the remote or the status strip. */
+    zell_theater_caption_rect(&world);
+    zell_theater_video_rect(&picture);
+    zell_theater_remote_rect(&remote);
+    th_world_screen(s,world,&dx,&dy,&dw,&dh);
+    th_world_screen(s,picture,&px,&py,&pw,&ph);
+    th_world_screen(s,remote,&rx,&ry,&rw,&rh);
+    (void)px;(void)pw;(void)rx;(void)rw;(void)rh;
+    need=4+lines*16;
+    limit=height-ZELL_ROOM_STATUS_STRIP;
+    if(ry>dy&&ry<limit)limit=ry;
+    if(dh<need){
+        top=dy;bot=dy+need;
+        if(bot>limit){bot=limit;top=bot-need;}
+        if(top<py+ph){
+            top=py+ph;bot=top+need;
+            if(bot>limit){top=py+ph;bot=limit;}
+        }
+        dy=top;dh=bot-top;
+    }
+    if(dx<0){dw+=dx;dx=0;}
+    if(dy<0){dh+=dy;dy=0;}
+    if(dx>=width||dy>=height)return;
+    if(dx+dw>width)dw=width-dx;
+    if(dy+dh>height)dh=height-dy;
+    if(dw<1||dh<1)return;
+    *bar=(zell_rect){dx,dy,dw,dh};
+}
+void zell_theater_caption_screen(const zell_scene *s,int width,int height,zell_rect *bar,zell_rect *line0,zell_rect *line1){
+    const char *second=NULL;
+    int lines=th_caption_lines(th.caption,&second);
+    zell_rect box;
+    (void)second;
+    if(line0)*line0=(zell_rect){0,0,0,0};
+    if(line1)*line1=(zell_rect){0,0,0,0};
+    if(!bar)return;
+    th_caption_bar(s,width,height,lines>0?lines:1,bar);
+    if(lines<1||bar->h<16)return;
+    if(lines>1&&bar->h<32)lines=1;
+    if(th_line_box(*bar,0,lines,&box)&&line0)*line0=box;
+    if(lines>1&&th_line_box(*bar,1,lines,&box)&&line1)*line1=box;
+}
+static void th_paint_caption(sr_canvas *c,const zell_scene *s){
+    zell_rect bar,line0,line1;
+    const char *second=NULL, *nl;
+    char first[1024],other[1024];
+    if(!c||!s)return;
+    if(!th.fullscreen&&!th.caption[0])return;
+    zell_theater_caption_screen(s,c->w,c->h,&bar,&line0,&line1);
+    if(bar.w<1||bar.h<1)return;
+    zell_ui_fill(c,bar.x,bar.y,bar.w,bar.h,0x101820u,th.fullscreen?1.f:.72f);
+    if(!th.caption[0]||line0.h<1)return;
+    th_caption_lines(th.caption,&second);
+    nl=strchr(th.caption,'\n');
+    th_piece(first,sizeof first,th.caption,nl);
+    th_label(c,line0.x,line0.y,first,0xe7e2d4u,line0.w);
+    if(line1.h>0&&second){
+        const char *end=strchr(second,'\n');
+        th_piece(other,sizeof other,second,end);
+        th_label(c,line1.x,line1.y,other,0xe7e2d4u,line1.w);
+    }
+}
 static void th_screen_span(const zell_scene *s,float x0,float y0,float x1,float y1,int *dx,int *dy,int *dw,int *dh){
     float sx0,sy0,sx1,sy1;
     zell_world_to_screen(s,x0,y0,&sx0,&sy0);
@@ -1230,12 +1357,11 @@ void zell_theater_draw(const zell_scene *s,sr_canvas *c){
     int dx,dy,dw,dh;
     if(!s||!c||!s->desktop)return;
     if(th.fullscreen){
-        zell_rect picture,caption,help,drop;
-        zell_theater_fullscreen_layout(c->w,c->h,&picture,&caption,&help,&drop);
+        zell_rect picture,help,drop;
+        zell_theater_fullscreen_layout(c->w,c->h,&picture,NULL,&help,&drop);
         zell_ui_fill(c,0,0,c->w,c->h,0x05080cu,1.f);
         th_paint(c,picture.x,picture.y,picture.w,picture.h);
-        zell_ui_fill(c,caption.x,caption.y,caption.w,caption.h,0x101820u,1.f);
-        th_label(c,12,caption.y+14,th.caption[0]?th.caption:"",0xe7e2d4u,c->w-24);
+        th_paint_caption(c,s);
         zell_ui_stroke(c,help.x,help.y,help.w,help.h,1.f,0xd9ba79u,1.f);
         th_label(c,help.x+8,help.y+2,"Help",0xf0d69bu,help.w-8);
         if(th.help){
@@ -1247,11 +1373,7 @@ void zell_theater_draw(const zell_scene *s,sr_canvas *c){
     }else if(s->room==6&&!th.popout){
         th_screen_span(s,64.f,54.f,64.f+1408.f,54.f+585.f,&dx,&dy,&dw,&dh);
         th_paint(c,dx,dy,dw,dh);
-        th_screen_span(s,82.f,677.f,82.f+1370.f,677.f+44.f,&dx,&dy,&dw,&dh);
-        if(th.caption[0]){
-            zell_ui_fill(c,dx,dy,dw,dh,0x101820u,.72f);
-            th_label(c,dx+8,dy+12,th.caption,0xe7e2d4u,dw-16);
-        }
+        th_paint_caption(c,s);
     }
     if(th.popout&&!th.fullscreen){
         th_window(s,&frame,&image,&dock,&close_r);

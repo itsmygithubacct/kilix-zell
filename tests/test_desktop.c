@@ -1080,6 +1080,74 @@ static void put_le32(unsigned char *p,uint32_t v){
 static int rects_overlap(const zell_rect *a,const zell_rect *b){
     return a->x<b->x+b->w&&b->x<a->x+a->w&&a->y<b->y+b->h&&b->y<a->y+a->h;
 }
+#ifndef ZELL_RENDER_NEURONTE
+static int cue_ink(const sr_canvas *before,const sr_canvas *after,zell_rect r){
+    int n=0;
+    if(r.w<1||r.h<1)return 0;
+    for(int y=r.y;y<r.y+r.h;y++){
+        if(y<0||y>=after->h)continue;
+        for(int x=r.x;x<r.x+r.w;x++){
+            uint32_t now;
+            if(x<0||x>=after->w)continue;
+            now=canvas_px(after,x,y);
+            if(now==canvas_px(before,x,y))continue;
+            if((now&0xffffffu)==0xe7e2d4u)n++;
+        }
+    }
+    return n;
+}
+static int cue_ink_outside(const sr_canvas *before,const sr_canvas *after,zell_rect bar){
+    int n=0;
+    for(int y=0;y<after->h;y++)for(int x=0;x<after->w;x++){
+        uint32_t now=canvas_px(after,x,y);
+        if(now==canvas_px(before,x,y))continue;
+        if((now&0xffffffu)!=0xe7e2d4u)continue;
+        if(x>=bar.x&&x<bar.x+bar.w&&y>=bar.y&&y<bar.y+bar.h)continue;
+        n++;
+    }
+    return n;
+}
+static void check_two_line_cue(int width,int height,bool fullscreen){
+    zell_scene s;
+    zell_controls key={0};
+    sr_canvas before,after;
+    zell_rect bar,line0,line1;
+    const char *cue="{\"event\":\"caption\",\"id\":\"cue\",\"text\":\"The train leaves at midnight.\\nDo not miss the last car.\",\"generation\":1}";
+    zell_theater_test_reset();
+    zell_scene_init(&s,width,height);zell_desktop_init(&s);
+    s.room=6;s.mode=ZELL_MODE_WALK;s.mouse_valid=true;s.flame_tick=0;
+    zell_room_view_identity(&s);
+    if(fullscreen){
+        click_world(&s,886.f,862.f);
+        assert(zell_desktop_click(&s)&&zell_theater_menu_open());
+        key.fullscreen_key=true;
+        assert(zell_desktop_tick(&s,&key)==1&&zell_theater_fullscreen());
+    }
+    assert(sr_canvas_init(&before,width,height)&&sr_canvas_init(&after,width,height));
+    zell_draw(&s,&before);
+    assert(zell_theater_apply_line(&s,cue)==0);
+    assert(strchr(zell_theater_caption(),'\n'));
+    s.flame_tick=0;
+    zell_draw(&s,&after);
+    zell_theater_caption_screen(&s,width,height,&bar,&line0,&line1);
+    assert(bar.h>=32&&line0.h==16&&line1.h==16);
+    assert(line0.y>=bar.y&&line0.y+line0.h<=bar.y+bar.h);
+    assert(line1.y==line0.y+16&&line1.y+line1.h<=bar.y+bar.h);
+    if(!fullscreen){
+        float sx,sy;
+        zell_world_to_screen(&s,64.f,639.f,&sx,&sy);
+        assert(bar.y>=(int)floorf(sy));
+        zell_world_to_screen(&s,840.f,790.f,&sx,&sy);
+        assert(bar.y+bar.h<=(int)floorf(sy));
+        assert(bar.y+bar.h<=height-ZELL_ROOM_STATUS_STRIP);
+    }else assert(bar.h==44&&bar.y+bar.h==height);
+    assert(cue_ink(&before,&after,line0)>12);
+    assert(cue_ink(&before,&after,line1)>12);
+    assert(cue_ink_outside(&before,&after,bar)==0);
+    sr_canvas_free(&before);sr_canvas_free(&after);
+    zell_theater_test_reset();
+}
+#endif
 static void test_theater(void){
     zell_scene s;
     zell_controls c;
@@ -1311,6 +1379,20 @@ static void test_theater(void){
         assert(zell_desktop_click(&s)&&zell_theater_help_open());
         assert(drop.y==28);
     }
+#ifndef ZELL_RENDER_NEURONTE
+    check_two_line_cue(640,400,false);
+    check_two_line_cue(960,600,false);
+    check_two_line_cue(1536,1024,false);
+    check_two_line_cue(960,600,true);
+    {
+        sr_canvas cut,kept;
+        assert(sr_canvas_init(&cut,80,20)&&sr_canvas_init(&kept,80,20));
+        zell_ui_text(&cut,0,0,"abcd\xf0\x9f\x98\x80" "EXTRA",0xe7e2d4u,64);
+        zell_ui_text(&kept,0,0,"abcd...",0xe7e2d4u,64);
+        assert(memcmp(cut.px,kept.px,(size_t)80*20*sizeof(uint32_t))==0);
+        sr_canvas_free(&cut);sr_canvas_free(&kept);
+    }
+#endif
     zell_theater_test_reset();
 }
 int main(void) {

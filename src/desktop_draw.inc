@@ -664,13 +664,40 @@ void zell_ui_stroke(struct sr_canvas *canvas,int x,int y,int w,int h,float thick
  if(!canvas||w<1||h<1)return;
  sr_stroke_rect(canvas,(float)x,(float)y,(float)w,(float)h,thickness,color,alpha);
 }
+static int ui_utf8_len(const char *s){
+ unsigned char c;int n,i;
+ if(!s||!s[0])return 0;
+ c=(unsigned char)s[0];
+ if((c&0x80u)==0)return 1;
+ if((c&0xe0u)==0xc0u)n=2;
+ else if((c&0xf0u)==0xe0u)n=3;
+ else if((c&0xf8u)==0xf0u)n=4;
+ else return 1;
+ for(i=1;i<n;i++)if(((unsigned char)s[i]&0xc0u)!=0x80u)return 1;
+ return n;
+}
 void zell_ui_text(struct sr_canvas *canvas,int x,int y,const char *text,uint32_t color,int width){
- char line[512];int cap;size_t n;
+ char line[512];int cap,fit,out;const char *p;
  if(!canvas||!text)return;
  cap=width/8;if(cap<1)return;if(cap>511)cap=511;
- n=strlen(text);
- if(n>(size_t)cap){memcpy(line,text,(size_t)cap);if(cap>3)memcpy(line+cap-3,"...",3);line[cap]=0;}
- else memcpy(line,text,n+1);
+ fit=0;
+ for(p=text;*p&&*p!='\n';){
+  int n=ui_utf8_len(p);
+  if(fit+n>cap)break;
+  fit+=n;p+=n;
+ }
+ if(*p==0||*p=='\n'){memcpy(line,text,(size_t)fit);line[fit]=0;}
+ else{
+  int budget=cap>3?cap-3:cap;
+  out=0;
+  for(p=text;*p&&*p!='\n';){
+   int n=ui_utf8_len(p);
+   if(out+n>budget||out+n>511)break;
+   memcpy(line+out,p,(size_t)n);out+=n;p+=n;
+  }
+  if(cap>3&&out+3<=511){memcpy(line+out,"...",3);out+=3;}
+  line[out]=0;
+ }
  sr_text(canvas,(float)x,(float)y,line,color,1.f,1);
 }
 void zell_ui_blit(struct sr_canvas *canvas,int dx,int dy,int dw,int dh,const uint32_t *pixels,int src_w,int src_h){

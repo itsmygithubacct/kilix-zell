@@ -135,6 +135,8 @@ int zell_theater_copy_frame(const void *map,size_t map_bytes,uint32_t want_gener
 void zell_theater_contain(int src_w,int src_h,int dest_w,int dest_h,int *x,int *y,int *w,int *h);
 void zell_theater_video_rect(zell_rect *r);
 void zell_theater_caption_rect(zell_rect *r);
+/* Screen bar and the one or two glyph rows drawn inside it. An unused row has h 0. */
+void zell_theater_caption_screen(const zell_scene *s,int width,int height,zell_rect *bar,zell_rect *line0,zell_rect *line1);
 void zell_theater_remote_rect(zell_rect *r);
 void zell_theater_queue_rect(int index,int width,int height,zell_rect *r);
 int zell_theater_format_open_file(char *dst,size_t cap,const char *id,const char *path);
