@@ -371,6 +371,8 @@ class TheaterTests(unittest.TestCase):
         self.assertEqual(page.launches[0][0], '/usr/bin/google-chrome-stable')
         self.assertNotIn('--new-window', page.launches[0])
         self.assertIn('--kiosk', page.launches[0])
+        self.assertEqual(page.launches[0][-1], 'about:blank')
+        self.assertNotIn('https://example.com/a', page.launches[0])
         self.assertEqual(page.url, 'https://example.com/a')
         self.assertTrue(any(part.startswith('--user-data-dir=') for part in page.launches[0]))
         self.assertIn('web', session.items)
@@ -1087,6 +1089,8 @@ class TheaterTests(unittest.TestCase):
             session.handle({'cmd': 'open', 'id': 'auth', 'browser': 'chromium', 'source': {'kind': 'url', 'url': 'https://user:pass@example.com/a'}})
         self.assertEqual(page.launches, [])
         session.handle({'cmd': 'open', 'id': 'local', 'browser': 'chromium', 'source': {'kind': 'url', 'url': 'http://127.0.0.1:9/clip'}})
+        self.assertEqual(page.launches[0][-1], 'about:blank')
+        self.assertNotIn('http://127.0.0.1:9/clip', page.launches[0])
         self.assertEqual(page.url, 'http://127.0.0.1:9/clip')
 
     def test_each_url_has_its_own_browser(self):
@@ -1108,6 +1112,10 @@ class TheaterTests(unittest.TestCase):
         second = made[1].session
         self.assertFalse(first.closed)
         self.assertFalse(second.closed)
+        self.assertEqual(made[0].launches[0][-1], 'about:blank')
+        self.assertEqual(made[1].launches[0][-1], 'about:blank')
+        self.assertNotIn('https://example.com/one', made[0].launches[0])
+        self.assertNotIn('https://example.com/two', made[1].launches[0])
         self.assertEqual(made[0].url, 'https://example.com/one')
         self.assertEqual(made[1].url, 'https://example.com/two')
         session.handle({'cmd': 'close', 'id': 'one'})

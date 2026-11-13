@@ -150,17 +150,33 @@ class DesktopTests(unittest.TestCase):
             second=root/'b.mp4'
             first.write_bytes(b'')
             second.write_bytes(b'')
-            opened_file=session.handle({'cmd':'open','id':'a','browser':None,'source':{'kind':'file','path':str(first)}})
-            self.assertEqual(opened_file['id'],'a')
-            self.assertEqual(opened_file['state'],'paused')
-            session.active='a'
-            session.items['a']['paused']=False
-            session.items['a']['src_w']=32
-            session.items['a']['src_h']=32
-            other=session.handle({'cmd':'open','id':'b','browser':None,'source':{'kind':'file','path':str(second)}})
-            self.assertEqual(other['id'],'b')
-            self.assertEqual(other['state'],'paused')
-            self.assertEqual(session.active,'a')
+            # Empty stand-ins are not videos. Give them metadata so this
+            # protocol check can open one. Non-empty invalid bytes stay rejected.
+            original_probe=theater.probe_file
+            def probe(path):
+                info=original_probe(path)
+                try:
+                    empty=Path(path).is_file() and Path(path).stat().st_size==0
+                except OSError:
+                    empty=False
+                if empty and not theater._playable(info):
+                    return {'width':32,'height':32,'duration_ms':1000,'audio':False,'rate':12.0}
+                return info
+            theater.probe_file=probe
+            try:
+                opened_file=session.handle({'cmd':'open','id':'a','browser':None,'source':{'kind':'file','path':str(first)}})
+                self.assertEqual(opened_file['id'],'a')
+                self.assertEqual(opened_file['state'],'paused')
+                session.active='a'
+                session.items['a']['paused']=False
+                session.items['a']['src_w']=32
+                session.items['a']['src_h']=32
+                other=session.handle({'cmd':'open','id':'b','browser':None,'source':{'kind':'file','path':str(second)}})
+                self.assertEqual(other['id'],'b')
+                self.assertEqual(other['state'],'paused')
+                self.assertEqual(session.active,'a')
+            finally:
+                theater.probe_file=original_probe
 
         class Page:
             def __init__(self):
