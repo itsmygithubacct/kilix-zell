@@ -38,6 +38,11 @@ bool zell_desktop_station_visible(const zell_scene *s,int station);
 #define ZELL_STAIRS_CUTOUT_Y .87f
 #define ZELL_ROOM_ENTRY_Y .78f
 bool zell_desktop_on_stairs(const zell_scene *s);
+/* World-unit footprints. Screens come from the command layout, not a second table. */
+bool zell_desktop_blocked(const zell_scene *s,float x,float y);
+int zell_desktop_block_count(const zell_scene *s);
+void zell_desktop_block_rect(const zell_scene *s,int index,float *x0,float *y0,float *x1,float *y1);
+int zell_desktop_block_table(int index,int *room,float *x0,float *y0,float *x1,float *y1);
 bool zell_desktop_station_in_front(const zell_scene *s,int station);
 float zell_desktop_speed_factor(const zell_scene *s);
 int zell_desktop_launcher_count(const zell_scene *s);

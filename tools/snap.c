@@ -182,6 +182,18 @@ int main(int argc, char **argv)
         /* Kilix half hidden behind a staff member, then in front of one. */
         scene.room=3;scene.x=ZELL_WORLD_W*.52f;scene.y=ZELL_WORLD_H*.52f;failed+=shot(&scene,&canvas,argv[1],"vault");
         scene.room=4;scene.x=ZELL_WORLD_W*.48f;scene.y=ZELL_WORLD_H*.58f;failed+=shot(&scene,&canvas,argv[1],"workshop");
+        scene.debug_blocks[0].enabled=true;
+        {
+            static const char *const names[]={"cave","command","laundry","vault","workshop"};
+            for(int i=0;i<5;i++){
+                char name[32];
+                scene.room=i;scene.x=ZELL_WORLD_W*.50f;scene.y=ZELL_WORLD_H*.62f;
+                snprintf(scene.debug_blocks[0].label,sizeof scene.debug_blocks[0].label,"%s",names[i]);
+                snprintf(name,sizeof name,"blocks-%s",names[i]);
+                failed+=shot(&scene,&canvas,argv[1],name);
+            }
+        }
+        scene.debug_blocks[0].enabled=false;
         /* Kilix behind a worker screen with only his head showing. */
         scene.room=1;scene.x=ZELL_WORLD_W*.25f;scene.y=ZELL_WORLD_H*.50f;failed+=shot(&scene,&canvas,argv[1],"command-behind");
         scene.x=ZELL_WORLD_W*.50f;scene.y=ZELL_WORLD_H*.55f;
