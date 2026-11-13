@@ -30,6 +30,14 @@ static void service_frame(zell_scene *s,char *frame){
     }
     decoded[n]=0;
     if(kind=='J'){s->restart_needed=decoded[0]=='1';return;}
+    if(kind=='M'){
+        int v[3];
+        if(sscanf(decoded,"%d %d %d",&v[0],&v[1],&v[2])==3){
+            for(int i=0;i<3;i++)s->provider_mana[i]=v[i]<-2||v[i]>100?-1:v[i];
+            s->provider_mana_ready=true;
+        }
+        return;
+    }
     if(kind=='Y'){
         s->coding_yolo_ready=n==1&&(decoded[0]=='0'||decoded[0]=='1');
         s->coding_yolo=s->coding_yolo_ready&&decoded[0]=='1';return;

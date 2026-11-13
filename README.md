@@ -229,9 +229,21 @@ known Codex/Claude/Grok remaining percentages, using each provider's most
 restrictive unexpired window. Unknown providers remain unknown; stale values
 are marked. Wall clock > Check coding-token mana is the explicit refresh action.
 It reuses Claudex's shared `.loop/usage-pages.json`; a provider checked within the
-last hour is not contacted again. Opening Zell and its local monitor never
-initiates a provider check. Zell requests serialize; independent external
+last hour is not contacted again. The vitals snapshot itself never
+initiates a provider check; the Mana console's automatic reading, described
+below, is the one background check and can be turned off. Zell requests serialize; independent external
 Claudex writers retain their existing cache behavior.
+
+The **Mana console** in the Command Center is a small computer whose screen
+shows what Codex, Claude and Grok each have left. Its tasks zoom into the
+screen and open the usage dashboard or a provider's own usage page in a
+browser drawn inside a Kilix tab; that browser keeps its own profile, so a
+sign-in is made once. *Read mana now* reads all three at once and *What needs
+me* lists any provider that is waiting on the person, with the command to
+run. A provider shown as `ASK` is waiting on a sign-in or a folder-trust
+answer. While Zell runs, readings older than 30 minutes are read again
+automatically; this reads balances only and spends no tokens. *Automatic
+readings on / off* turns that off. The console needs Claudex.
 
 Administrator > Update OS in floating terminal runs exactly
 `sudo apt update && sudo apt -y upgrade` after an in-game confirmation. A real

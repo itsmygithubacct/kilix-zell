@@ -162,7 +162,7 @@ int main(void) {
     s.x=zell_stations[13].x*ZELL_WORLD_W;s.y=zell_stations[13].y*ZELL_WORLD_H;
     c=(zell_controls){.confirm=true};zell_scene_tick(&s,&c);
     assert(s.room==1&&s.mode==ZELL_MODE_WALK&&!s.desktop_launch);
-    assert(zell_desktop_launcher_count(&s)==11);
+    assert(zell_desktop_launcher_count(&s)==12);
     assert(s.coding_yolo_refresh&&!s.coding_yolo_ready);
     assert(zell_desktop_launcher_station(&s,0)==15);
     assert(zell_desktop_launcher_station(&s,6)==29);
@@ -201,6 +201,31 @@ int main(void) {
     s.room=1;assert(zell_desktop_station_in_front(&s,18)&&zell_desktop_station_in_front(&s,31));
     assert(!zell_desktop_station_in_front(&s,28)&&!zell_desktop_station_in_front(&s,40));
     s.room=0;
+    /* The Mana console lives in the Command Center. Its browser pages open
+     * only after the screen has zoomed in; its other tasks start at once. */
+    zell_scene_init(&s,640,400);zell_desktop_init(&s);
+    assert(!zell_desktop_station_visible(&s,ZELL_MANA_CONSOLE));
+    s.room=1;assert(zell_desktop_station_visible(&s,ZELL_MANA_CONSOLE));
+    assert(zell_desktop_actions(ZELL_MANA_CONSOLE)==7);
+    s.x=zell_stations[ZELL_MANA_CONSOLE].x*ZELL_WORLD_W;s.y=zell_stations[ZELL_MANA_CONSOLE].y*ZELL_WORLD_H+30;
+    assert(zell_desktop_near(&s)==ZELL_MANA_CONSOLE);
+    c=(zell_controls){.confirm=true};zell_scene_tick(&s,&c);
+    assert(s.mode==ZELL_MODE_DESK&&s.station==ZELL_MANA_CONSOLE&&!s.desktop_launch);
+    s.menu_index=2;zell_scene_tick(&s,&c);
+    assert(s.zoom_ticks==1&&!s.desktop_launch);
+    c=(zell_controls){.cancel=true,.move_y=1};
+    for(int i=1;i<ZELL_ZOOM_TICKS;i++){zell_scene_tick(&s,&c);assert(!s.desktop_launch&&s.zoom_ticks==i+1);}
+    zell_scene_tick(&s,&c);
+    assert(s.desktop_launch&&s.zoom_ticks==0&&s.station==ZELL_MANA_CONSOLE&&s.menu_index==2);
+    s.desktop_launch=false;s.mode=ZELL_MODE_DESK;s.menu_index=4;
+    c=(zell_controls){.confirm=true};zell_scene_tick(&s,&c);
+    assert(s.desktop_launch&&s.zoom_ticks==0);
+    /* The Sentinel stands in the Vault and the Signalman in the Workshop. */
+    s.room=0;assert(!zell_desktop_station_visible(&s,33)&&!zell_desktop_station_visible(&s,39));
+    assert(zell_desktop_station_visible(&s,32)&&zell_desktop_station_visible(&s,36)&&zell_desktop_station_visible(&s,38));
+    s.room=3;assert(zell_desktop_station_visible(&s,39)&&zell_desktop_station_visible(&s,40)&&!zell_desktop_station_visible(&s,33));
+    s.room=4;assert(zell_desktop_station_visible(&s,33)&&zell_desktop_station_visible(&s,41)&&!zell_desktop_station_visible(&s,39));
+    s.room=0;s.mode=ZELL_MODE_WALK;s.desktop_launch=false;
     strcpy(s.launcher_query,"checksum");
     assert(zell_desktop_launcher_count(&s)==2);
     assert(zell_desktop_launcher_station(&s,0)==34);

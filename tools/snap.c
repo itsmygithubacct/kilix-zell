@@ -164,6 +164,13 @@ int main(int argc, char **argv)
         scene.mode=ZELL_MODE_WALK;scene.room=1;scene.x=ZELL_WORLD_W*.50f;scene.y=ZELL_WORLD_H*.55f;
         scene.coding_yolo_ready=true;scene.coding_yolo=false;
         failed+=shot(&scene,&canvas,argv[1],"command-center");
+        /* The Mana console with a reading, then partway through its zoom. */
+        scene.provider_mana_ready=true;scene.provider_mana[0]=19;scene.provider_mana[1]=52;scene.provider_mana[2]=-2;
+        failed+=shot(&scene,&canvas,argv[1],"mana-console");
+        scene.station=ZELL_MANA_CONSOLE;scene.menu_index=1;
+        scene.zoom_ticks=ZELL_ZOOM_TICKS/2;failed+=shot(&scene,&canvas,argv[1],"mana-zoom-half");
+        scene.zoom_ticks=ZELL_ZOOM_TICKS;failed+=shot(&scene,&canvas,argv[1],"mana-zoom-full");
+        scene.zoom_ticks=0;scene.station=0;scene.menu_index=0;
         scene.coding_yolo=true;
         failed+=shot(&scene,&canvas,argv[1],"command-center-yolo");
         scene.coding_yolo=false;

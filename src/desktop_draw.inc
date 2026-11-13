@@ -74,11 +74,57 @@ static void desktop_command_switch(const zell_scene *s,sr_canvas *c,int index,in
  desktop_text(c,r.x+18,r.y+125,index?"Click / Enter: configure & run":"Click / Enter: toggle",0xc1c9bfu,265);
 }
 /* Drawn twice: once for what stands behind Kilix, once for what stands in front. */
+/* One row per provider: name, a bar of what is left, and the number. */
+static void desktop_mana_rows(const zell_scene *s,sr_canvas *c,int x,int y,int w,int row,int scale){
+ static const char *const names[3]={"CODEX","CLAUDE","GROK"};
+ for(int i=0;i<3;i++){
+  int value=s->provider_mana_ready?s->provider_mana[i]:-1,yy=y+i*row;
+  uint32_t ink=value==-2?0xf0b35eu:value<0?0x7b8990u:value<10?0xe18c70u:value<30?0xd6b867u:0x6cc9b7u;
+  char text[24];if(value==-2)snprintf(text,sizeof text,"ASK");else if(value<0)snprintf(text,sizeof text,"?");else snprintf(text,sizeof text,"%d%%",value);
+  int name_w=56*scale,value_w=40*scale,bar=w-name_w-value_w-8;
+  sr_text(c,(float)x,(float)yy,names[i],0xc9dcd8u,(float)scale,1);
+  if(bar>8){
+   sr_fill_rect(c,(float)(x+name_w),(float)(yy+3*scale),(float)bar,(float)(9*scale),0x13262eu,1);
+   if(value>0)sr_fill_rect(c,(float)(x+name_w),(float)(yy+3*scale),(float)(bar*value)/100,(float)(9*scale),ink,1);
+  }
+  sr_text(c,(float)(x+w-value_w+4),(float)yy,text,ink,(float)scale,1);
+ }
+}
+static void desktop_mana_console(const zell_scene *s,sr_canvas *c,int cx,int cy,bool selected){
+ zell_rect frame,display;zell_mana_console_layout(&frame,&display);
+ frame.x-=cx;frame.y-=cy;display.x-=cx;display.y-=cy;
+ const zell_art *a=zell_art_get(ZELL_ART_WORKER);
+ if(a){sr_canvas src;sr_canvas_wrap(&src,a->pixels,a->width,a->height);sr_blit_scaled(c,&src,frame.x,frame.y,frame.w,frame.h,1);}
+ sr_fill_rect(c,(float)display.x,(float)display.y,(float)display.w,(float)display.h,0x07141au,1);
+ if(selected)sr_stroke_rect(c,(float)display.x,(float)display.y,(float)display.w,(float)display.h,2,0x96ead0u,1);
+ desktop_text(c,display.x+6,display.y+4,"MANA",0xe9d49fu,display.w-12);
+ desktop_mana_rows(s,c,display.x+6,display.y+24,display.w-12,17,1);
+ if(selected)desktop_label(c,frame.x+frame.w/2,frame.y+frame.h+8,"Enter: balances & usage pages",0xa8f3d5u);
+}
+/* The console screen grows to fill the view before its browser tab opens. */
+static void desktop_zoom(const zell_scene *s,sr_canvas *c){
+ zell_rect frame,display;zell_mana_console_layout(&frame,&display);
+ int cx,cy;zell_desktop_camera(s,&cx,&cy);
+ float t=(float)s->zoom_ticks/(float)ZELL_ZOOM_TICKS;if(t>1)t=1;t=t*t*(3-2*t);
+ float x=(float)(display.x-cx)*(1-t),y=(float)(display.y-cy)*(1-t);
+ float w=(float)display.w+((float)c->w-(float)display.w)*t,h=(float)display.h+((float)c->h-(float)display.h)*t;
+ sr_fill_rect(c,x,y,w,h,0x07141au,1);
+ sr_stroke_rect(c,x,y,w,h,2,0x96ead0u,1);
+ int scale=t>.6f&&w>520?2:1;
+ if(w>220&&h>120){
+  sr_text(c,x+18,y+14,"MANA CONSOLE",0xe9d49fu,(float)scale,1);
+  desktop_mana_rows(s,c,(int)x+18,(int)y+14+26*scale,(int)w-36,22*scale,scale);
+  static const char *const pages[4]={"usage dashboard","Codex usage page","Claude usage page","Grok usage page"};
+  char line[80];snprintf(line,sizeof line,"> opening the %s in a browser tab...",pages[s->menu_index>=0&&s->menu_index<4?s->menu_index:0]);
+  sr_text(c,x+18,y+h-30*(float)scale,line,0x85f7b2u,(float)scale,1);
+ }
+}
 static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy,bool front){
  int near=zell_desktop_near(s);
  for(int i=15;i<ZELL_STATIONS;i++){
   if(!zell_desktop_station_visible(s,i)||zell_desktop_station_in_front(s,i)!=front)continue;
   int x=(int)(zell_stations[i].x*ZELL_WORLD_W)-cx,y=(int)(zell_stations[i].y*ZELL_WORLD_H)-cy;
+  if(i==ZELL_MANA_CONSOLE){desktop_mana_console(s,c,cx,cy,i==near);continue;}
   if(i>=46){desktop_command_switch(s,c,i-46,cx,cy,i==near);continue;}
   /* The Vault and Workshop floors already end in painted steps. */
   if(i==28){if(s->room<3)desktop_hatch(c,s->room==1?ZELL_ART_COMMAND_STAIRS:ZELL_ART_LAUNDRY_STAIRS,x,y,false,"");continue;}

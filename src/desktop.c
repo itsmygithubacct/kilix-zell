@@ -39,13 +39,13 @@ const zell_station zell_stations[ZELL_STATIONS]={
  {"Pilot","Project fleets and session arrangements",.64f,.72f,ZELL_ART_PILOT_IDLE},
  {"Key Master","API keys, logins and encrypted secrets",.50f,.72f,ZELL_ART_KEY_MASTER_IDLE},
  {"Gatekeeper","Power, sessions and restart checks",.41f,.88f,ZELL_ART_CIVIC_IDLE},
- {"Signalman","Wi-Fi, connections and Bluetooth",.20f,.51f,ZELL_ART_CIVIC_IDLE+4},
+ {"Signalman","Wi-Fi, connections and Bluetooth",.34f,.62f,ZELL_ART_CIVIC_IDLE+4},
  {"Porter","Files, trash and archives",.36f,.86f,ZELL_ART_CRAFT_IDLE},
  {"Laundress","Drives, removable media and health",.64f,.86f,ZELL_ART_CRAFT_IDLE+4},
  {"Merchant","Packages, Kilix apps and local models",.36f,.43f,ZELL_ART_CIVIC_IDLE+8},
  {"Herald","Notices, jobs and attention",.80f,.49f,ZELL_ART_CIVIC_IDLE+12},
  {"Timekeeper","Timers, reminders and scheduled work",.81f,.34f,ZELL_ART_CRAFT_IDLE+8},
- {"Sentinel","Accounts, updates and security",.59f,.88f,ZELL_ART_CIVIC_IDLE+16},
+ {"Sentinel","Accounts, updates and security",.66f,.62f,ZELL_ART_CIVIC_IDLE+16},
  {"Vault Keeper","Backups, verification and restore",.50f,.55f,ZELL_ART_CRAFT_IDLE+12},
  {"Tinkerer","Displays, sound, printers and devices",.50f,.55f,ZELL_ART_CRAFT_IDLE+16},
  {"Vault hatch","Backups and restore downstairs",.46f,.645f,ZELL_ART_VAULT_HATCH},
@@ -53,7 +53,8 @@ const zell_station zell_stations[ZELL_STATIONS]={
  {"Dictation switch","Listen once; review words before sending",.078f,.34f,16},
  {"Music mute switch","Pause or resume the DJ and room music",.092f,.34f,16},
  {"YOLO switch","Enable or disable shared coding-agent YOLO mode",.21f,.88f,-1},
- {"Agent updates switch","Choose and update installed coding agents",.79f,.88f,-1}
+ {"Agent updates switch","Choose and update installed coding agents",.79f,.88f,-1},
+ {"Mana console","Coding-token balances and the providers' usage pages",.38f,.58f,ZELL_ART_WORKER}
 };
 static const char *const actions[ZELL_STATIONS][17]={
  {"Ask the wizard","First-run tour of Zell",NULL},
@@ -77,7 +78,8 @@ static const char *const actions[ZELL_STATIONS][17]={
 #include "os_tasks.inc"
  [42]={"Go down to the Vault",NULL}, [43]={"Go down to the Workshop",NULL},
  [44]={"Start / finish dictation",NULL}, [45]={"Pause / resume music",NULL},
- [46]={"Toggle shared YOLO mode",NULL}, [47]={"Update selected coding agents",NULL}
+ [46]={"Toggle shared YOLO mode",NULL}, [47]={"Update selected coding agents",NULL},
+ [48]={"Zoom into the usage dashboard","Zoom into the Codex usage page","Zoom into the Claude usage page","Zoom into the Grok usage page","Read mana now","What needs me","Automatic readings on / off",NULL}
 };
 int zell_desktop_actions(int station){int n=0;
  if(station<0||station>=ZELL_STATIONS)return 0;
@@ -86,11 +88,12 @@ int zell_desktop_actions(int station){int n=0;
 const char *zell_desktop_action(int station,int index){return index>=0&&index<zell_desktop_actions(station)?actions[station][index]:"";}
 void zell_desktop_init(zell_scene *s){s->desktop=true;s->x=(float)ZELL_WORLD_W*.51f;s->y=(float)ZELL_WORLD_H*.48f;s->station=0;s->desktop_launch=false;s->hp=100;s->max_hp=100;s->fatigue=100;s->mana=-1;s->update_age_days=-1;s->mana_age=-1;s->os_health=-1;s->dirty_files=0;}
 bool zell_desktop_station_visible(const zell_scene *s,int station){
- if(s->room==0)return station<ZELL_CAVE_STATIONS||station==32||station==33||(station>=36&&station<=39)||(station>=42&&station<=45);
+ if(s->room==0)return station<ZELL_CAVE_STATIONS||station==32||(station>=36&&station<=38)||(station>=42&&station<=45);
  if(station==28)return true;
- if(s->room==1)return (station>=15&&station<=19)||(station>=29&&station<=31)||station==46||station==47;
+ if(s->room==1)return (station>=15&&station<=19)||(station>=29&&station<=31)||(station>=46&&station<=48);
  if(s->room==2)return (station>=20&&station<20+s->disk_count)||station==34||station==35;
- return (s->room==3&&station==40)||(s->room==4&&station==41);
+ /* The Sentinel keeps the Vault with its keeper; the Signalman works in the Workshop. */
+ return (s->room==3&&(station==40||station==39))||(s->room==4&&(station==41||station==33));
 }
 static bool contains_folded(const char *haystack,const char *needle){
  for(;*haystack;haystack++){size_t i=0;while(needle[i]&&haystack[i]&&tolower((unsigned char)haystack[i])==tolower((unsigned char)needle[i]))i++;if(!needle[i])return true;}
@@ -162,9 +165,10 @@ static void open_station(zell_scene *s,int n){s->running=false;s->run_charge=0;s
  }
  if(n==10){s->voice_on=!s->voice_on;s->voice_changed=true;s->mode=ZELL_MODE_WALK;}
  else if(n==44){s->dictation_on=!s->dictation_on;s->dictation_changed=true;s->mode=ZELL_MODE_WALK;}
- else {s->mode=ZELL_MODE_DESK;if(n==12||(n>=15&&n<=31)||n>=45)s->desktop_launch=true;}}
+ else {s->mode=ZELL_MODE_DESK;if(n==12||(n>=15&&n<=31)||(n>=45&&n<=47))s->desktop_launch=true;}}
 int zell_desktop_tick(zell_scene *s,const zell_controls *c){
  if(!s->desktop)return 0;
+ if(s->zoom_ticks>0){if(++s->zoom_ticks>ZELL_ZOOM_TICKS){s->zoom_ticks=0;s->desktop_launch=true;}return 1;}
  if(!c->run){s->running=false;s->run_charge=0;s->run_blocked=false;}
  if(s->mode!=ZELL_MODE_WALK){s->running=false;s->run_charge=0;s->run_bump=0;s->run_blocked=c->run;}
 
@@ -261,6 +265,8 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
  if(c->move_y&&s->menu_hold==0&&count){s->menu_index=(s->menu_index+c->move_y+count)%count;s->menu_hold=9;}else if(s->menu_hold>0)s->menu_hold--;
  if(c->confirm&&count){
   if(s->mode==ZELL_MODE_LAUNCHER){int a=zell_desktop_launcher_action(s,s->menu_index),station=zell_desktop_launcher_station(s,s->menu_index);open_station(s,station);if(a>=0&&s->mode==ZELL_MODE_DESK){s->menu_index=a;s->desktop_launch=true;}}
+  /* The console's browser pages open after the screen has zoomed in. */
+  else if(s->station==ZELL_MANA_CONSOLE&&s->menu_index<4)s->zoom_ticks=1;
   else s->desktop_launch=true;
   if(s->station==0&&s->menu_index==0&&s->desktop_launch){s->desktop_launch=false;s->mode=ZELL_MODE_QUESTION;s->question_len=0;s->question[0]=0;}
  }
@@ -332,6 +338,12 @@ void zell_monitor_layout(int screen,zell_rect *frame,zell_rect *display){
  int w=screen==0?420:320,h=screen==0?310:235;
  *frame=(zell_rect){(int)(station->x*ZELL_WORLD_W)-w/2,(int)(station->y*ZELL_WORLD_H)-h,w,h};
  *display=(zell_rect){frame->x+w*11/100,frame->y+h*(screen==0?26:15)/100,w*78/100,h*(screen==0?52:62)/100};
+}
+void zell_mana_console_layout(zell_rect *frame,zell_rect *display){
+ const zell_station *station=&zell_stations[ZELL_MANA_CONSOLE];
+ int w=176,h=129;
+ *frame=(zell_rect){(int)(station->x*ZELL_WORLD_W)-w/2,(int)(station->y*ZELL_WORLD_H)-h,w,h};
+ *display=(zell_rect){frame->x+w*11/100,frame->y+h*15/100,w*78/100,h*62/100};
 }
 void zell_command_switch_layout(int index,zell_rect *frame){
  if(index<0||index>1){*frame=(zell_rect){0};return;}

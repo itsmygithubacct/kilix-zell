@@ -1,4 +1,5 @@
-"""Local vitals. Only request_mana may invoke a provider.
+"""Local vitals. Here only request_mana may invoke a provider; snapshots never do.
+The Mana console (zell_mana) owns the automatic background reading.
 
 Fatigue is remaining headroom: min(CPU idle%, MemAvailable/MemTotal%).
 CPU uses successive /proc/stat deltas (including iowait as idle, excluding
@@ -172,7 +173,8 @@ def mana(ui, now):
             values.append(value)
             if checked:
                 ages.append(max(0, int(now - checked)))
-        lines.append(f'{provider}: ' + ('unknown' if value is None else f'{value:g}% remaining') +
+        waiting = value is None and entry.get('status') in ('attention', 'login_required')
+        lines.append(f'{provider}: ' + ('needs you (see the Mana console)' if waiting else 'unknown' if value is None else f'{value:g}% remaining') +
                      (f'; checked {datetime.fromtimestamp(stamp).isoformat(timespec="seconds")}' if stamp else '; never checked'))
     lines.append('Mana: mean of known provider minima; unknown providers excluded.')
     lines.append('Missing/unknown providers: ' + (', '.join(missing) or 'none'))

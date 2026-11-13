@@ -97,6 +97,10 @@ typedef struct zell_scene {
     int notice_count;
     char notice_text[320];
     int fatigue, mana, update_age_days, mana_age;
+    /* Codex, Claude, Grok: percent left, -1 unknown, -2 waiting on the person. */
+    int provider_mana[3];
+    bool provider_mana_ready;
+    int zoom_ticks;
     int os_health, dirty_files;
     bool disks_ready;
     int disk_count, disk_used[8];
