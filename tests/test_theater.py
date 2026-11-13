@@ -371,7 +371,7 @@ class TheaterTests(unittest.TestCase):
         self.assertEqual(page.launches[0][0], '/usr/bin/google-chrome-stable')
         self.assertNotIn('--new-window', page.launches[0])
         self.assertIn('--kiosk', page.launches[0])
-        self.assertEqual(page.launches[0][-1], 'https://example.com/a')
+        self.assertEqual(page.url, 'https://example.com/a')
         self.assertTrue(any(part.startswith('--user-data-dir=') for part in page.launches[0]))
         self.assertIn('web', session.items)
         self.assertEqual(session.items['web']['paused'], True)
@@ -543,6 +543,287 @@ class TheaterTests(unittest.TestCase):
         self.assertEqual(session.items['web']['paused'], True)
         self.assertEqual(holds, [True, False])
 
+    def test_failed_browser_pause_does_not_start_another_sound(self):
+        class Loud(FramePage):
+            def __init__(self):
+                super().__init__()
+                self.attempts = 0
+
+            def pause(self):
+                self.attempts += 1
+                raise RuntimeError('browser media state is unreadable')
+
+        holds, children = [], []
+
+        def hold(active, _owner):
+            holds.append(bool(active))
+            return False
+
+        def launch(_item):
+            proc = theater.spawn([sys.executable, '-c', 'import time; time.sleep(30)'])
+            children.append(proc)
+            return proc
+
+        first, second = Loud(), FramePage()
+        pending = [first, second]
+
+        def factory():
+            return pending.pop(0)
+
+        session = self.session(browser_factory=factory, hold_audio=hold, audio_launcher=launch)
+        try:
+            for identity in ('one', 'two'):
+                session.handle({
+                    'cmd': 'open', 'id': identity, 'browser': 'chromium',
+                    'source': {'kind': 'url', 'url': 'https://example.com/' + identity},
+                })
+            session.handle({'cmd': 'use', 'id': 'one'})
+            events = session.handle_line(json.dumps({'cmd': 'use', 'id': 'two'}).encode())
+            self.assertTrue(any(
+                event.get('event') == 'error' and event.get('error') == 'capture'
+                and 'unreadable' in event.get('detail', '')
+                for event in events))
+            self.assertFalse(any(
+                event.get('id') == 'two' and event.get('state') == 'playing' for event in events))
+            self.assertEqual(second.resumes, 0)
+            self.assertFalse(first.paused)
+            self.assertEqual(first.attempts, 1)
+            self.assertEqual(session.active, 'one')
+            self.assertFalse(session.items['one']['paused'])
+            self.assertTrue(session.items['two']['paused'])
+            self.assertEqual(holds, [True])
+            session.items['mov'] = theater._blank('file', str(self.file('mov.mp4')), {
+                'width': 16, 'height': 8, 'duration_ms': 400, 'audio': True, 'rate': 10,
+            })
+            session.handle_line(json.dumps({'cmd': 'use', 'id': 'mov'}).encode())
+            self.assertEqual(children, [])
+            self.assertEqual(session.active, 'one')
+            self.assertFalse(first.paused)
+            self.assertEqual(holds, [True])
+        finally:
+            for proc in children:
+                theater.reap(proc)
+            session.shutdown()
+
+    def test_failed_pause_command_keeps_the_hold(self):
+        class Loud(FramePage):
+            def pause(self):
+                raise RuntimeError('browser media state is unreadable')
+
+        holds = []
+        page = Loud()
+        session = self.session(
+            browser=page, hold_audio=lambda active, _owner: holds.append(bool(active)) or False)
+        session.handle({
+            'cmd': 'open', 'id': 'web', 'browser': 'chromium',
+            'source': {'kind': 'url', 'url': 'https://example.com/a'},
+        })
+        session.handle({'cmd': 'use', 'id': 'web'})
+        events = session.handle_line(json.dumps({'cmd': 'pause'}).encode())
+        self.assertTrue(any(
+            event.get('event') == 'error' and event.get('error') == 'capture'
+            and 'unreadable' in event.get('detail', '')
+            for event in events))
+        self.assertEqual(events[-1]['state'], 'playing')
+        self.assertEqual(events[-1]['id'], 'web')
+        self.assertFalse(page.paused)
+        self.assertFalse(session.items['web']['paused'])
+        self.assertEqual(holds, [True])
+
+    def test_browser_end_pauses_and_releases_the_hold(self):
+        class Ended(FramePage):
+            def __init__(self):
+                super().__init__()
+                self.pauses = 0
+
+            def pause(self):
+                self.pauses += 1
+                self.paused = True
+                return {'paused': True, 'position_ms': 20000, 'duration_ms': 20000, 'present': True}
+
+            def resume(self):
+                self.paused = False
+                self.resumes += 1
+                return {'paused': False, 'position_ms': 20000, 'duration_ms': 20000, 'present': True}
+
+            def media_state(self):
+                return {'paused': True, 'position_ms': 20000, 'duration_ms': 20000, 'present': True}
+
+            def frame(self, timeout=0.1):
+                return None
+
+        holds = []
+        page = Ended()
+        session = self.session(
+            browser=page, play_frames=True,
+            hold_audio=lambda active, _owner: holds.append(bool(active)) or False)
+        session.ink = object()
+        try:
+            session.handle({
+                'cmd': 'open', 'id': 'web', 'browser': 'chromium',
+                'source': {'kind': 'url', 'url': 'https://example.com/a'},
+            })
+            events = session.handle_line(json.dumps({'cmd': 'use', 'id': 'web'}).encode())
+            self.assertIsNotNone(session.thread)
+            session.thread.join(1)
+            events.extend(session.drain())
+            self.assertFalse(session.thread.is_alive())
+            self.assertGreaterEqual(page.pauses, 1)
+            self.assertTrue(page.paused)
+            self.assertTrue(session.items['web']['paused'])
+            self.assertTrue(session.items['web'].get('ended'))
+            self.assertEqual(session.items['web']['position_ms'], 20000)
+            self.assertTrue(any(event.get('state') == 'ended' for event in events))
+            self.assertEqual(holds, [True, False])
+        finally:
+            session.shutdown()
+
+    def test_capture_failure_pauses_before_dropping_the_hold(self):
+        class Broken(FramePage):
+            def __init__(self):
+                super().__init__()
+                self.pauses = 0
+
+            def pause(self):
+                self.pauses += 1
+                self.paused = True
+                return {'paused': True, 'position_ms': 10, 'duration_ms': 20000, 'present': True}
+
+            def media_state(self):
+                return {'paused': self.paused, 'position_ms': 10, 'duration_ms': 20000, 'present': True}
+
+            def frame(self, timeout=0.1):
+                raise RuntimeError('capture process exited')
+
+        class Stuck(Broken):
+            def pause(self):
+                self.pauses += 1
+                raise RuntimeError('browser media state is unreadable')
+
+        def run(page):
+            holds = []
+            session = self.session(
+                browser=page, play_frames=True,
+                hold_audio=lambda active, _owner: holds.append(bool(active)) or False)
+            session.ink = object()
+            try:
+                session.handle({
+                    'cmd': 'open', 'id': 'web', 'browser': 'chromium',
+                    'source': {'kind': 'url', 'url': 'https://example.com/a'},
+                })
+                events = session.handle_line(json.dumps({'cmd': 'use', 'id': 'web'}).encode())
+                session.thread.join(1)
+                events.extend(session.drain())
+                alive = session.thread.is_alive()
+                return session, events, list(holds), page, alive
+            finally:
+                session.shutdown()
+
+        session, events, holds, page, alive = run(Broken())
+        self.assertFalse(alive)
+        self.assertGreaterEqual(page.pauses, 1)
+        self.assertTrue(page.paused)
+        self.assertTrue(session.items['web']['paused'])
+        self.assertTrue(any(
+            event.get('event') == 'error' and event.get('error') == 'capture'
+            and event.get('detail') == 'capture process exited'
+            for event in events))
+        self.assertTrue(any(event.get('state') == 'error' for event in events))
+        self.assertEqual(holds, [True, False])
+
+        stuck = Stuck()
+        session, events, holds, page, alive = run(stuck)
+        self.assertFalse(alive)
+        self.assertGreaterEqual(stuck.pauses, 1)
+        self.assertFalse(stuck.paused)
+        self.assertFalse(session.items['web']['paused'])
+        self.assertTrue(any(event.get('event') == 'error' and event.get('error') == 'capture' for event in events))
+        self.assertFalse(any(event.get('state') == 'error' for event in events))
+        self.assertEqual(holds, [True])
+
+    def test_seek_and_resume_clear_an_ended_picture(self):
+        holds, children = [], []
+
+        def hold(active, _owner):
+            holds.append(bool(active))
+            return False
+
+        def launch(_item):
+            proc = theater.spawn([sys.executable, '-c', 'import time; time.sleep(30)'])
+            children.append(proc)
+            return proc
+
+        session = self.session(hold_audio=hold, audio_launcher=launch)
+        session.items['a'] = theater._blank('file', str(self.file('a.mp4')), {
+            'width': 2, 'height': 4, 'duration_ms': 400, 'audio': True, 'rate': 10,
+        })
+        session.active = 'a'
+        session.generation = 1
+        session.items['a']['paused'] = False
+        fd = os.memfd_create('theater')
+        session.attach(fd)
+        try:
+            self.assertEqual(session.write_frame(bytes([1, 2, 3, 255]) * (2 * 4), 2, 4, 1), 2)
+            session._finish_media('a', 1, True, '')
+            self.assertEqual(holds, [False])
+            sought = session.handle({'cmd': 'seek_ms', 'position_ms': 0})
+            self.assertEqual(sought['state'], 'paused')
+            self.assertEqual(sought['position_ms'], 0)
+            self.assertFalse(session.items['a'].get('ended'))
+            self.assertTrue(session.items['a']['paused'])
+            self.assertEqual(children, [])
+            os.lseek(fd, 0, os.SEEK_SET)
+            _magic, _version, width, height, seq, flags, pos, dur, _stride, _fmt, generation = struct.unpack_from(
+                '<4s10I', os.read(fd, theater.HEADER))
+            self.assertEqual((width, height, pos, dur, generation), (2, 4, 0, 400, 1))
+            self.assertEqual(flags & 1, 1)
+            self.assertEqual(flags & 2, 0)
+            self.assertEqual(seq % 2, 0)
+            resumed = session.handle({'cmd': 'resume'})
+            self.assertEqual(resumed['state'], 'playing')
+            self.assertEqual(resumed['position_ms'], 0)
+            self.assertFalse(session.items['a'].get('ended'))
+            self.assertFalse(session.items['a']['paused'])
+            self.assertEqual(len(children), 1)
+            self.assertIsNone(children[0].poll())
+            self.assertEqual(holds, [False, True])
+            os.lseek(fd, 0, os.SEEK_SET)
+            _magic, _version, width, height, seq, flags, pos, _dur, _stride, _fmt, _gen = struct.unpack_from(
+                '<4s10I', os.read(fd, theater.HEADER))
+            self.assertEqual((width, height, flags, pos), (2, 4, 0, 0))
+            self.assertEqual(seq % 2, 0)
+        finally:
+            for proc in children:
+                theater.reap(proc)
+            session.shutdown()
+            os.close(fd)
+
+    def test_malformed_pointer_stays_in_the_protocol(self):
+        page = FramePage()
+        session = self.session(browser=page)
+        session.handle({
+            'cmd': 'open', 'id': 'web', 'browser': 'chromium',
+            'source': {'kind': 'url', 'url': 'https://example.com/a'},
+        })
+        session.handle({'cmd': 'use', 'id': 'web'})
+        payload = b''.join(
+            json.dumps(command).encode() + b'\n'
+            for command in (
+                {'cmd': 'pointer', 'x': 10, 'y': 10, 'button': 'x', 'action': 'down'},
+                {'cmd': 'pointer', 'x': True, 'y': 10, 'button': 1, 'action': 'down'},
+                {'cmd': 'pointer', 'x': 10, 'y': 10, 'button': True, 'action': 'down'},
+                {'cmd': 'stop'},
+            ))
+        stdout = io.BytesIO()
+        code = theater.serve(io.BytesIO(payload), stdout, session, None)
+        self.assertEqual(code, 0)
+        lines = [json.loads(line) for line in stdout.getvalue().splitlines()]
+        bad = [event for event in lines if event.get('detail') == 'bad pointer']
+        self.assertEqual(len(bad), 3)
+        self.assertTrue(all(event.get('error') == 'malformed' for event in bad))
+        self.assertEqual(lines[-1]['event'], 'status')
+        self.assertFalse(hasattr(page, 'point'))
+
     def test_key_taps_once_and_text_is_pasted(self):
         page = FramePage()
         session = self.session(browser=page)
@@ -711,7 +992,7 @@ class TheaterTests(unittest.TestCase):
             session.handle({'cmd': 'open', 'id': 'auth', 'browser': 'chromium', 'source': {'kind': 'url', 'url': 'https://user:pass@example.com/a'}})
         self.assertEqual(page.launches, [])
         session.handle({'cmd': 'open', 'id': 'local', 'browser': 'chromium', 'source': {'kind': 'url', 'url': 'http://127.0.0.1:9/clip'}})
-        self.assertEqual(page.launches[0][-1], 'http://127.0.0.1:9/clip')
+        self.assertEqual(page.url, 'http://127.0.0.1:9/clip')
 
     def test_each_url_has_its_own_browser(self):
         made = []
@@ -732,8 +1013,8 @@ class TheaterTests(unittest.TestCase):
         second = made[1].session
         self.assertFalse(first.closed)
         self.assertFalse(second.closed)
-        self.assertEqual(made[0].launches[0][-1], 'https://example.com/one')
-        self.assertEqual(made[1].launches[0][-1], 'https://example.com/two')
+        self.assertEqual(made[0].url, 'https://example.com/one')
+        self.assertEqual(made[1].url, 'https://example.com/two')
         session.handle({'cmd': 'close', 'id': 'one'})
         self.assertTrue(first.closed)
         self.assertFalse(second.closed)
