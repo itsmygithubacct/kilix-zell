@@ -131,4 +131,15 @@ class DialogueTests(unittest.TestCase):
             self.assertEqual(__import__('json').loads(argv[-1]),['less','--','a; echo surprise'])
             self.assertIn('caller unavailable',output.call_args.args[0])
 
+    def test_workshop_computer_opens_a_floating_shell(self):
+        with patch.dict(os.environ,{'SHELL':'/bin/sh'}), \
+             patch('zell_terminal.terminal_loop',return_value=0) as loop, \
+             patch.object(desktop,'open_tab') as tab:
+            desktop.desktop(49,0)
+        tab.assert_not_called()
+        loop.assert_called_once()
+        self.assertEqual(loop.call_args.args[1],['/bin/sh','-i'])
+        self.assertEqual(loop.call_args.kwargs['title'],'Workshop computer')
+        self.assertNotIn('zell_shell.py',str(loop.call_args.args[1]))
+
 if __name__=='__main__':unittest.main()

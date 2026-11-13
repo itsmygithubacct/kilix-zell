@@ -27,7 +27,7 @@ static void place_room(zell_scene *s,int room,float x,float y){
 /* Same bodies the movement loop refuses, so an approach is not stopped early. */
 static int body_near(const zell_scene *s,float x,float y){
     for(int i=0;i<ZELL_STATIONS;i++){
-        if(!zell_desktop_station_visible(s,i)||i==28||i==46||i==47)continue;
+        if(!zell_desktop_station_visible(s,i)||i==28||i==46||i==47||i==ZELL_WORKSHOP_COMPUTER)continue;
         if(s->room==0&&i>=6&&!(i>=32&&i<=41))continue;
         float ax=x-zell_stations[i].x*(float)ZELL_WORLD_W;
         float ay=y-zell_stations[i].y*(float)ZELL_WORLD_H;
@@ -292,6 +292,138 @@ static void test_room_fit(void){
     }
 #endif
 }
+static void test_workshop_hop(void){
+    int peak=-1,peak_at=-1;
+    for(int tick=0;tick<=ZELL_SEAT_HOP_TICKS;tick++){
+        int lift=zell_seat_lift(tick);
+        assert(lift>=0);
+        if(tick==0||tick==ZELL_SEAT_HOP_TICKS)assert(lift==0);
+        if(lift>peak){peak=lift;peak_at=tick;}
+    }
+    assert(peak_at==ZELL_SEAT_HOP_TICKS/2&&peak==ZELL_SEAT_LIFT_PEAK);
+    for(int tick=0;tick<=ZELL_SEAT_HOP_TICKS;tick++)if(tick!=peak_at)assert(zell_seat_lift(tick)<peak);
+
+    float floor_x,floor_y,seat_x,seat_y;
+    zell_workshop_floor_point(&floor_x,&floor_y);
+    zell_workshop_seat_point(&seat_x,&seat_y);
+    /* Seat on the cushion; floor is south of the stool legs (opaque through y 383). */
+    assert(floor_x==797.f&&floor_y==408.f&&seat_x==797.f&&seat_y==312.f);
+    assert(seat_x>759.f&&seat_x<835.f&&seat_y>=291.f&&seat_y<=336.f&&floor_y>383.f);
+    assert(fabsf(zell_stations[ZELL_WORKSHOP_COMPUTER].x*(float)ZELL_WORLD_W-floor_x)<0.5f);
+    assert(fabsf(zell_stations[ZELL_WORKSHOP_COMPUTER].y*(float)ZELL_WORLD_H-floor_y)<0.5f);
+
+    zell_scene s;
+    zell_controls c;
+    zell_scene_init(&s,640,400);zell_desktop_init(&s);
+    for(int room=0;room<=3;room++){s.room=room;assert(!zell_desktop_station_visible(&s,ZELL_WORKSHOP_COMPUTER));}
+    s.room=4;assert(zell_desktop_station_visible(&s,ZELL_WORKSHOP_COMPUTER));
+    assert(!zell_desktop_station_visible(&s,ZELL_FLEET_BOARD));
+    assert(!zell_desktop_station_visible(&s,ZELL_FLOOR_PANEL));
+    s.x=floor_x;s.y=floor_y;s.mode=ZELL_MODE_WALK;
+    assert(zell_desktop_near(&s)==ZELL_WORKSHOP_COMPUTER);
+    {
+        float kept=s.x;
+        c=(zell_controls){.move_x=1};
+        zell_scene_tick(&s,&c);
+        assert(s.x>kept&&!s.seated&&s.seat_ticks==0);
+        s.x=floor_x;s.y=floor_y;
+    }
+    snprintf(s.launcher_query,sizeof s.launcher_query,"Workshop computer");
+    for(int i=0;i<zell_desktop_launcher_count(&s);i++)assert(zell_desktop_launcher_station(&s,i)!=ZELL_WORKSHOP_COMPUTER);
+    s.launcher_query[0]=0;
+
+    for(int i=0;i<ZELL_WINDOWS;i++){s.windows[i].used=true;snprintf(s.windows[i].title,sizeof s.windows[i].title,"Busy %d",i);}
+    float blocked_x=s.x,blocked_y=s.y;
+    c=(zell_controls){.confirm=true};
+    zell_scene_tick(&s,&c);
+    assert(!s.seated&&s.seat_ticks==0&&s.x==blocked_x&&s.y==blocked_y);
+    assert(s.notice_count>0&&strstr(s.notice_text,"No window slot is free."));
+    memset(s.windows,0,sizeof s.windows);
+    s.notice_count=0;s.notice_text[0]=0;
+
+    c=(zell_controls){.confirm=true};
+    int launches=0;
+    for(int tick=1;tick<=ZELL_SEAT_HOP_TICKS;tick++){
+        bool before=s.desktop_launch;
+        zell_scene_tick(&s,&c);
+        c.confirm=false;
+        float along=(float)tick/(float)ZELL_SEAT_HOP_TICKS;
+        assert(s.seat_ticks==tick);
+        assert(s.x==floor_x+(seat_x-floor_x)*along);
+        assert(s.y==floor_y+(seat_y-floor_y)*along);
+        assert(s.direction==ZELL_DIR_UP);
+        if(tick<ZELL_SEAT_HOP_TICKS){
+            assert(!s.seated&&!s.desktop_launch);
+            assert(zell_seat_draw_dy(&s)==-zell_seat_lift(tick));
+        }
+        if(!before&&s.desktop_launch)launches++;
+    }
+    assert(launches==1&&s.seated&&s.desktop_launch);
+    assert(s.x==seat_x&&s.y==seat_y);
+    assert(zell_seat_lift(s.seat_ticks)==0&&zell_seat_draw_dy(&s)==ZELL_SEAT_SIT_DROP);
+    assert(zell_desktop_pose(&s,-1).art==1+ZELL_DIR_UP);
+    int slot=-1;
+    for(int i=0;i<ZELL_WINDOWS;i++)if(s.windows[i].used&&!strcmp(s.windows[i].title,"Workshop computer"))slot=i;
+    assert(slot>=0&&s.windows[slot].generation>0);
+
+    s.desktop_launch=false;
+    c=(zell_controls){0};
+    zell_scene_tick(&s,&c);
+    assert(!s.desktop_launch&&s.seated&&s.seat_ticks==ZELL_SEAT_HOP_TICKS);
+
+    snprintf(s.terminal_title,sizeof s.terminal_title,"Workshop computer");
+    s.mode=ZELL_MODE_SERVICE;s.service_phase=5;s.terminal_minimized=false;
+    c=(zell_controls){.move_x=1};
+    zell_scene_tick(&s,&c);
+    assert(s.seated&&s.seat_ticks==ZELL_SEAT_HOP_TICKS&&!s.terminal_minimized&&s.mode==ZELL_MODE_SERVICE);
+
+    s.terminal_width=80;s.terminal_height=40;s.width=640;s.height=400;
+    zell_terminal_layout layout;zell_terminal_layout_for(&s,s.width,s.height,&layout);
+    s.mouse_valid=true;s.mouse_click=true;s.mouse_x=layout.minimize.x+2;s.mouse_y=layout.minimize.y+2;
+    assert(zell_terminal_click(&s));
+    assert(s.terminal_minimized&&s.mode==ZELL_MODE_WALK&&s.seated&&s.seat_ticks==ZELL_SEAT_HOP_TICKS);
+
+    c=(zell_controls){.move_x=1};
+    zell_scene_tick(&s,&c);
+    assert(s.seated&&s.seat_ticks==ZELL_SEAT_HOP_TICKS-1&&s.terminal_minimized&&!s.desktop_launch);
+    c=(zell_controls){0};
+    for(int expect=ZELL_SEAT_HOP_TICKS-1;expect>=1;expect--){
+        assert(s.seat_ticks==expect&&s.seated);
+        zell_scene_tick(&s,&c);
+    }
+    assert(!s.seated&&s.seat_ticks==0&&s.x==floor_x&&s.y==floor_y&&!s.desktop_launch);
+
+    s.service_phase=5;
+    snprintf(s.terminal_title,sizeof s.terminal_title,"Workshop computer");
+    c=(zell_controls){.confirm=true};
+    for(int tick=1;tick<=ZELL_SEAT_HOP_TICKS;tick++){
+        bool before=s.desktop_launch;
+        zell_scene_tick(&s,&c);
+        c.confirm=false;
+        if(!before&&s.desktop_launch)launches++;
+    }
+    assert(launches==1&&s.seated&&s.seat_ticks==ZELL_SEAT_HOP_TICKS&&!s.desktop_launch);
+    assert(s.mode==ZELL_MODE_SERVICE&&!s.terminal_minimized);
+
+    slot=-1;
+    for(int i=0;i<ZELL_WINDOWS;i++)if(s.windows[i].used&&!strcmp(s.windows[i].title,"Workshop computer"))slot=i;
+    assert(slot>=0);
+    s.windows[slot].close_requested=true;
+    c=(zell_controls){0};
+    zell_scene_tick(&s,&c);
+    assert(s.seated&&s.seat_ticks==ZELL_SEAT_HOP_TICKS&&!s.windows[slot].used);
+
+    s.mode=ZELL_MODE_SERVICE;s.service_phase=4;s.station=ZELL_WORKSHOP_COMPUTER;
+    snprintf(s.service_text,sizeof s.service_text,"Could not start this station's helper.");
+    zell_scene_tick(&s,&c);
+    assert(s.mode==ZELL_MODE_WALK&&s.seated&&s.seat_ticks==ZELL_SEAT_HOP_TICKS);
+    assert(strstr(s.notice_text,"Could not start"));
+
+    sr_canvas canvas;
+    assert(sr_canvas_init(&canvas,320,240));
+    zell_draw(&s,&canvas);
+    sr_canvas_free(&canvas);
+}
 static void test_contract_fixtures(void){
     char text[4096];
     int rows=0,width,height,scale,offset_x,offset_y;
@@ -538,7 +670,10 @@ int main(void) {
     {
         int room=s.room;float kept_x=s.x,kept_y=s.y;char query[64];
         snprintf(query,sizeof query,"%s",s.launcher_query);
-        for(int id=ZELL_WORKSHOP_COMPUTER;id<=ZELL_FLOOR_PANEL;id++){
+        assert(strstr(zell_stations[ZELL_WORKSHOP_COMPUTER].role,"stool"));
+        assert(zell_stations[ZELL_WORKSHOP_COMPUTER].art==-1);
+        assert(zell_desktop_actions(ZELL_WORKSHOP_COMPUTER)==0);
+        for(int id=ZELL_FLEET_BOARD;id<=ZELL_FLOOR_PANEL;id++){
             assert(zell_desktop_actions(id)==0);
             assert(zell_stations[id].art==-1);
             assert(strstr(zell_stations[id].role,"Reserved"));
@@ -904,6 +1039,7 @@ int main(void) {
     test_notice_deadlines();
     test_contract_fixtures();
     test_obstacles();
+    test_workshop_hop();
     puts("desktop world, camera, alpha, idle/walk animation, launcher and voice: ok");
     return 0;
 }

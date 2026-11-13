@@ -246,7 +246,9 @@ static void service_start_mode(desktop_service *p,zell_scene *s,bool monitor){
     p->monitor=monitor;
     p->window_slot=0;
     p->window_generation=monitor?0:generation;
-    p->sensitive=!monitor&&(s->station==0||s->station==2||s->station==3||s->station==8||s->station==9||s->station>=31);
+    /* The Workshop computer uses the floating terminal, not a private vault. */
+    bool workshop=!monitor&&s->station==ZELL_WORKSHOP_COMPUTER;
+    p->sensitive=!monitor&&!workshop&&(s->station==0||s->station==2||s->station==3||s->station==8||s->station==9||s->station>=31);
     if(!monitor){
     if(s->terminal_pixels){explicit_bzero(s->terminal_pixels,1200u*640u*4u);free(s->terminal_pixels);}
     s->terminal_pixels=NULL;s->terminal_width=s->terminal_height=0;
@@ -268,7 +270,7 @@ static void service_start_mode(desktop_service *p,zell_scene *s,bool monitor){
     snprintf(station,sizeof station,"%d",monitor?-1:s->station);snprintf(action,sizeof action,"%d",s->menu_index);
     if(pipe(to_child)!=0)goto failed;
     if(pipe(from_child)!=0){close(to_child[0]);close(to_child[1]);goto failed;}
-    if(!monitor&&p->sensitive){
+    if(!monitor&&(p->sensitive||workshop)){
         p->frame_fd=(int)syscall(SYS_memfd_create,"zell-terminal",0);
         if(p->frame_fd>=0&&ftruncate(p->frame_fd,(off_t)ZELL_TERMINAL_BYTES)==0){
             p->frame_map=mmap(NULL,ZELL_TERMINAL_BYTES,PROT_READ|PROT_WRITE,MAP_SHARED,p->frame_fd,0);

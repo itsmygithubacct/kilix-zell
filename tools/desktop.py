@@ -528,6 +528,11 @@ def desktop(station,action):
         return zell_fleets.pilot_menu(sys.modules[__name__])
     if 15<=station<=19:return zell_rooms.screen(sys.modules[__name__],station-15)
     if 20<=station<=27:return zell_rooms.laundry(sys.modules[__name__],station-20)
+    if station==49:
+        shell=os.environ.get('SHELL') or '/bin/bash'
+        if not Path(shell).is_file() or not os.access(shell,os.X_OK):shell='/bin/sh'
+        from zell_terminal import terminal_loop
+        return terminal_loop(ui,[shell,'-i'],title='Workshop computer')
     if station==12:return neuronte_shell()
     if station==1:return logs(action)
     if station==2:return admin(action)

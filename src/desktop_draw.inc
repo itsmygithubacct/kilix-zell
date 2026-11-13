@@ -21,6 +21,12 @@ static void desktop_art_mirrored(sr_canvas *c,int id,int x,int foot,int height){
  sr_canvas src;sr_canvas_wrap(&src,pixels,a->width,a->height);
  int width=height*a->width/a->height;sr_blit_scaled(c,&src,x-width/2,foot-height,width,height,1.0f);
 }
+/* The stool sheet is the full room. Only its front rim and legs are opaque. */
+static void desktop_stool_front(sr_canvas *c,int cx,int cy){
+ const zell_art *a=zell_art_get(ZELL_ART_WORKSHOP_STOOL);if(!a)return;
+ sr_canvas src;sr_canvas_wrap(&src,a->pixels,a->width,a->height);
+ sr_blit_scaled(c,&src,-cx,-cy,a->width,a->height,1.f);
+}
 static void desktop_label(sr_canvas *c,int x,int y,const char *text,uint32_t color){
  int w=sr_text_width_in(SR_FONT_FIXED_8X16,text,1);
  /* Keep labels for wall objects inside the view. */
@@ -327,7 +333,17 @@ static void desktop_world_layer(const zell_scene *s,sr_canvas *c,int cx,int cy){
    sr_fill_rect(c,px-18,py+9,36*(float)s->run_charge/ZELL_RUN_CHARGE_TICKS,2,0xa2e7c3u,1);
   }
  }
- zell_actor_pose pose=zell_desktop_pose(s,-1);sr_fill_ellipse(c,s->x-(float)cx,s->y-(float)cy,17,5,0x071719u,.45f);desktop_art(c,pose.art,(int)s->x-cx+pose.offset_x,(int)s->y-cy+pose.offset_y,height*3/4);
+ zell_actor_pose pose=zell_desktop_pose(s,-1);
+ int seat_dy=zell_seat_draw_dy(s);
+ float shadow=1.f;
+ if(s->seat_ticks>0&&s->seat_ticks<ZELL_SEAT_HOP_TICKS){
+  int lift=zell_seat_lift(s->seat_ticks);
+  if(lift>0)shadow=1.f-0.55f*(float)lift/(float)ZELL_SEAT_LIFT_PEAK;
+ }
+ /* The shadow stays on the floor line and shrinks as the hop lifts him. */
+ sr_fill_ellipse(c,s->x-(float)cx,s->y-(float)cy,17.f*shadow,5.f*shadow,0x071719u,.45f);
+ desktop_art(c,pose.art,(int)s->x-cx+pose.offset_x,(int)s->y-cy+pose.offset_y+seat_dy,height*3/4);
+ if(s->room==4&&s->seated&&s->seat_ticks==ZELL_SEAT_HOP_TICKS)desktop_stool_front(c,cx,cy);
  if(s->room)desktop_room(s,c,cx,cy,true);else desktop_cave(s,c,cx,cy,true);
  if(s->debug_blocks[0].enabled){
   int blocks=zell_desktop_block_count(s);
