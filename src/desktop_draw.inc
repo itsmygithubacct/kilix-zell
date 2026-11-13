@@ -57,21 +57,97 @@ static void desktop_monitor(const zell_scene *s,sr_canvas *c,int index,int cx,in
  }
  if(selected)desktop_label(c,frame.x+frame.w/2,frame.y+frame.h+8,"Enter / click: session & tasks",0xa8f3d5u);
 }
-static void desktop_command_switch(const zell_scene *s,sr_canvas *c,int index,int cx,int cy,bool selected){
- zell_rect r;zell_command_switch_layout(index,&r);r.x-=cx;r.y-=cy;
- uint32_t ink=index?0x8bd9d0u:!s->coding_yolo_ready?0xdab568u:s->coding_yolo?0xffa058u:0x84d2b6u;
- sr_fill_rect(c,(float)r.x,(float)r.y,(float)r.w,(float)r.h,0x111f29u,.98f);
- sr_stroke_rect(c,(float)r.x,(float)r.y,(float)r.w,(float)r.h,3,selected?0xf5dba3u:0x96764bu,1);
- for(int i=0;i<4;i++)sr_fill_circle(c,(float)(r.x+(i%2?r.w-10:10)),(float)(r.y+(i/2?r.h-10:10)),3,0xd8bd82u,1);
- sr_fill_rect(c,(float)(r.x+30),(float)(r.y+22),44,94,0x060e15u,1);
- sr_stroke_rect(c,(float)(r.x+30),(float)(r.y+22),44,94,2,0x6a746fu,1);
- int lever=r.y+(!index&&s->coding_yolo_ready&&s->coding_yolo?33:86);
- sr_fill_rect(c,(float)(r.x+23),(float)lever,58,22,ink,1);
- sr_fill_rect(c,(float)(r.x+28),(float)(lever+4),48,4,0xf6ead1u,.65f);
- sr_text(c,(float)(r.x+102),(float)(r.y+20),index?"AGENTS":"YOLO",ink,2,1);
- desktop_text(c,r.x+102,r.y+61,index?"UPDATE":!s->coding_yolo_ready?"READING...":s->coding_yolo?"ENABLED":"DISABLED",ink,180);
- desktop_text(c,r.x+102,r.y+86,index?"Choose some or all":"Shared Kilix setting",0xc1c9bfu,185);
- desktop_text(c,r.x+18,r.y+125,index?"Click / Enter: configure & run":"Click / Enter: toggle",0xc1c9bfu,265);
+/* Copy one rectangle out of a cell, then scale that copy. The cell stays put. */
+static void floor_blit(sr_canvas *c,const zell_art *art,int sx,int sy,int sw,int sh,int dx,int dy,int dw,int dh){
+ static uint32_t *pixels;
+ static size_t capacity;
+ if(!art||sw<1||sh<1||dw<1||dh<1)return;
+ if(sx<0||sy<0||sw>art->width-sx||sh>art->height-sy)return;
+ size_t count=(size_t)sw*(size_t)sh;
+ if(capacity<count){
+  uint32_t *grown=realloc(pixels,count*sizeof *grown);
+  if(!grown)return;
+  pixels=grown;
+  capacity=count;
+ }
+ for(int row=0;row<sh;row++)
+  memcpy(pixels+(size_t)row*(size_t)sw,art->pixels+(size_t)(sy+row)*(size_t)art->width+(size_t)sx,(size_t)sw*sizeof *pixels);
+ sr_canvas src;sr_canvas_wrap(&src,pixels,sw,sh);
+ sr_blit_scaled(c,&src,dx,dy,dw,dh,1.0f);
+}
+/* Screen placement is the room transform, then the same camera the floor uses. */
+static void panel_view(const zell_scene *s,const zell_rect *world,int cx,int cy,zell_rect *view){
+ float x0,y0,x1,y1;
+ zell_world_to_screen(s,(float)world->x,(float)world->y,&x0,&y0);
+ zell_world_to_screen(s,(float)(world->x+world->w),(float)(world->y+world->h),&x1,&y1);
+ int left=(int)x0-cx,top=(int)y0-cy,right=(int)x1-cx,bottom=(int)y1-cy;
+ *view=(zell_rect){left,top,right-left,bottom-top};
+}
+/* Three plates in the flagstones. The off cell supplies the bronze rim for
+ * every state, so a confirmed read only recolors the glass. */
+static void desktop_floor_panels(const zell_scene *s,sr_canvas *c,int cx,int cy){
+ if(s->room!=1)return;
+ const zell_art *plate=zell_art_get(ZELL_ART_FLOOR_OFF);
+ for(int index=0;index<3;index++){
+  zell_rect frame,glass,view,pane;
+  zell_floor_panel_layout(index,&frame,&glass);
+  panel_view(s,&frame,cx,cy,&view);
+  panel_view(s,&glass,cx,cy,&pane);
+  if(view.w<1||view.h<1||pane.w<1||pane.h<1)continue;
+  floor_blit(c,plate,42,217,332,153,view.x,view.y,view.w,view.h);
+  uint32_t fill=0x121816u;
+  const char *title="SPARE",*detail="INACTIVE";
+  char count[32];
+  int icon=ZELL_ART_FLOOR_SPARE;
+  zell_rect crop=(zell_rect){50,102,251,272};
+  bool bar=false;
+  uint32_t detail_ink=0xf4f1e8u;
+  if(index==0){
+   title="YOLO";
+   icon=ZELL_ART_FLOOR_YOLO_ICON;
+   crop=(zell_rect){78,87,244,299};
+   /* A stale coding_yolo value stays a reading until Y confirms it. */
+   if(!s->coding_yolo_ready){detail="READING";fill=0x2c3834u;}
+   else if(s->coding_yolo){detail="ENABLED";fill=0xd06a22u;}
+   else {detail="DISABLED";fill=0x1a8f86u;}
+  }else if(index==1){
+   title="AGENTS";
+   fill=0x163430u;
+   icon=ZELL_ART_FLOOR_AGENTS;
+   crop=(zell_rect){48,99,322,273};
+   /* Progress comes from the U frame. A client's age is not an update offer. */
+   if(s->update_job_active&&strcmp(s->update_state,"running")==0){
+    snprintf(count,sizeof count,"%d/%d",s->update_done,s->update_total);
+    detail=count;detail_ink=0xff4ad2u;bar=s->update_total>0;
+   }else if(s->update_job_active&&strcmp(s->update_state,"done")==0)detail="DONE";
+   else if(s->update_job_active&&strcmp(s->update_state,"failed")==0)detail="FAILED";
+   else if(s->update_job_active&&strcmp(s->update_state,"cancelled")==0)detail="CANCELLED";
+   else detail="IDLE";
+  }
+  sr_canvas_set_clip(c,pane.x,pane.y,pane.w,pane.h);
+  sr_fill_rect(c,(float)pane.x,(float)pane.y,(float)pane.w,(float)pane.h,fill,1.0f);
+  int ih=pane.h-16;if(ih>34)ih=34;if(ih<8)ih=8;
+  int iw=crop.h>0?crop.w*ih/crop.h:ih;
+  if(iw>26){iw=26;ih=crop.w>0?crop.h*iw/crop.w:ih;}
+  if(iw>pane.w-8)iw=pane.w-8;
+  if(ih>pane.h-8)ih=pane.h-8;
+  if(iw>4&&ih>4)floor_blit(c,zell_art_get(icon),crop.x,crop.y,crop.w,crop.h,pane.x+4,pane.y+(pane.h-ih)/2,iw,ih);
+  int text_x=pane.x+34,text_w=pane.x+pane.w-6-text_x;
+  if(text_w>8){
+   desktop_text(c,text_x,pane.y+2,title,0xe9d49fu,text_w);
+   desktop_text(c,text_x,pane.y+20,detail,detail_ink,text_w);
+  }
+  if(bar){
+   int bw=pane.w-8,bx=pane.x+4,by=pane.y+pane.h-8;
+   if(bw>8&&by>=pane.y){
+    sr_fill_rect(c,(float)bx,(float)by,(float)bw,5.0f,0x10241fu,1.0f);
+    int filled=bw*s->update_done/s->update_total;
+    if(filled>bw)filled=bw;
+    if(filled>0)sr_fill_rect(c,(float)bx,(float)by,(float)filled,5.0f,0x7dcea0u,1.0f);
+   }
+  }
+  sr_canvas_reset_clip(c);
+ }
 }
 /* Drawn twice: once for what stands behind Kilix, once for what stands in front. */
 /* L3 calls zell_command_layout. */
@@ -122,12 +198,14 @@ static void desktop_zoom(const zell_scene *s,sr_canvas *c){
 }
 static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy,bool front){
  int near=zell_desktop_near(s);
+ /* Floor pass, before Kilix and before anything that stands over him. */
+ if(!front)desktop_floor_panels(s,c,cx,cy);
  for(int i=15;i<ZELL_STATIONS;i++){
   if(!zell_desktop_station_visible(s,i)||zell_desktop_station_in_front(s,i)!=front)continue;
   if(i>=ZELL_WORKSHOP_COMPUTER)continue;
   int x=(int)(zell_stations[i].x*ZELL_WORLD_W)-cx,y=(int)(zell_stations[i].y*ZELL_WORLD_H)-cy;
   if(i==ZELL_MANA_CONSOLE){desktop_mana_console(s,c,cx,cy,i==near);continue;}
-  if(i>=46){desktop_command_switch(s,c,i-46,cx,cy,i==near);continue;}
+  if(i>=46)continue;
   /* The Vault and Workshop floors already end in painted steps. */
   if(i==28){if(s->room<3)desktop_hatch(c,s->room==1?ZELL_ART_COMMAND_STAIRS:ZELL_ART_LAUNDRY_STAIRS,x,y,false,"");continue;}
   if(i>=29){

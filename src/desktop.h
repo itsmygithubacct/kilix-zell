@@ -51,6 +51,9 @@ typedef struct { int x, y, w, h; } zell_rect;
 void zell_monitor_layout(int screen,zell_rect *frame,zell_rect *display);
 void zell_mana_console_layout(zell_rect *frame,zell_rect *display);
 void zell_command_switch_layout(int index,zell_rect *frame);
+/* World frame and glass for floor panel 0 (YOLO), 1 (agents), or 2 (spare).
+ * Panels 0 and 1 use the command-switch rectangles. glass may be NULL. */
+void zell_floor_panel_layout(int index,zell_rect *frame,zell_rect *glass);
 bool zell_desktop_click(zell_scene *s);
 /* Left edge of the bottom row of minimized-window buttons. */
 #define ZELL_WINDOW_ROW_X 12

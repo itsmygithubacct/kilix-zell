@@ -57,7 +57,7 @@ const zell_station zell_stations[ZELL_STATIONS]={
  {"Mana console","Coding-token balances and the providers' usage pages",.38f,.58f,ZELL_ART_WORKER},
  {"Workshop computer","Reserved, not an available action.",0.f,0.f,-1},
  {"Fleet board","Reserved, not an available action.",0.f,0.f,-1},
- {"Floor panel","Reserved, not an available action.",0.f,0.f,-1}
+ {"Floor panel","Reserved, not an available action.",.50f,.84f,-1}
 };
 static const char *const actions[ZELL_STATIONS][17]={
  {"Ask the wizard","First-run tour of Zell",NULL},
@@ -94,7 +94,7 @@ void zell_desktop_init(zell_scene *s){s->desktop=true;s->x=(float)ZELL_WORLD_W*.
 bool zell_desktop_station_visible(const zell_scene *s,int station){
  if(s->room==0)return station<ZELL_CAVE_STATIONS||station==32||station==37||station==38||(station>=42&&station<=45);
  if(station==28)return true;
- if(s->room==1)return (station>=15&&station<=19)||(station>=29&&station<=31)||(station>=46&&station<=48);
+ if(s->room==1)return (station>=15&&station<=19)||(station>=29&&station<=31)||(station>=46&&station<=48)||station==ZELL_FLOOR_PANEL;
  if(s->room==2)return (station>=20&&station<20+s->disk_count)||station==34||station==35;
  /* The Sentinel keeps the Vault with its keeper; the Signalman and the
   * Merchant work in the Workshop. */
@@ -107,7 +107,7 @@ static bool contains_folded(const char *haystack,const char *needle){
 static int launcher_entry(const zell_scene *s,int index,int *action){
  bool search=s->launcher_query[0]!=0;int count=0;
  for(int station=0;station<ZELL_STATIONS;station++){
-  if(!search){if(!zell_desktop_station_visible(s,station))continue;if(count++==index){if(action)*action=-1;return station;}continue;}
+  if(!search){if(!zell_desktop_station_visible(s,station)||zell_desktop_actions(station)==0)continue;if(count++==index){if(action)*action=-1;return station;}continue;}
   for(int a=0;a<zell_desktop_actions(station);a++){
    if(!contains_folded(zell_stations[station].name,s->launcher_query)&&!contains_folded(actions[station][a],s->launcher_query))continue;
    if(count++==index){if(action)*action=a;return station;}
@@ -165,11 +165,13 @@ static void open_station(zell_scene *s,int n){s->running=false;s->run_charge=0;s
  if(n==13||n==14||n==28||n==42||n==43){
   if(n==28){int hatch=s->room==1?13:s->room==2?14:s->room==3?42:43;s->room=0;s->x=zell_stations[hatch].x*ZELL_WORLD_W;s->y=zell_stations[hatch].y*ZELL_WORLD_H+50;}
   else {s->room=n==13?1:n==14?2:n==42?3:4;s->x=ZELL_WORLD_W*.50f;s->y=ZELL_WORLD_H*ZELL_ROOM_ENTRY_Y;}
+  /* The glass waits for a new confirmed read. The toggle does not guess. */
   if(s->room==1){s->coding_yolo_ready=false;s->coding_yolo_refresh=true;}
   s->mode=ZELL_MODE_WALK;s->step_ticks=0;s->desktop_launch=false;return;
  }
  if(n==10){s->voice_on=!s->voice_on;s->voice_changed=true;s->mode=ZELL_MODE_WALK;}
  else if(n==44){s->dictation_on=!s->dictation_on;s->dictation_changed=true;s->mode=ZELL_MODE_WALK;}
+ else if(n==ZELL_FLOOR_PANEL){s->mode=ZELL_MODE_WALK;s->desktop_launch=false;}
  else {s->mode=ZELL_MODE_DESK;if(n==12||(n>=15&&n<=31)||(n>=45&&n<=47))s->desktop_launch=true;}}
 int zell_desktop_tick(zell_scene *s,const zell_controls *c){
  if(!s->desktop)return 0;
@@ -237,7 +239,7 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
     if(ny<.32f){s->y=(float)ZELL_WORLD_H*.32f;blocked=true;}
     if(ny>.91f&&(nx<ZELL_STAIRS_LEFT||nx>ZELL_STAIRS_RIGHT)){s->y=(float)ZELL_WORLD_H*.91f;blocked=true;}
     for(int i=0;i<ZELL_STATIONS;i++){
-     if(!zell_desktop_station_visible(s,i)||i==28||(s->room==0&&i>=6&&!(i>=32&&i<=41)))continue;
+     if(!zell_desktop_station_visible(s,i)||i==28||i==ZELL_FLOOR_PANEL||(s->room==0&&i>=6&&!(i>=32&&i<=41)))continue;
      float ax=s->x-zell_stations[i].x*ZELL_WORLD_W,ay=s->y-zell_stations[i].y*ZELL_WORLD_H;
      if(ax*ax+ay*ay<26*26){s->x=oldx;s->y=oldy;blocked=true;break;}
     }
@@ -360,6 +362,22 @@ void zell_command_switch_layout(int index,zell_rect *frame){
  const zell_station *station=&zell_stations[46+index];
  *frame=(zell_rect){(int)(station->x*ZELL_WORLD_W)-150,(int)(station->y*ZELL_WORLD_H)-150,300,150};
 }
+void zell_floor_panel_layout(int index,zell_rect *frame,zell_rect *glass){
+ zell_rect unused=(zell_rect){0};
+ if(!frame)frame=&unused;
+ if(index<0||index>2){*frame=(zell_rect){0};if(glass)*glass=(zell_rect){0};return;}
+ if(index<2)zell_command_switch_layout(index,frame);
+ else{
+  const zell_station *station=&zell_stations[ZELL_FLOOR_PANEL];
+  *frame=(zell_rect){(int)(station->x*(float)ZELL_WORLD_W)-150,(int)(station->y*(float)ZELL_WORLD_H)-150,300,150};
+ }
+ if(!glass)return;
+ /* Off-panel cell cropped to its plate is 332x153; the glass sits at 73,45 and is 200x62. */
+ glass->x=frame->x+frame->w*73/332;
+ glass->y=frame->y+frame->h*45/153;
+ glass->w=frame->w*200/332;
+ glass->h=frame->h*62/153;
+}
 bool zell_desktop_click(zell_scene *s){
  if(!s->desktop||!s->mouse_valid||!s->mouse_click||s->mode!=ZELL_MODE_WALK)return false;
  int cx,cy;zell_desktop_camera(s,&cx,&cy);
@@ -368,9 +386,19 @@ bool zell_desktop_click(zell_scene *s){
   for(int i=0;i<3;i++){zell_rect hit={88+i*21-cx,298-cy,21,77};if(rect_holds(&hit,s->mouse_x,s->mouse_y)){s->mouse_click=false;open_station(s,ids[i]);return true;}}
  }
  if(s->room!=1)return false;
- for(int i=0;i<2;i++){
-  zell_rect frame;zell_command_switch_layout(i,&frame);
-  if(rect_holds(&frame,s->mouse_x+cx,s->mouse_y+cy)){s->mouse_click=false;open_station(s,46+i);return true;}
+ {
+  float wx,wy;
+  zell_screen_to_world(s,(float)s->mouse_x+(float)cx,(float)s->mouse_y+(float)cy,&wx,&wy);
+  for(int i=0;i<3;i++){
+   zell_rect frame;zell_floor_panel_layout(i,&frame,NULL);
+   if(wx<(float)frame.x||wy<(float)frame.y||wx>=(float)(frame.x+frame.w)||wy>=(float)(frame.y+frame.h))continue;
+   s->mouse_click=false;
+   /* The spare plate is drawn and does not start a station. YOLO and agents
+    * keep the existing helpers; neither one restarts a running agent. */
+   if(i==2)return true;
+   open_station(s,46+i);
+   return true;
+  }
  }
  for(int i=0;i<5;i++){
   zell_rect frame,display;zell_monitor_layout(i,&frame,&display);
