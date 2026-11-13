@@ -239,6 +239,18 @@ def probe_file(path):
     return info
 
 
+def _playable(info):
+    """A file can be queued only when probe found a real picture."""
+    if not isinstance(info, dict):
+        return False
+    try:
+        width = int(info.get('width') or 0)
+        height = int(info.get('height') or 0)
+    except (TypeError, ValueError):
+        return False
+    return width > 0 and height > 0 and not isinstance(info.get('width'), bool)
+
+
 def load_ink(selected):
     import importlib.util
     root = Path(selected)
@@ -569,6 +581,12 @@ class TheaterSession:
             if not Path(path).is_file():
                 raise ProtocolError('file is missing')
             info = probe_file(path)
+            if not _playable(info):
+                # No queue entry and no audio hold. The current movie stays up.
+                return self.emit({
+                    'event': 'error', 'error': 'decode', 'id': identity,
+                    'detail': 'file has no video',
+                })
             cues, caption_error = load_sidecar(path)
             self._bump(clear=True)
             self.items[identity] = _blank(kind, path, info, cues, caption_error)
@@ -932,6 +950,13 @@ class TheaterSession:
         self._begin_file(identity, item)
 
     def _begin_file(self, identity, item):
+        if not item.get('src_w') or not item.get('src_h'):
+            self.emit({
+                'event': 'error', 'error': 'decode', 'id': identity,
+                'detail': 'file has no video',
+            })
+            self._fail_start(identity, 'file has no video')
+            return
         if self.play_frames and item.get('src_w') and item.get('src_h'):
             self._ensure_ink()
             if self.ink is None:
