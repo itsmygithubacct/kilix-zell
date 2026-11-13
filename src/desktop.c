@@ -147,12 +147,14 @@ int zell_desktop_near(const zell_scene *s) {
  return best;
 }
 /* The stairs at the bottom of a downstairs room are walked onto, not opened.
- * The Vault and Workshop paint theirs into the floor at the room's edge; the
- * Command Center and Laundry use a stair cutout that reaches further in. */
+ * Rooms 1 and 2 leave through the corridor at the cave's .975 line. Rooms 3
+ * and 4 keep the painted steps. */
 bool zell_desktop_on_stairs(const zell_scene *s){
  if(s->room==0)return false;
  float nx=s->x/(float)ZELL_WORLD_W,ny=s->y/(float)ZELL_WORLD_H;
- return nx>=ZELL_STAIRS_LEFT&&nx<=ZELL_STAIRS_RIGHT&&ny>(s->room>=3?ZELL_STAIRS_PAINTED_Y:ZELL_STAIRS_CUTOUT_Y);
+ if(nx<ZELL_STAIRS_LEFT||nx>ZELL_STAIRS_RIGHT)return false;
+ if(s->room>=3)return ny>ZELL_STAIRS_PAINTED_Y;
+ return ny>.975f;
 }
 /* Objects standing on the floor hide Kilix when he is further from the viewer
  * than their feet. Floor and wall fittings never do. */
@@ -171,6 +173,7 @@ static void open_station(zell_scene *s,int n){s->running=false;s->run_charge=0;s
  if(n==10){s->voice_on=!s->voice_on;s->voice_changed=true;s->mode=ZELL_MODE_WALK;}
  else if(n==44){s->dictation_on=!s->dictation_on;s->dictation_changed=true;s->mode=ZELL_MODE_WALK;}
  else {s->mode=ZELL_MODE_DESK;if(n==12||(n>=15&&n<=31)||(n>=45&&n<=47))s->desktop_launch=true;}}
+#include "desktop_collide.inc"
 int zell_desktop_tick(zell_scene *s,const zell_controls *c){
  if(!s->desktop)return 0;
  if(s->zoom_ticks>0){if(++s->zoom_ticks>ZELL_ZOOM_TICKS){s->zoom_ticks=0;s->desktop_launch=true;}return 1;}
@@ -236,8 +239,15 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
     if(nx>.865f){s->x=(float)ZELL_WORLD_W*.865f;blocked=true;}
     if(ny<.32f){s->y=(float)ZELL_WORLD_H*.32f;blocked=true;}
     if(ny>.91f&&(nx<ZELL_STAIRS_LEFT||nx>ZELL_STAIRS_RIGHT)){s->y=(float)ZELL_WORLD_H*.91f;blocked=true;}
+    /* L1 calls zell_desktop_blocked. Slide one axis when the other is free. */
+    {
+     float try_x=s->x,try_y=s->y;
+     if(zell_desktop_blocked(s,try_x,oldy)){s->x=oldx;blocked=true;}
+     if(zell_desktop_blocked(s,s->x,try_y)){s->y=oldy;blocked=true;}
+     if(zell_desktop_blocked(s,s->x,s->y)){s->x=oldx;s->y=oldy;blocked=true;}
+    }
     for(int i=0;i<ZELL_STATIONS;i++){
-     if(!zell_desktop_station_visible(s,i)||i==28||(s->room==0&&i>=6&&!(i>=32&&i<=41)))continue;
+     if(!zell_desktop_station_visible(s,i)||i==28||i==46||i==47||(s->room==0&&i>=6&&!(i>=32&&i<=41)))continue;
      float ax=s->x-zell_stations[i].x*ZELL_WORLD_W,ay=s->y-zell_stations[i].y*ZELL_WORLD_H;
      if(ax*ax+ay*ay<26*26){s->x=oldx;s->y=oldy;blocked=true;break;}
     }
@@ -363,18 +373,25 @@ void zell_command_switch_layout(int index,zell_rect *frame){
 bool zell_desktop_click(zell_scene *s){
  if(!s->desktop||!s->mouse_valid||!s->mouse_click||s->mode!=ZELL_MODE_WALK)return false;
  int cx,cy;zell_desktop_camera(s,&cx,&cy);
+ float hit_x,hit_y;
+ zell_screen_to_world(s,(float)s->mouse_x,(float)s->mouse_y,&hit_x,&hit_y);
+ /* Identity view ignores the avatar camera, so that pan is still applied. */
  if(s->room==0){
   const int ids[3]={10,44,45};
-  for(int i=0;i<3;i++){zell_rect hit={88+i*21-cx,298-cy,21,77};if(rect_holds(&hit,s->mouse_x,s->mouse_y)){s->mouse_click=false;open_station(s,ids[i]);return true;}}
+  for(int i=0;i<3;i++){
+   zell_rect hit={88+i*21-cx,298-cy,21,77};
+   if(rect_holds(&hit,(int)hit_x,(int)hit_y)){s->mouse_click=false;open_station(s,ids[i]);return true;}
+  }
  }
  if(s->room!=1)return false;
+ hit_x+=(float)cx;hit_y+=(float)cy;
  for(int i=0;i<2;i++){
   zell_rect frame;zell_command_switch_layout(i,&frame);
-  if(rect_holds(&frame,s->mouse_x+cx,s->mouse_y+cy)){s->mouse_click=false;open_station(s,46+i);return true;}
+  if(rect_holds(&frame,(int)hit_x,(int)hit_y)){s->mouse_click=false;open_station(s,46+i);return true;}
  }
  for(int i=0;i<5;i++){
   zell_rect frame,display;zell_monitor_layout(i,&frame,&display);
-  if(rect_holds(&frame,s->mouse_x+cx,s->mouse_y+cy)){s->mouse_click=false;open_station(s,15+i);return true;}
+  if(rect_holds(&frame,(int)hit_x,(int)hit_y)){s->mouse_click=false;open_station(s,15+i);return true;}
  }
  return false;
 }

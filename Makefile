@@ -244,7 +244,7 @@ test-neuronte: test-process-neuronte
 test-process-neuronte: $(BUILD)/test-process-neuronte
 	python3 $(ROOT)/tests/test_process.py $(BUILD)/test-process-neuronte
 
-$(BUILD)/desktop.o: $(ROOT)/src/desktop.c $(ROOT)/src/desktop.h | $(BUILD)
+$(BUILD)/desktop.o: $(ROOT)/src/desktop.c $(ROOT)/src/desktop.h $(ROOT)/src/desktop_collide.inc | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/art_%.o: $(ROOT)/src/desktop_art/%.c | $(BUILD)
