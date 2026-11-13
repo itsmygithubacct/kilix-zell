@@ -24,4 +24,13 @@ extern const zell_art_source zell_art_floor_panels[];
 extern const zell_art_source zell_art_monitor_frames[];
 extern const zell_art_source zell_art_mana_button[];
 extern const zell_art_source zell_art_workshop_stool[];
+extern const zell_art_source zell_art_game_room[];
+extern const zell_art_source zell_art_theater_room[];
+extern const zell_art_source zell_art_meditation_room[];
+extern const zell_art_source zell_art_library_room[];
+extern const zell_art_source zell_art_game_foreground[];
+extern const zell_art_source zell_art_theater_foreground[];
+extern const zell_art_source zell_art_meditation_foreground[];
+extern const zell_art_source zell_art_library_foreground[];
+extern const zell_art_source zell_art_room_hatches[];
 #endif

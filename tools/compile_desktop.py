@@ -41,6 +41,19 @@ SHEETS = (
     ('monitor_frames', [None] * 2),
     ('mana_button', [None] * 6),
     ('workshop_stool', [None]),
+    # Four rooms, appended after the stool so earlier art ids stay put.
+    # None keeps the painted canvas. Foregrounds stay on that full-size
+    # anchor. main() sets hatch heights so their compiled width matches
+    # the command hatch.
+    ('game_room', [None]),
+    ('theater_room', [None]),
+    ('meditation_room', [None]),
+    ('library_room', [None]),
+    ('game_foreground', [None]),
+    ('theater_foreground', [None]),
+    ('meditation_foreground', [None]),
+    ('library_foreground', [None]),
+    ('room_hatches', [None] * 8),
 )
 
 HEADER = MARK + '''#ifndef ZELL_DESKTOP_ART_H
@@ -195,6 +208,12 @@ def load_images():
     images.extend(fixed_cells('command-monitor-frames.png', 2, 1))
     images.extend(fixed_cells('mana-check-button.png', 3, 2))
     images.append(quiet_alpha(Image.open(ROOM_ASSETS / 'workshop-stool-overlay.png')))
+    images.extend(Image.open(ROOM_ASSETS / name).convert('RGBA') for name in (
+        'game-room.png', 'movie-theater.png', 'meditation-room.png', 'library-room.png'))
+    images.extend(quiet_alpha(Image.open(ROOM_ASSETS / name)) for name in (
+        'game-room-foreground.png', 'movie-theater-foreground.png',
+        'meditation-room-foreground.png', 'library-room-foreground.png'))
+    images.extend(column_cutouts('room-hatches.png', 4, 2))
     return images
 
 
@@ -214,6 +233,38 @@ def fixed_cells(name, columns, rows):
                 col * sheet.width // columns, row * sheet.height // rows,
                 (col + 1) * sheet.width // columns, (row + 1) * sheet.height // rows))))
     return cells
+
+
+def column_cutouts(name, columns, rows):
+    """Cut a sprite grid. Each column shares one alpha bound across its rows.
+
+    An open hatch and its closed hatch then keep the same anchor. Alpha
+    matches cutout: clear alpha <= 3, then bound the sprite at alpha > 32.
+    """
+    sheet = Image.open(ROOM_ASSETS / name).convert('RGBA')
+    grid = []
+    for row in range(rows):
+        row_cells = []
+        for col in range(columns):
+            cell = sheet.crop((
+                col * sheet.width // columns, row * sheet.height // rows,
+                (col + 1) * sheet.width // columns, (row + 1) * sheet.height // rows))
+            cell.putalpha(cell.getchannel('A').point(lambda a: 0 if a <= 3 else a))
+            row_cells.append(cell)
+        grid.append(row_cells)
+    bounds = []
+    for col in range(columns):
+        boxes = []
+        for row in range(rows):
+            box = grid[row][col].getchannel('A').point(
+                lambda a: 255 if a > 32 else 0).getbbox()
+            if box is None:
+                raise ValueError('Missing sprite in %s column %d' % (name, col))
+            boxes.append(box)
+        bounds.append((min(b[0] for b in boxes), min(b[1] for b in boxes),
+                       max(b[2] for b in boxes), max(b[3] for b in boxes)))
+    return [grid[row][col].crop(bounds[col])
+            for row in range(rows) for col in range(columns)]
 
 
 def sheet_source(name, pictures):
@@ -255,6 +306,22 @@ def main():
         heights[index] = round(width * images[index].height / images[index].width)
     if len(images) != len(heights):
         raise ValueError('Asset dimensions do not match the atlas')
+    sheet_at = 0
+    room_hatches = None
+    for name, sheet in SHEETS:
+        if name == 'room_hatches':
+            room_hatches = range(sheet_at, sheet_at + len(sheet))
+            break
+        sheet_at += len(sheet)
+    if room_hatches is None:
+        raise ValueError('room hatches are not in the atlas')
+    command_width = max(1, round(images[command].width * heights[command] / images[command].height))
+    for index in room_hatches:
+        heights[index] = round(width * images[index].height / images[index].width)
+        compiled_width = max(1, round(images[index].width * heights[index] / images[index].height))
+        if compiled_width != command_width:
+            raise ValueError('room hatch width %d != command hatch width %d'
+                             % (compiled_width, command_width))
     compiled = [premultiplied_pixels(im, height) for im, height in zip(images, heights)]
     files = {
         'art.h': HEADER % ''.join('extern const zell_art_source zell_art_%s[];\n' % name
