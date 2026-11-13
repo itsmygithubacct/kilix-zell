@@ -119,14 +119,50 @@ def _anchor(snapshot):
     return anchors[0]
 
 
-def _create(ui, state, snapshot, cwd, index=None, role='Coding session', prompt=None):
-    anchor = _anchor(snapshot)
+def _launch_args(anchor, cwd, role, launch):
+    """Argv for one explicit fleet launch. Missing client, model, or effort is refused."""
+    agent, model = launch.get('agent'), launch.get('model')
+    if not isinstance(agent, str) or not isinstance(model, str) or not agent or not model:
+        raise ValueError('Launch configuration is missing a client or model. No default was substituted.')
+    if any(ord(c) <= 32 for c in agent + model) or agent.startswith('-') or model.startswith('-'):
+        raise ValueError('Client and model must be plain tokens. No default was substituted.')
+    yolo = launch.get('yolo', None)
+    if type(yolo) is not bool:
+        raise ValueError('The shared YOLO state must be read before launch. The switch was not changed.')
+    effort = launch.get('effort') or 'none'
+    if not isinstance(effort, str):
+        raise ValueError('Effort must be explicit. No default effort was substituted.')
+    slot = launch.get('slot')
+    title = f'Zell / {role} / {cwd.name}' if slot is None else f'Zell / {role} / slot {slot} / {cwd.name}'
     args = ['new-tab', anchor['pane_id'], '--expect-broker', anchor['broker'],
-            '--agent', 'codex', '--model', MODEL, '--own-tab', '--cwd', cwd,
-            '--title', f'Zell / {role} / {cwd.name}', '--coding-yolo']
+            '--agent', agent, '--model', model, '--own-tab', '--cwd', str(cwd), '--title', title]
+    if effort != 'none':
+        if agent != 'codex' or effort not in {'low', 'medium', 'high', 'xhigh', 'max'}:
+            raise ValueError('That effort is not supported for this client. No default effort was substituted.')
+        args += ['--reasoning-effort', effort]
+    if yolo:
+        args.append('--coding-yolo')
+    prompt = launch.get('prompt')
     if prompt:
+        if not isinstance(prompt, str):
+            raise ValueError('Launch text must be plain text. No secret fallback was used.')
         _check_prompt(prompt)
         args += ['--prompt', prompt]
+    return args
+
+
+def _create(ui, state, snapshot, cwd, index=None, role='Coding session', prompt=None, launch=None):
+    anchor = _anchor(snapshot)
+    if launch is None:
+        args = ['new-tab', anchor['pane_id'], '--expect-broker', anchor['broker'],
+                '--agent', 'codex', '--model', MODEL, '--own-tab', '--cwd', cwd,
+                '--title', f'Zell / {role} / {cwd.name}', '--coding-yolo']
+        if prompt:
+            _check_prompt(prompt)
+            args += ['--prompt', prompt]
+    else:
+        # The positional prompt is not forwarded: a fleet body must not ride along.
+        args = _launch_args(anchor, cwd, role, launch)
     receipt = _control(*args)
     pane = receipt.get('pane')
     if receipt.get('status') != 'created' or not _identity(pane):
@@ -134,14 +170,24 @@ def _create(ui, state, snapshot, cwd, index=None, role='Coding session', prompt=
     # Journal every successful receipt, including sessions displaced from a screen.
     if not isinstance(state.get('sessions'), list):
         state['sessions'] = []
-    state['sessions'].append(dict(receipt=receipt, project=str(cwd), role=role))
+    if launch is None:
+        stored = dict(pane)
+        state['sessions'].append(dict(receipt=receipt, project=str(cwd), role=role))
+    else:
+        stored = {key: pane[key] for key in ('pane_id', 'tab_id', 'broker')}
+        if isinstance(pane.get('agent'), str):
+            stored['agent'] = pane['agent']
+        state['sessions'].append(dict(
+            receipt=dict(status='created', pane=dict(stored)),
+            project=str(cwd), role=role, agent=launch['agent'], model=launch['model'],
+            effort=launch.get('effort') or 'none'))
     if index is not None:
         previous = state['screens'].get(str(index))
         if _identity(previous):
             if not isinstance(state.get('retired_screens'), list):
                 state['retired_screens'] = []
             state['retired_screens'].append(dict(screen=index, pane=previous))
-        state['screens'][str(index)] = dict(pane)
+        state['screens'][str(index)] = stored
     ui.state_write(STATE, state)
     return pane
 

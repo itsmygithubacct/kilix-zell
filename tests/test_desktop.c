@@ -94,6 +94,44 @@ static void test_contract_fixtures(void){
         assert(!zell_window_accepts_frame(&slots,1,9));
     }
 }
+static void test_fleet_board(void){
+    zell_scene s;
+    zell_rect board,frame,display;
+    char line[160];
+    sr_canvas canvas;
+    zell_scene_init(&s,ZELL_WORLD_W,ZELL_WORLD_H);
+    zell_desktop_init(&s);
+    s.room=1;
+    zell_fleet_board_layout(&board);
+    zell_monitor_layout(4,&frame,&display);
+    assert(board.w==168&&board.h==120);
+    assert(board.y==frame.y);
+    assert(board.x+board.w<=frame.x);
+    assert(board.x>=8);
+    assert(zell_fleet_apply(&s,"1 3 1 0 1\nfleet-1\tNight shift\tLedger\t2\t1"));
+    assert(zell_fleet_board_line(&s,0,line,sizeof line));
+    assert(strstr(line,"Night shift"));
+    assert(strstr(line,"Ledger"));
+    assert(strstr(line,"2 workers"));
+    assert(strstr(line,"1 live"));
+    assert(!strstr(line,"/home"));
+    assert(!strstr(line,"prompt"));
+    assert(!zell_fleet_board_line(&s,1,line,sizeof line));
+    for(int id=ZELL_WORKSHOP_COMPUTER;id<=ZELL_FLOOR_PANEL;id++){
+        assert(zell_desktop_actions(id)==0);
+        assert(!zell_desktop_station_visible(&s,id));
+        assert(zell_desktop_near(&s)!=id);
+    }
+    assert(sr_canvas_init(&canvas,ZELL_WORLD_W,ZELL_WORLD_H));
+    zell_draw(&s,&canvas);
+    assert((canvas.px[(board.y+100)*ZELL_WORLD_W+board.x+10]&0xffffffu)==0x101f26u);
+    sr_canvas_free(&canvas);
+    s.mode=ZELL_MODE_WALK;s.mouse_valid=true;s.mouse_click=true;
+    s.mouse_x=board.x+4;s.mouse_y=board.y+4;
+    zell_desktop_click(&s);
+    assert(s.station!=ZELL_FLEET_BOARD&&!s.desktop_launch);
+}
+
 int main(void) {
     zell_scene s;
     zell_controls c={0};
@@ -491,6 +529,7 @@ int main(void) {
 #ifdef ZELL_RENDER_NEURONTE
     zell_neuronte_close();
 #endif
+    test_fleet_board();
     test_contract_fixtures();
     puts("desktop world, camera, alpha, idle/walk animation, launcher and voice: ok");
     return 0;

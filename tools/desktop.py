@@ -487,6 +487,7 @@ def desktop(station,action):
             audio_stop.set();audio_thread.join(timeout=1);audio_monitor.close();raise SystemExit(0)
         signal.signal(signal.SIGTERM,stop_monitor)
         signal.signal(signal.SIGHUP,stop_monitor)
+        previous_fleet=None
         while True:
             status=vitals_snapshot()
             DIALOGUE.send('V',' '.join(str(status[k]) for k in ('health','fatigue','mana','age_days','mana_age','os_health','dirty_files')))
@@ -508,9 +509,20 @@ def desktop(station,action):
                 DIALOGUE.send('B',f'{percent} {label}')
             for index,screen in enumerate(zell_rooms.previews(ui)):
                 DIALOGUE.send('S',f"{index} {screen['status']}\n{screen['text']}")
+            try:
+                import zell_fleets
+                try:fleet_snapshot=zell_rooms._snapshot()
+                except (OSError, RuntimeError, ValueError, TypeError, subprocess.TimeoutExpired):fleet_snapshot=None
+                fleet_frame=zell_fleets.monitor_frame(fleet_snapshot)
+                if fleet_frame and fleet_frame!=previous_fleet:
+                    DIALOGUE.send('F',fleet_frame);previous_fleet=fleet_frame
+            except (OSError, RuntimeError, ValueError, TypeError, subprocess.TimeoutExpired):
+                pass
             time.sleep(5)
     if station==29:return zell_projects.hub(sys.modules[__name__])
-    if station==30:return zell_rooms.pilot(sys.modules[__name__])
+    if station==30:
+        import zell_fleets
+        return zell_fleets.pilot_menu(sys.modules[__name__])
     if 15<=station<=19:return zell_rooms.screen(sys.modules[__name__],station-15)
     if 20<=station<=27:return zell_rooms.laundry(sys.modules[__name__],station-20)
     if station==12:return neuronte_shell()

@@ -71,5 +71,8 @@ bool zell_window_accepts_frame(const zell_scene *s,int slot,int generation);
 bool zell_provider_apply(zell_scene *s,const char *text);
 bool zell_provider_check_apply(zell_scene *s,const char *text);
 bool zell_fleet_apply(zell_scene *s,const char *text);
+/* Display-only board beside worker screen 4. Station 50 stays non-interactive. */
+void zell_fleet_board_layout(zell_rect *board);
+bool zell_fleet_board_line(const zell_scene *s,int index,char *text,size_t capacity);
 bool zell_update_apply(zell_scene *s,const char *text);
 #endif
