@@ -492,6 +492,7 @@ def desktop(station,action):
             DIALOGUE.send('V',' '.join(str(status[k]) for k in ('health','fatigue','mana','age_days','mana_age','os_health','dirty_files')))
             DIALOGUE.send('J',str(status['restart_needed']))
             import zell_mana
+            # L5 calls zell_provider_apply; this monitor G line stays three integers.
             DIALOGUE.send('G',' '.join(str(value) for value in zell_mana.readings()))
             zell_mana.refresh_in_background(ui)
             from zell_schedule import aggregate

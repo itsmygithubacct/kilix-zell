@@ -307,6 +307,96 @@ static void test_menu_and_mana(zell_scene *scene){
     peer_reap(&job,&job_svc);
     peer_reap(&mon,&mon_svc);
 }
+static void expect_provider_snapshot(const zell_scene *s){
+    assert(s->provider_generation==11&&s->provider_count==3);
+    assert(!strcmp(s->provider_rows[0].id,"codex")&&s->provider_rows[0].percent==10);
+    assert(!strcmp(s->provider_rows[0].state,"verified")&&!strcmp(s->provider_rows[0].source,"api"));
+    assert(!strcmp(s->provider_rows[0].plan,"unknown"));
+    assert(!strcmp(s->provider_rows[1].id,"claude")&&s->provider_rows[1].percent==20);
+    assert(!strcmp(s->provider_rows[2].id,"grok")&&s->provider_rows[2].percent==30);
+    expect_mana(s,10,20,30);
+}
+static void expect_fleet_page(const zell_scene *s){
+    assert(s->fleet_revision==4&&s->fleet_total==1&&s->fleet_offset==0&&s->fleet_count==1);
+    assert(!strcmp(s->fleet_rows[0].fleet_id,"alpha"));
+    assert(!strcmp(s->fleet_rows[0].display_name,"North desk"));
+    assert(!strcmp(s->fleet_rows[0].project_label,"Demo"));
+    assert(s->fleet_rows[0].worker_count==2&&s->fleet_rows[0].live_count==1);
+}
+static void send_text(const frame_peer *peer,desktop_service *svc,zell_scene *scene,char kind,const char *text){
+    char line[4096];
+    frame_line(line,sizeof line,kind,text);
+    peer_pump(peer,svc,scene,line);
+}
+static void test_contract_frames(zell_scene *scene){
+    frame_peer job=frame_peer_open();
+    frame_peer mon=frame_peer_open();
+    desktop_service job_svc=peer_service(&job,false);
+    desktop_service mon_svc=peer_service(&mon,true);
+    const char *versioned=
+        "1 11 3\n"
+        "codex 10 verified api unknown\n"
+        "claude 20 configured cli unknown\n"
+        "grok 30 unknown vault unknown";
+    char ninth[1024];
+    size_t used=0;
+    expect_numeric_menu(scene);
+    assert(scene->provider_count==0&&scene->provider_generation==0);
+    assert(scene->provider_check_generation==0&&scene->provider_check_running==0);
+    assert(scene->fleet_count==0&&!scene->update_job_active);
+    send_text(&mon,&mon_svc,scene,'G',"10 20 30");
+    expect_mana(scene,10,20,30);
+    assert(scene->provider_count==0&&scene->provider_generation==0);
+    expect_numeric_menu(scene);
+    send_text(&mon,&mon_svc,scene,'G',versioned);
+    expect_provider_snapshot(scene);
+    send_text(&mon,&mon_svc,scene,'G',"1 12 2\ncodex 1 verified api unknown\ncodex 2 verified api unknown");
+    expect_provider_snapshot(scene);
+    send_text(&mon,&mon_svc,scene,'G',"1 13 1\ncodex 101 verified api unknown");
+    expect_provider_snapshot(scene);
+    send_text(&job,&job_svc,scene,'G',versioned);
+    expect_provider_snapshot(scene);
+    expect_numeric_menu(scene);
+    send_text(&mon,&mon_svc,scene,'H',"1 7 1");
+    assert(scene->provider_check_generation==7&&scene->provider_check_running==1);
+    send_text(&mon,&mon_svc,scene,'H',"1 7 2");
+    assert(scene->provider_check_generation==7&&scene->provider_check_running==1);
+    send_text(&job,&job_svc,scene,'H',"1 8 0");
+    assert(scene->provider_check_generation==7&&scene->provider_check_running==1);
+    send_text(&mon,&mon_svc,scene,'F',"1 4 1 0 1\nalpha\tNorth desk\tDemo\t2\t1");
+    expect_fleet_page(scene);
+    send_text(&mon,&mon_svc,scene,'F',"1 97 1 0 1\nalpha\tBad\nname\tDemo\t2\t1");
+    expect_fleet_page(scene);
+    used=(size_t)snprintf(ninth,sizeof ninth,"1 99 8 0 8\n");
+    for(int row=0;row<9;row++){
+        int wrote=snprintf(ninth+used,sizeof ninth-used,"id%d\tName %d\tProject\t1\t0\n",row,row);
+        assert(wrote>0&&used+(size_t)wrote<sizeof ninth);
+        used+=(size_t)wrote;
+    }
+    send_text(&mon,&mon_svc,scene,'F',ninth);
+    expect_fleet_page(scene);
+    send_text(&mon,&mon_svc,scene,'F',"1 98 2 0 2\nalpha\tOnly\tDemo\t1\t0");
+    expect_fleet_page(scene);
+    send_text(&job,&job_svc,scene,'F',"1 4 1 0 1\nalpha\tNorth desk\tDemo\t2\t1");
+    expect_fleet_page(scene);
+    send_text(&mon,&mon_svc,scene,'U',"1 4 1 3 running");
+    assert(scene->update_job_active&&scene->update_job_generation==4);
+    assert(scene->update_done==1&&scene->update_total==3&&!strcmp(scene->update_state,"running"));
+    send_text(&mon,&mon_svc,scene,'U',"1 4 4 3 running");
+    assert(scene->update_done==1&&scene->update_total==3&&!strcmp(scene->update_state,"running"));
+    send_text(&mon,&mon_svc,scene,'U',"1 9 0 1 running");
+    assert(scene->update_job_generation==4&&scene->update_done==1&&scene->update_total==3);
+    send_text(&mon,&mon_svc,scene,'U',"1 4 2 3 done");
+    assert(scene->update_job_generation==4&&scene->update_done==2&&scene->update_total==3);
+    assert(!strcmp(scene->update_state,"done"));
+    send_text(&job,&job_svc,scene,'U',"1 4 0 3 idle");
+    assert(scene->update_done==2&&!strcmp(scene->update_state,"done"));
+    expect_provider_snapshot(scene);
+    expect_fleet_page(scene);
+    expect_numeric_menu(scene);
+    peer_reap(&job,&job_svc);
+    peer_reap(&mon,&mon_svc);
+}
 
 int main(void)
 {
@@ -451,6 +541,7 @@ int main(void)
     assert(kittykb_input_next(&keyboard.input,&typed)&&typed.key==KITTYKB_KEY_UP);
     test_terminal_transport(&scene);
     test_menu_and_mana(&scene);
+    test_contract_frames(&scene);
     puts("process test ok");
     return 0;
 }

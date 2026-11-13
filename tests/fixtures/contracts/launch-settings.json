@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "fleet_id": "fleet.alpha",
+  "workers": [
+    {
+      "slot": 1,
+      "role": "worker",
+      "agent": "codex",
+      "model": "gpt-5.1",
+      "effort": "medium",
+      "cwd": "project",
+      "prompt_ref": "none"
+    }
+  ]
+}
