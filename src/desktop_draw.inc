@@ -124,6 +124,21 @@ static void desktop_zoom(const zell_scene *s,sr_canvas *c){
   sr_text(c,x+18,y+h-30*(float)scale,line,0x85f7b2u,(float)scale,1);
  }
 }
+static void desktop_fleet_board(const zell_scene *s,sr_canvas *c,int cx,int cy){
+ zell_rect board;zell_fleet_board_layout(&board);
+ board.x-=cx;board.y-=cy;
+ if(board.x+board.w<0||board.y+board.h<0||board.x>=c->w||board.y>=c->h)return;
+ sr_fill_rect(c,(float)board.x,(float)board.y,(float)board.w,(float)board.h,0x101f26u,1);
+ sr_stroke_rect(c,(float)board.x,(float)board.y,(float)board.w,(float)board.h,1,0xd6ba87u,1);
+ desktop_text(c,board.x+8,board.y+6,"FLEET BOARD",0xe9d49fu,board.w-16);
+ if(s->fleet_count<=0){desktop_text(c,board.x+8,board.y+28,"No saved fleets",0x8fd5c6u,board.w-16);return;}
+ int rows=s->fleet_count;if(rows>4)rows=4;
+ for(int i=0;i<rows;i++){
+  char line[160];
+  if(!zell_fleet_board_line(s,i,line,sizeof line))continue;
+  desktop_text(c,board.x+8,board.y+28+i*18,line,0xc9dcd8u,board.w-16);
+ }
+}
 static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy,bool front){
  int near=zell_desktop_near(s);
  for(int i=15;i<ZELL_STATIONS;i++){
@@ -164,6 +179,7 @@ static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
   sr_fill_rect(c,x0,y,x1-x0,16,0x14201cu,.88f);
   sr_fill_triangle(c,mid-14.f,y+2.f,mid+14.f,y+2.f,mid,y+22.f,0xd7b56au,.95f);
  }
+ if(front&&s->room==1)desktop_fleet_board(s,c,cx,cy);
 }
 static void desktop_vitals(const zell_scene *s,sr_canvas *c){
  int span=c->w-24;if(span>420)span=420;int width=(span-16)/3;

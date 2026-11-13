@@ -271,6 +271,7 @@ test-desktop: $(BUILD)/test-desktop
 	python3 $(ROOT)/tests/test_mana.py
 	python3 $(ROOT)/tests/test_providers.py
 	python3 $(ROOT)/tests/test_rooms.py
+	python3 $(ROOT)/tests/test_fleets.py
 	python3 $(ROOT)/tests/test_agents.py
 	python3 $(ROOT)/tests/test_projects.py
 	python3 $(ROOT)/tests/test_terminal.py

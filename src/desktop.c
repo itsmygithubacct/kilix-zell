@@ -367,6 +367,20 @@ void zell_monitor_layout(int screen,zell_rect *frame,zell_rect *display){
  *frame=(zell_rect){(int)(station->x*ZELL_WORLD_W)-w/2,(int)(station->y*ZELL_WORLD_H)-h,w,h};
  *display=(zell_rect){frame->x+w*11/100,frame->y+h*(screen==0?26:15)/100,w*78/100,h*(screen==0?52:62)/100};
 }
+void zell_fleet_board_layout(zell_rect *board){
+ zell_rect frame,display;
+ if(!board)return;
+ zell_monitor_layout(4,&frame,&display);
+ *board=(zell_rect){frame.x-180,frame.y,168,120};
+ if(board->x<8)board->x=8;
+}
+bool zell_fleet_board_line(const zell_scene *s,int index,char *text,size_t capacity){
+ if(!s||!text||capacity<8||index<0||index>=s->fleet_count||index>=ZELL_FLEET_ROWS)return false;
+ const zell_fleet_row *row=&s->fleet_rows[index];
+ int n=snprintf(text,capacity,"%s / %s / %d workers / %d live",
+  row->display_name,row->project_label,row->worker_count,row->live_count);
+ return n>0&&(size_t)n<capacity;
+}
 void zell_mana_console_layout(zell_rect *frame,zell_rect *display){
  const zell_station *station=&zell_stations[ZELL_MANA_CONSOLE];
  int w=176,h=129;
