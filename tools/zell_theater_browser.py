@@ -4,13 +4,15 @@ One PrivateBrowser is one URL item. The capture viewport stays at the size
 passed to launch. Popout and dock keep that same session and page. The
 orchestrator scales the fixed RGB frame. Launch installs a document-start
 hold before the URL loads. Pause and resume reach media in the captured
-page, including its frames, through the browser's own control API. The
-hold keeps a new or inactive frame paused until resume.
+page, including its frames, through the browser's own control API. A new
+frame inherits that active or held policy, including a cross-origin
+document created after resume. An inactive page stays held.
 """
 import atexit
 import base64
 import json
 import os
+import queue
 import select
 import shutil
 import signal
@@ -691,6 +693,18 @@ class PrivateBrowser:
         self._session_by_target = {}
         self._url_by_session = {}
         self._kind_by_session = {}
+        self._policy_script_ids = {}
+        self._held = True
+        self._policy_watch = False
+        self._devtools_cv = threading.Condition()
+        self._control_lock = threading.RLock()
+        self._frames_lock = threading.Lock()
+        self._attach_queue = queue.Queue()
+        self._devtools_stop = False
+        self._devtools_pump_thread = None
+        self._devtools_worker_thread = None
+        self._frame_watch_stop = False
+        self._frame_watch_thread = None
         self._lock = threading.RLock()
 
     def launch(self, browser, url, width, height):
@@ -749,10 +763,13 @@ class PrivateBrowser:
                 if isinstance(initial, (bytes, bytearray)) and len(initial) == width * height * 3:
                     self._initial_frame = bytes(initial)
                 self.url = url
+                self._held = True
                 self._connect_control(browser, port, width, height)
+                self._publish_frame_policy()
                 self._navigate(url)
                 self._wait_for_hold(url)
                 self._apply_media('pause')
+                self._policy_watch = True
         except Exception as error:
             try:
                 session.close()
@@ -844,10 +861,14 @@ class PrivateBrowser:
 
     def pause(self):
         with self._lock:
+            self._held = True
+            self._publish_frame_policy()
             return _public_media(self._read_page('pause'))
 
     def resume(self):
         with self._lock:
+            self._held = False
+            self._publish_frame_policy()
             return _public_media(self._read_page('play'))
 
     def media_state(self):
@@ -884,6 +905,8 @@ class PrivateBrowser:
                     failure = error
             _kill_recorded(self._record)
             self._disarm_reaper()
+            self._held = True
+            self._policy_watch = False
             self._control_close()
             self._hold_installed = False
             profile = self._profile
@@ -939,9 +962,12 @@ class PrivateBrowser:
         # DevTools treats only the resume evaluation as a user gesture.
         # The same action is repeated in cross-origin frames the top
         # document cannot script. Same-origin frames are walked there.
-        parts = []
-        self._collect_media(action, parts, set(), 0, None)
-        return _normalize_media(_merge_media(parts))
+        # Hold the control lock across the whole walk so a frame watcher
+        # cannot switch the Marionette context in the middle.
+        with self._control_lock:
+            parts = []
+            self._collect_media(action, parts, set(), 0, None)
+            return _normalize_media(_merge_media(parts))
 
     def _collect_media(self, action, parts, seen, depth, context_id=None, session_id=None):
         raw = self._eval(
@@ -1068,19 +1094,10 @@ class PrivateBrowser:
         return None
 
     def _drain_devtools(self, timeout):
+        # The pump owns the socket. Waiting lets attach and context events land.
         if self._control is None or self._control_kind != 'devtools':
             return
-        previous = self._control.gettimeout()
-        self._control.settimeout(timeout)
-        try:
-            for _ in range(100):
-                try:
-                    message = json.loads(_ws_recv(self._control))
-                except (TimeoutError, socket.timeout):
-                    break
-                self._devtools_dispatch(message)
-        finally:
-            self._control.settimeout(5 if previous is None else previous)
+        time.sleep(timeout)
 
     def _eval(self, expression, user_gesture=False, context_id=None, session_id=None):
         if self._control_kind == 'marionette':
@@ -1220,6 +1237,7 @@ class PrivateBrowser:
         self._control = _ws_connect(port, path, 5)
         self._control_kind = 'devtools'
         self._debug_port = port
+        self._start_devtools_pump()
 
     def _connect_marionette(self, port, width, height):
         sock = socket.create_connection(('127.0.0.1', port), 3)
@@ -1240,35 +1258,82 @@ class PrivateBrowser:
             })
         except RuntimeError:
             pass
+        self._start_frame_watch()
 
     def _devtools_command(self, method, params, session_id=None):
-        self._message += 1
-        ident = self._message
-        message = {'id': ident, 'method': method, 'params': params}
-        if session_id:
-            message['sessionId'] = session_id
-        _ws_send(self._control, json.dumps(message))
-        while True:
-            cached = self._devtools_pending.pop(ident, None)
-            reply = cached if cached is not None else json.loads(_ws_recv(self._control))
-            got = reply.get('id')
-            if got == ident:
-                if reply.get('error'):
-                    raise RuntimeError(f'browser control failed: {reply["error"]}')
-                return reply.get('result') or {}
-            if got is not None:
-                self._devtools_pending[got] = reply
-                continue
-            self._devtools_dispatch(reply)
+        with self._control_lock:
+            self._message += 1
+            ident = self._message
+            message = {'id': ident, 'method': method, 'params': params}
+            if session_id:
+                message['sessionId'] = session_id
+            _ws_send(self._control, json.dumps(message))
+            deadline = time.monotonic() + 20
+            with self._devtools_cv:
+                while ident not in self._devtools_pending:
+                    if self._devtools_stop:
+                        raise RuntimeError('browser control closed')
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise RuntimeError('browser control timed out')
+                    self._devtools_cv.wait(remaining)
+                reply = self._devtools_pending.pop(ident)
+        if reply.get('error'):
+            raise RuntimeError(f'browser control failed: {reply["error"]}')
+        return reply.get('result') or {}
 
-    def _devtools_dispatch(self, reply):
-        if not isinstance(reply, dict):
-            return
+    def _start_devtools_pump(self):
+        self._devtools_stop = False
+        if self._devtools_pump_thread is None or not self._devtools_pump_thread.is_alive():
+            self._devtools_pump_thread = threading.Thread(
+                target=self._devtools_pump, name='zell-devtools', daemon=True)
+            self._devtools_pump_thread.start()
+        if self._devtools_worker_thread is None or not self._devtools_worker_thread.is_alive():
+            self._devtools_worker_thread = threading.Thread(
+                target=self._devtools_worker, name='zell-devtools-frames', daemon=True)
+            self._devtools_worker_thread.start()
+
+    def _devtools_pump(self):
+        while not self._devtools_stop:
+            control = self._control
+            if control is None or self._control_kind != 'devtools':
+                break
+            try:
+                raw = _ws_recv(control)
+            except (TimeoutError, socket.timeout):
+                continue
+            except Exception:
+                break
+            try:
+                reply = json.loads(raw)
+            except Exception:
+                continue
+            if not isinstance(reply, dict):
+                continue
+            if reply.get('id') is not None:
+                with self._devtools_cv:
+                    self._devtools_pending[reply['id']] = reply
+                    self._devtools_cv.notify_all()
+                continue
+            if reply.get('method') == 'Target.attachedToTarget':
+                self._attach_queue.put(reply)
+                continue
+            self._devtools_note(reply)
+
+    def _devtools_worker(self):
+        while not self._devtools_stop:
+            try:
+                message = self._attach_queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            try:
+                self._on_attached_target(message)
+            except Exception:
+                pass
+
+    def _devtools_note(self, reply):
         method = reply.get('method')
         params = reply.get('params') or {}
-        if method == 'Target.attachedToTarget':
-            self._on_attached_target(reply)
-            return
         if method == 'Target.detachedFromTarget':
             self._on_detached_target(params)
             return
@@ -1289,12 +1354,11 @@ class PrivateBrowser:
         self._auto_attached = True
 
     def _set_auto_attach(self, session_id):
-        # Flattened sessions let one socket reach an out-of-process frame.
-        # Those frames are not paused on attach: a control call is what
-        # reads the socket, and a waiting frame would never paint.
+        # Pause a new frame until its document-start script carries the
+        # current policy. The reader releases it immediately after that.
         params = {
             'autoAttach': True,
-            'waitForDebuggerOnStart': False,
+            'waitForDebuggerOnStart': True,
             'flatten': True,
         }
         try:
@@ -1317,20 +1381,28 @@ class PrivateBrowser:
         self._url_by_session[session_id] = str(info.get('url') or '')
         kind = info.get('type') or ''
         self._kind_by_session[session_id] = kind
-        if kind not in ('iframe', 'page'):
-            return
+        waiting = bool(params.get('waitingForDebugger'))
         try:
-            self._install_frame_hold(session_id)
-        except Exception:
-            pass
-        try:
-            self._set_auto_attach(session_id)
-        except Exception:
-            pass
-        try:
-            self._push_frame_policy(session_id)
-        except Exception:
-            pass
+            if kind in ('iframe', 'page'):
+                try:
+                    self._install_frame_hold(session_id)
+                except Exception:
+                    pass
+                try:
+                    self._set_auto_attach(session_id)
+                except Exception:
+                    pass
+                try:
+                    self._push_frame_policy(session_id)
+                except Exception:
+                    pass
+        finally:
+            if waiting:
+                try:
+                    self._devtools_command(
+                        'Runtime.runIfWaitingForDebugger', {}, session_id=session_id)
+                except Exception:
+                    pass
 
     def _on_detached_target(self, params):
         session_id = params.get('sessionId')
@@ -1355,6 +1427,7 @@ class PrivateBrowser:
 
     def _install_frame_hold(self, session_id):
         self._devtools_command('Page.enable', {}, session_id=session_id)
+        self._replace_policy_script(session_id)
         params = {'source': _HOLD_JS, 'runImmediately': True}
         try:
             self._devtools_command(
@@ -1365,30 +1438,151 @@ class PrivateBrowser:
                 {'source': _HOLD_JS},
                 session_id=session_id)
 
-    def _parent_hold_cleared(self):
-        try:
-            mark = self._devtools(
-                '(document.documentElement && '
-                'document.documentElement.getAttribute("data-zell-hold-state")) || ""')
-        except Exception:
-            return False
-        return mark == '0'
+    def _policy_mark(self):
+        return '1' if self._held else '0'
+
+    def _policy_document_script(self):
+        # Runs at document start, before the page's own play or autoplay.
+        mark = json.dumps(self._policy_mark())
+        return (
+            '(() => {'
+            ' const mark = %s;'
+            ' try { sessionStorage.setItem("zell-theater-hold", mark); } catch (error) {}'
+            ' const apply = () => {'
+            '   const root = document.documentElement;'
+            '   if (!root) return;'
+            '   root.setAttribute("data-zell-hold-state", mark);'
+            ' };'
+            ' apply();'
+            ' if (!document.documentElement) {'
+            '   new MutationObserver(apply).observe(document, {childList: true, subtree: true});'
+            ' }'
+            '})()'
+        ) % mark
+
+    def _policy_apply_script(self):
+        mark = json.dumps(self._policy_mark())
+        play = 'false' if self._held else 'true'
+        return (
+            '(() => {'
+            ' const mark = %s;'
+            ' const play = %s;'
+            ' if (String(location.href || "").indexOf("about:") === 0) return false;'
+            ' const root = document.documentElement;'
+            ' const current = root ? root.getAttribute("data-zell-hold-state") : null;'
+            ' const nodes = document.querySelectorAll("video, audio");'
+            ' if (current === mark) {'
+            '   if (mark === "1") {'
+            '     for (const node of nodes) { try { node.pause(); } catch (error) {} }'
+            '   }'
+            '   return false;'
+            ' }'
+            ' if (root) root.setAttribute("data-zell-hold-state", mark);'
+            ' try { sessionStorage.setItem("zell-theater-hold", mark); } catch (error) {}'
+            ' for (const node of nodes) {'
+            '   if (play) {'
+            '     const pending = node.play();'
+            '     if (pending && pending.catch) pending.catch(() => {});'
+            '   } else {'
+            '     try { node.pause(); } catch (error) {}'
+            '   }'
+            ' }'
+            ' return true;'
+            '})()'
+        ) % (mark, play)
+
+    def _publish_frame_policy(self):
+        if self._control_kind != 'devtools' or self._control is None:
+            return
+        with self._frames_lock:
+            sessions = [
+                session_id for session_id, kind in self._kind_by_session.items()
+                if kind in ('iframe', 'page')
+            ]
+        for session_id in [None, *sessions]:
+            try:
+                self._replace_policy_script(session_id)
+            except Exception:
+                continue
+
+    def _replace_policy_script(self, session_id):
+        key = session_id or ''
+        with self._frames_lock:
+            old = self._policy_script_ids.pop(key, None)
+        if old:
+            try:
+                self._devtools_command(
+                    'Page.removeScriptToEvaluateOnNewDocument',
+                    {'identifier': old},
+                    session_id=session_id)
+            except Exception:
+                pass
+        result = self._devtools_command(
+            'Page.addScriptToEvaluateOnNewDocument',
+            {'source': self._policy_document_script()},
+            session_id=session_id)
+        identifier = result.get('identifier')
+        if identifier:
+            with self._frames_lock:
+                self._policy_script_ids[key] = identifier
 
     def _push_frame_policy(self, session_id):
-        # A frame that already started does not share the parent's storage.
-        # Copy the current policy in, and pause media while the parent is held.
-        mark = '0' if self._parent_hold_cleared() else '1'
-        script = (
-            '(() => {'
-            ' const root = document.documentElement;'
-            ' if (root) root.setAttribute("data-zell-hold-state", %s);'
-            ' try { sessionStorage.setItem("zell-theater-hold", %s); } catch (error) {}'
-            ' if (%s) return;'
-            ' const nodes = document.querySelectorAll("video, audio");'
-            ' for (const node of nodes) { try { node.pause(); } catch (error) {} }'
-            '})()'
-        ) % (json.dumps(mark), json.dumps(mark), 'true' if mark == '0' else 'false')
-        self._devtools(script, session_id=session_id)
+        # The document may already have passed document_start. Apply the
+        # same policy now, and play only while this item is active.
+        self._devtools(
+            self._policy_apply_script(),
+            user_gesture=not self._held,
+            session_id=session_id)
+
+    def _start_frame_watch(self):
+        self._frame_watch_stop = False
+        if self._frame_watch_thread is not None and self._frame_watch_thread.is_alive():
+            return
+        self._frame_watch_thread = threading.Thread(
+            target=self._frame_watch_loop, name='zell-frame-watch', daemon=True)
+        self._frame_watch_thread.start()
+
+    def _frame_watch_loop(self):
+        while not self._frame_watch_stop:
+            time.sleep(0.08)
+            if self._frame_watch_stop or not self._policy_watch:
+                continue
+            if self._control_kind != 'marionette' or self._control is None:
+                continue
+            try:
+                self._sync_marionette_frames()
+            except Exception:
+                try:
+                    if self._control_kind == 'marionette' and self._control is not None:
+                        self._marionette('WebDriver:SwitchToFrame', {})
+                except Exception:
+                    pass
+
+    def _sync_marionette_frames(self):
+        with self._control_lock:
+            self._marionette('WebDriver:SwitchToFrame', {})
+            try:
+                self._sync_marionette_here(0)
+            finally:
+                self._marionette('WebDriver:SwitchToFrame', {})
+
+    def _sync_marionette_here(self, depth):
+        self._eval(self._policy_apply_script())
+        if depth >= 6:
+            return
+        found = self._marionette('WebDriver:FindElements', {
+            'using': 'css selector', 'value': 'iframe, frame'})
+        identifiers = []
+        for element in _element_list(found):
+            uuid = _element_uuid(element)
+            if uuid:
+                identifiers.append(uuid)
+        for uuid in identifiers:
+            self._marionette('WebDriver:SwitchToFrame', {'element': uuid})
+            try:
+                self._sync_marionette_here(depth + 1)
+            finally:
+                self._marionette('WebDriver:SwitchToParentFrame', {})
 
     def _devtools(self, script, user_gesture=False, context_id=None, session_id=None):
         params = {
@@ -1406,16 +1600,17 @@ class PrivateBrowser:
         return value.get('value')
 
     def _marionette(self, command, params):
-        self._message += 1
-        payload = [0, self._message, command, params]
-        data = json.dumps(payload, separators=(',', ':')).encode()
-        self._control.sendall(f'{len(data)}:'.encode() + data)
-        reply = self._marionette_recv()
-        if not isinstance(reply, list) or len(reply) < 4 or reply[1] != self._message:
-            raise RuntimeError('marionette reply does not match the command')
-        if reply[2]:
-            raise RuntimeError(f'marionette {command} failed: {reply[2]}')
-        return reply[3]
+        with self._control_lock:
+            self._message += 1
+            payload = [0, self._message, command, params]
+            data = json.dumps(payload, separators=(',', ':')).encode()
+            self._control.sendall(f'{len(data)}:'.encode() + data)
+            reply = self._marionette_recv()
+            if not isinstance(reply, list) or len(reply) < 4 or reply[1] != self._message:
+                raise RuntimeError('marionette reply does not match the command')
+            if reply[2]:
+                raise RuntimeError(f'marionette {command} failed: {reply[2]}')
+            return reply[3]
 
     def _marionette_recv(self):
         buf = b''
@@ -1439,6 +1634,11 @@ class PrivateBrowser:
 
     def _control_close(self):
         control = self._control
+        self._devtools_stop = True
+        self._frame_watch_stop = True
+        self._policy_watch = False
+        with self._devtools_cv:
+            self._devtools_cv.notify_all()
         self._control = None
         self._control_kind = None
         self._devtools_events = []
@@ -1449,11 +1649,18 @@ class PrivateBrowser:
         self._session_by_target = {}
         self._url_by_session = {}
         self._kind_by_session = {}
+        self._policy_script_ids = {}
         if control is not None:
             try:
                 control.close()
             except Exception:
                 pass
+        for thread in (self._devtools_pump_thread, self._devtools_worker_thread, self._frame_watch_thread):
+            if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+                thread.join(timeout=2)
+        self._devtools_pump_thread = None
+        self._devtools_worker_thread = None
+        self._frame_watch_thread = None
 
     def _arm_reaper(self):
         if self._reaper is not None or not self._record or not self._profile:
