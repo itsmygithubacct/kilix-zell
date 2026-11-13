@@ -21,7 +21,15 @@ static void service_append(zell_scene *s,const char *text){
     if(used+n>cap){size_t drop=used+n-cap;memmove(s->service_text,s->service_text+drop,used-drop+1);used-=drop;}
     memcpy(s->service_text+used,text,n+1);
 }
-static void service_frame(zell_scene *s,char *frame){
+enum { SERVICE_ORIGIN_JOB=0, SERVICE_ORIGIN_MONITOR=1 };
+/* Three integers and nothing after them. A successful sscanf with leftover text is not a reading. */
+static void service_mana(zell_scene *s,const char *text){
+    int v[3],n=0;
+    if(sscanf(text,"%d %d %d%n",&v[0],&v[1],&v[2],&n)!=3||text[n])return;
+    for(int i=0;i<3;i++)s->provider_mana[i]=v[i]<-2||v[i]>100?-1:v[i];
+    s->provider_mana_ready=true;
+}
+static void service_frame(zell_scene *s,char *frame,int origin){
     char kind=frame[0],decoded[4096];size_t n=0;
     for(size_t i=1;frame[i]&&frame[i+1]&&n+1<sizeof decoded;i+=2){
         int a=service_hex(frame[i]),b=service_hex(frame[i+1]);if(a<0||b<0)return;
@@ -29,19 +37,16 @@ static void service_frame(zell_scene *s,char *frame){
         if(c>=32||c=='\n'||c=='\t')decoded[n++]=(char)c;
     }
     decoded[n]=0;
-    if(kind=='J'){s->restart_needed=decoded[0]=='1';return;}
-    if(kind=='M'){
-        int v[3];
-        if(sscanf(decoded,"%d %d %d",&v[0],&v[1],&v[2])==3){
-            for(int i=0;i<3;i++)s->provider_mana[i]=v[i]<-2||v[i]>100?-1:v[i];
-            s->provider_mana_ready=true;
+    if(origin==SERVICE_ORIGIN_MONITOR){
+        /* H, F and U are reserved. They are not menus and do not change Mana. */
+        if(kind=='H'||kind=='F'||kind=='U')return;
+        /* G is the Mana snapshot. Legacy M carries the same three integers for one transition, never a menu. */
+        if(kind=='G'||kind=='M'){service_mana(s,decoded);return;}
+        if(kind=='J'){s->restart_needed=decoded[0]=='1';return;}
+        if(kind=='Y'){
+            s->coding_yolo_ready=n==1&&(decoded[0]=='0'||decoded[0]=='1');
+            s->coding_yolo=s->coding_yolo_ready&&decoded[0]=='1';return;
         }
-        return;
-    }
-    if(kind=='Y'){
-        s->coding_yolo_ready=n==1&&(decoded[0]=='0'||decoded[0]=='1');
-        s->coding_yolo=s->coding_yolo_ready&&decoded[0]=='1';return;
-    }
     if(kind=='N'){int count=0;if(sscanf(decoded,"%d",&count)==1&&count>=0&&count<=200){s->notice_count=count;char *text=strchr(decoded,' ');snprintf(s->notice_text,sizeof s->notice_text,"%.319s",text?text+1:"");}return;}
     if(kind=='A'){int muted,active;if(sscanf(decoded,"%d %d",&muted,&active)==2){s->music_muted=muted==1;s->dj_active=active==1;}return;}
     if(kind=='W'){
@@ -83,6 +88,10 @@ static void service_frame(zell_scene *s,char *frame){
         }
         return;
     }
+    return;
+    }
+    /* Telemetry belongs to the monitor. A job M is a menu even when the title is numeric. */
+    if(kind&&strchr("GHFUVYNSWAJDB",kind))return;
     if(kind=='T'){s->service_phase=5;s->terminal_maximized=s->terminal_minimized=false;return;}
     /* A helper that leaves the terminal for a prompt or report must be seen. */
     if(kind=='P'||kind=='Q'||kind=='R')zell_terminal_restore(s);
@@ -216,8 +225,16 @@ static void service_pump(desktop_service *p,zell_scene *s){
     for(int batch=0;batch<8;batch++){
         count=read(p->out_fd,bytes,sizeof bytes);if(count<=0)break;
         for(ssize_t i=0;i<count;i++){
-            if(bytes[i]=='\n'){p->frame[p->length]=0;if(p->length&&(!p->monitor||strchr("VDBSWJNAY",p->frame[0])))service_frame(s,p->frame);p->length=0;}
-            else if(p->length+1<sizeof p->frame)p->frame[p->length++]=bytes[i];
+            if(bytes[i]=='\n'){
+                /* A frame that does not fit is discarded whole, so a truncated prefix cannot apply. */
+                if(p->length&&p->length<sizeof p->frame){
+                    p->frame[p->length]=0;
+                    if(!p->monitor||strchr("VDBSWJNAYGHFMU",p->frame[0]))
+                        service_frame(s,p->frame,p->monitor?SERVICE_ORIGIN_MONITOR:SERVICE_ORIGIN_JOB);
+                }
+                p->length=0;
+            }else if(p->length+1<sizeof p->frame)p->frame[p->length++]=bytes[i];
+            else p->length=sizeof p->frame;
         }
     }
     if(count>0)return; /* Drain the remaining frames before reaping. */

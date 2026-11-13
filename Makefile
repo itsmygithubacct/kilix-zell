@@ -233,6 +233,17 @@ test: test-process
 test-process: $(BUILD)/test-process
 	python3 $(ROOT)/tests/test_process.py $(BUILD)/test-process
 
+$(BUILD)/test_process_neuronte.o: $(ROOT)/tests/test_process.c $(ROOT)/src/main.c $(ROOT)/src/desktop_service.inc | $(BUILD)
+	$(CC) $(N_CPPFLAGS) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/test-process-neuronte: $(BUILD)/test_process_neuronte.o $(N_COMMON) $(N_LIB_OBJS) $(NEURONTE_LIB) | $(BUILD)
+	$(CC) $(CFLAGS) $(N_LDFLAGS) $^ $(LDLIBS) -o $@
+
+.PHONY: test-process-neuronte
+test-neuronte: test-process-neuronte
+test-process-neuronte: $(BUILD)/test-process-neuronte
+	python3 $(ROOT)/tests/test_process.py $(BUILD)/test-process-neuronte
+
 $(BUILD)/desktop.o: $(ROOT)/src/desktop.c $(ROOT)/src/desktop.h | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 

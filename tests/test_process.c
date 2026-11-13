@@ -13,7 +13,7 @@ static void graceful_exit(int signum){
 
 static void test_terminal_transport(zell_scene *scene){
     char restart[]="J31",notice[]="N32204a6f622066696e6973686564",audio[]="A312031";
-    service_frame(scene,restart);service_frame(scene,notice);service_frame(scene,audio);
+    service_frame(scene,restart,SERVICE_ORIGIN_MONITOR);service_frame(scene,notice,SERVICE_ORIGIN_MONITOR);service_frame(scene,audio,SERVICE_ORIGIN_MONITOR);
     assert(scene->restart_needed&&scene->notice_count==2&&!strcmp(scene->notice_text,"Job finished"));
     assert(scene->music_muted&&scene->dj_active);
     int dictpipe[2];assert(pipe(dictpipe)==0);
@@ -26,10 +26,10 @@ static void test_terminal_transport(zell_scene *scene){
     assert(dict.pid==0&&scene->mode==ZELL_MODE_QUESTION&&!scene->request_ready);
     assert(!strcmp(scene->question,"Review these words"));dictation_stop(&dict);
     char weather[]="W31203320343720460a4578616d706c650a5261696e";
-    service_frame(scene,weather);
+    service_frame(scene,weather,SERVICE_ORIGIN_MONITOR);
     assert(scene->weather_state==1&&scene->weather_icon==3);
     assert(!strcmp(scene->weather_temperature,"47 F")&&!strcmp(scene->weather_place,"Example"));
-    char removed[]="W302037200a0a";service_frame(scene,removed);
+    char removed[]="W302037200a0a";service_frame(scene,removed,SERVICE_ORIGIN_MONITOR);
     assert(scene->weather_state==0&&!scene->weather_place[0]);
     unsigned char bytes[TERMINAL_KEY_BYTES];
     kittykb_event event={.action=KITTYKB_ACTION_PRESS,.key='e',.text_length=3,.text={0xe9,0x1f642,'x'}};
@@ -107,6 +107,205 @@ static void test_terminal_transport(zell_scene *scene){
     for(int attempt=0;attempt<100&&service.pid>0;attempt++){service_pump(&service,scene);usleep(10000);}
     assert(service.pid==0&&!scene->terminal_pixels&&!scene->terminal_minimized);
     assert(!scene->service_reply[0]&&!scene->service_input[0]);
+}
+
+typedef struct {pid_t pid;int rd,wr,ctl;} frame_peer;
+
+static frame_peer frame_peer_open(void){
+    int data[2],ctl[2];
+    assert(pipe(data)==0&&pipe(ctl)==0);
+    pid_t pid=fork();
+    assert(pid>=0);
+    if(!pid){
+        assert(setsid()>=0);
+        close(data[0]);close(data[1]);close(ctl[1]);
+        char b=0;
+        while(read(ctl[0],&b,1)<0&&errno==EINTR){}
+        _exit(0);
+    }
+    close(ctl[0]);
+    assert(fcntl(data[0],F_SETFL,O_NONBLOCK)>=0);
+    return (frame_peer){.pid=pid,.rd=data[0],.wr=data[1],.ctl=ctl[1]};
+}
+static desktop_service peer_service(const frame_peer *peer,bool monitor){
+    return (desktop_service){.pid=peer->pid,.in_fd=-1,.out_fd=peer->rd,.frame_fd=-1,.monitor=monitor};
+}
+static void peer_write(const frame_peer *peer,const char *bytes,size_t n){
+    size_t off=0;
+    while(off<n){
+        ssize_t wrote=write(peer->wr,bytes+off,n-off);
+        if(wrote<0&&errno==EINTR)continue;
+        assert(wrote>0);
+        off+=(size_t)wrote;
+    }
+}
+static void peer_pump(const frame_peer *peer,desktop_service *svc,zell_scene *scene,const char *frame){
+    peer_write(peer,frame,strlen(frame));
+    service_pump(svc,scene);
+    assert(svc->pid==peer->pid);
+}
+static void frame_line(char *dst,size_t cap,char kind,const char *text){
+    static const char hex[]="0123456789abcdef";
+    size_t len=strlen(text);
+    assert(cap>=2+len*2+1);
+    size_t n=0;
+    dst[n++]=kind;
+    for(size_t i=0;i<len;i++){
+        unsigned char c=(unsigned char)text[i];
+        dst[n++]=hex[c>>4];
+        dst[n++]=hex[c&15];
+    }
+    dst[n++]='\n';
+    dst[n]=0;
+}
+static void expect_mana(const zell_scene *s,int a,int b,int c){
+    assert(s->provider_mana_ready);
+    assert(s->provider_mana[0]==a&&s->provider_mana[1]==b&&s->provider_mana[2]==c);
+}
+/* After the numeric job menu, monitor frames must leave this dialogue alone. */
+static void expect_numeric_menu(const zell_scene *s){
+    assert(strcmp(s->service_title,"1 2 3")==0);
+    assert(s->service_count==0&&s->service_index==0&&s->service_scroll==0);
+    assert(!s->service_text[0]);
+    assert(s->service_phase==2&&strcmp(s->service_input,"kept")==0);
+    assert(strcmp(s->terminal_title,"Kept")==0&&s->mode==ZELL_MODE_SERVICE);
+}
+static void peer_reap(frame_peer *peer,desktop_service *svc){
+    char go=1;ssize_t wrote;
+    do wrote=write(peer->ctl,&go,1); while(wrote<0&&errno==EINTR);
+    assert(wrote==1);
+    close(peer->ctl);peer->ctl=-1;
+    int status=0;pid_t ended;
+    do ended=waitpid(peer->pid,&status,0); while(ended<0&&errno==EINTR);
+    assert(ended==peer->pid&&WIFEXITED(status)&&WEXITSTATUS(status)==0);
+    close(peer->wr);peer->wr=-1;
+    close(peer->rd);peer->rd=-1;
+    svc->pid=0;svc->out_fd=-1;
+}
+/* Drive service_pump from pipes whose children this test owns. The second menu
+ * fails on the old M early-return: it would still start with "old one" and
+ * have five choices. */
+static void test_menu_and_mana(zell_scene *scene){
+    frame_peer job=frame_peer_open();
+    frame_peer mon=frame_peer_open();
+    desktop_service job_svc=peer_service(&job,false);
+    desktop_service mon_svc=peer_service(&mon,true);
+    char line[256];
+    scene->service_send=scene->service_cancel=scene->coding_yolo_refresh=false;
+    scene->terminal_minimized=false;
+    scene->mode=ZELL_MODE_SERVICE;
+    scene->service_phase=3;
+    scene->service_scroll=5;
+    strcpy(scene->service_text,"stale");
+    strcpy(scene->service_title,"");
+    strcpy(scene->service_input,"typed");
+    strcpy(scene->terminal_title,"Station");
+    scene->service_count=0;scene->service_index=0;
+    scene->provider_mana_ready=true;
+    scene->provider_mana[0]=scene->provider_mana[1]=scene->provider_mana[2]=1;
+    const char first[]=
+        "M4669727374206d656e75202f203220726573756c7473\n"
+        "L6f6c64206f6e65\n"
+        "L6f6c642074776f\n"
+        "L46696c7465722028616c6c29\n"
+        "Q\n";
+    peer_pump(&job,&job_svc,scene,first);
+    assert(strcmp(scene->service_title,"First menu / 2 results")==0);
+    assert(scene->service_count==3&&scene->service_index==0&&scene->service_scroll==0);
+    assert(!scene->service_text[0]);
+    assert(strcmp(scene->service_choices[0],"old one")==0);
+    assert(strcmp(scene->service_choices[1],"old two")==0);
+    assert(strcmp(scene->service_choices[2],"Filter (all)")==0);
+    expect_mana(scene,1,1,1);
+    scene->service_index=2;
+    frame_line(line,sizeof line,'G',"10 20 30");
+    peer_pump(&mon,&mon_svc,scene,line);
+    expect_mana(scene,10,20,30);
+    assert(scene->service_count==3&&scene->service_index==2);
+    assert(strcmp(scene->service_choices[0],"old one")==0);
+    assert(strcmp(scene->service_title,"First menu / 2 results")==0);
+    const char second[]=
+        "M5365636f6e64206d656e75202f203120726573756c7473\n"
+        "L6e657720616374696f6e\n"
+        "L46696c7465722028616c6c29\n"
+        "Q\n";
+    peer_pump(&job,&job_svc,scene,second);
+    assert(strcmp(scene->service_title,"Second menu / 1 results")==0);
+    assert(scene->service_count==2&&scene->service_index==0);
+    assert(strcmp(scene->service_choices[0],"new action")==0);
+    assert(strcmp(scene->service_choices[1],"Filter (all)")==0);
+    expect_mana(scene,10,20,30);
+    strcpy(scene->service_text,"gone");scene->service_scroll=4;scene->service_index=1;
+    frame_line(line,sizeof line,'M',"1 2 3");
+    peer_pump(&job,&job_svc,scene,line);
+    assert(strcmp(scene->service_title,"1 2 3")==0);
+    assert(scene->service_count==0&&scene->service_index==0&&scene->service_scroll==0);
+    assert(!scene->service_text[0]);
+    expect_mana(scene,10,20,30);
+    scene->service_phase=2;
+    strcpy(scene->service_input,"kept");
+    strcpy(scene->terminal_title,"Kept");
+    scene->mode=ZELL_MODE_SERVICE;
+    frame_line(line,sizeof line,'M',"4 5 6");
+    peer_pump(&mon,&mon_svc,scene,line);
+    expect_mana(scene,4,5,6);
+    expect_numeric_menu(scene);
+    frame_line(line,sizeof line,'M',"First menu / 2 results");
+    peer_pump(&mon,&mon_svc,scene,line);
+    frame_line(line,sizeof line,'M',"1 2 3 extra");
+    peer_pump(&mon,&mon_svc,scene,line);
+    expect_mana(scene,4,5,6);
+    expect_numeric_menu(scene);
+    frame_line(line,sizeof line,'H',"1 2 3");
+    peer_pump(&mon,&mon_svc,scene,line);
+    frame_line(line,sizeof line,'F',"First menu / 2 results");
+    peer_pump(&mon,&mon_svc,scene,line);
+    frame_line(line,sizeof line,'U',"9 9 9");
+    peer_pump(&mon,&mon_svc,scene,line);
+    expect_mana(scene,4,5,6);
+    expect_numeric_menu(scene);
+    assert(mon_svc.length==0&&job_svc.length==0);
+    peer_pump(&mon,&mon_svc,scene,"Gzz\n");
+    peer_pump(&job,&job_svc,scene,"Mzz\n");
+    frame_line(line,sizeof line,'G',"10 20 no");
+    peer_pump(&mon,&mon_svc,scene,line);
+    frame_line(line,sizeof line,'G',"8 8 8");
+    peer_pump(&job,&job_svc,scene,line);
+    scene->hp=42;scene->restart_needed=true;
+    frame_line(line,sizeof line,'V',"9 9 9 9 9");
+    peer_pump(&job,&job_svc,scene,line);
+    frame_line(line,sizeof line,'J',"0");
+    peer_pump(&job,&job_svc,scene,line);
+    assert(scene->hp==42&&scene->restart_needed);
+    expect_mana(scene,4,5,6);
+    expect_numeric_menu(scene);
+    {
+        const char *prefix="G3720382039"; /* "7 8 9", which must not apply */
+        size_t prefix_len=strlen(prefix),total=9000;
+        char *big=malloc(total+2);
+        assert(big);
+        memcpy(big,prefix,prefix_len);
+        memset(big+prefix_len,'0',total-prefix_len);
+        big[total]='\n';big[total+1]=0;
+        peer_write(&mon,big,total+1);
+        free(big);
+        service_pump(&mon_svc,scene);
+        assert(mon_svc.pid==mon.pid);
+    }
+    expect_mana(scene,4,5,6);
+    expect_numeric_menu(scene);
+    frame_line(line,sizeof line,'G',"-2 -3 101");
+    peer_pump(&mon,&mon_svc,scene,line);
+    expect_mana(scene,-2,-1,-1);
+    expect_numeric_menu(scene);
+    frame_line(line,sizeof line,'G',"3 3 3");
+    line[strlen(line)-1]=0; /* no newline: the frame is still partial */
+    peer_pump(&mon,&mon_svc,scene,line);
+    assert(mon_svc.length>0);
+    expect_mana(scene,-2,-1,-1);
+    expect_numeric_menu(scene);
+    peer_reap(&job,&job_svc);
+    peer_reap(&mon,&mon_svc);
 }
 
 int main(void)
@@ -251,6 +450,7 @@ int main(void)
     desktop_input_feed(&scene,"\033[A",3);
     assert(kittykb_input_next(&keyboard.input,&typed)&&typed.key==KITTYKB_KEY_UP);
     test_terminal_transport(&scene);
+    test_menu_and_mana(&scene);
     puts("process test ok");
     return 0;
 }
