@@ -59,10 +59,12 @@ The remote in the theater opens the picture controls.
   Google's official package. Firefox ESR installs when you choose it.
 - Play starts the selected video. Pause holds it. The queue shows file names
   and pages when the window is narrow.
-- Captions follow a file's subtitle track when captions are on.
+- Captions read a matching .srt or .vtt file beside the video when captions
+  are on. Embedded subtitle tracks are not read.
 - F11 toggles fullscreen. Escape leaves fullscreen. Help lists those keys.
-- Pop out moves a browser page into the floating window. Dock returns it to
-  the theater screen.
+- Pop out moves the active video into the floating window. Dock returns that
+  video to the theater screen. One source is active. Queue buttons keep each
+  video's own position.
 
 ## Work areas
 

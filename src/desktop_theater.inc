@@ -1,7 +1,8 @@
 /* Theater helper. Its own process group and memfd, never the station service.
  * Frames are copied only when seq is even, nonzero, and unchanged after the
- * copy, and the generation is the active one. use/close/open drop the picture
- * first so a late frame from the previous generation cannot stay on screen. */
+ * copy, and the generation is the one last confirmed by status or caption.
+ * Open, use, and close keep that picture until a newer generation arrives.
+ * Frames from the previous generation are then rejected. */
 #include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
@@ -211,6 +212,12 @@ static bool th_gen_ok(uint32_t gen){
     return true;
 }
 static void th_gen_take(uint32_t gen){
+    /* A newer generation is the switch. Until then the accepted picture stays. */
+    if(th.expect_set&&gen!=th.expect){
+        th.retired=th.accept;
+        th.seq=0;
+        th.caption[0]=0;
+    }
     th.expect=gen;
     th.expect_set=true;
     th.accept=gen;
@@ -624,18 +631,12 @@ static void th_remember_open(const char *json){
     (void)kind;
 }
 bool zell_theater_submit(zell_scene *s,const char *json){
-    bool open_cmd,use_cmd,close_cmd;
     if(!json||!json[0]||strlen(json)>=TH_CMD-2)return false;
     th_copy(th.last,sizeof th.last,json);
-    open_cmd=th_cmd_is(json,"open");
-    use_cmd=th_cmd_is(json,"use");
-    close_cmd=th_cmd_is(json,"close");
-    if(open_cmd)th_remember_open(json);
-    if(!th_start(s)){
-        if(use_cmd||close_cmd)th_retire();
-        return false;
-    }
-    if(open_cmd||use_cmd||close_cmd)th_retire();
+    /* Folder listings, rejected files, browser failures, and install
+     * cancellation keep this generation. Do not blank the glass here. */
+    if(th_cmd_is(json,"open"))th_remember_open(json);
+    if(!th_start(s))return false;
     if(!th_enqueue(json)){th_set_error("The theater command queue is full.");return false;}
     th_flush();
     return true;
