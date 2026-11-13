@@ -10,20 +10,21 @@ import json
 import mmap
 import os
 import re
+import select
 import signal
+import socket
 import struct
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import urllib.parse
 from pathlib import Path
 
 sys.dont_write_bytecode = True
 
-from zell_theater_browser import (
-    BROWSERS, CHROME_DEB_NAME, PrivateBrowser, chrome_privilege_argv, firefox_privilege_argv,
-)
+from zell_theater_browser import BROWSERS, CHROME_DEB_NAME, PrivateBrowser
 from zell_theater_fit import MAP_LIMIT, bound_frame, cell_pad, contain, map_pointer
 
 ID_RE = re.compile(r'^[A-Za-z0-9_-]{1,32}$')
@@ -36,6 +37,7 @@ MAGIC = b'ZTHR'
 COMMIT_RE = re.compile(r'^[0-9a-f]{40}$')
 VIDEO_SUFFIXES = {'.mp4', '.mkv', '.webm', '.mov', '.m4v', '.ogv'}
 TIME_RE = re.compile(r'(?:(\d+):)?(\d+):(\d+(?:[.,]\d+)?)')
+LOOPBACK_HOSTS = frozenset(('127.0.0.1', 'localhost', '::1'))
 
 
 def select_runtime(environ=None):
@@ -131,6 +133,12 @@ def reap(child):
             child.wait(timeout=0.1)
         except subprocess.TimeoutExpired:
             pass
+    for stream in (child.stdout, child.stderr, child.stdin):
+        if stream is not None:
+            try:
+                stream.close()
+            except Exception:
+                pass
 
 
 def parse_cues(text, kind):
@@ -283,6 +291,86 @@ class ProtocolError(Exception):
         self.detail = detail
 
 
+def _acceptable_url(url):
+    """https anywhere without credentials, or http only on a loopback host."""
+    if not isinstance(url, str) or not url or len(url.encode()) > PATH_MAX:
+        return False
+    parts = urllib.parse.urlsplit(url)
+    if parts.username or parts.password:
+        return False
+    host = (parts.hostname or '').lower()
+    if parts.scheme == 'https':
+        return bool(host)
+    if parts.scheme == 'http':
+        return host in LOOPBACK_HOSTS
+    return False
+
+
+def mpv_time_pos(path, timeout=0.05):
+    """One time-pos read from an mpv IPC socket. None when the player is not ready."""
+    if not path:
+        return None
+    sock = socket.socket(socket.AF_UNIX)
+    sock.settimeout(timeout)
+    try:
+        sock.connect(os.fspath(path))
+        sock.sendall(b'{"command":["get_property","time-pos"],"request_id":1}\n')
+        buf = b''
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if b'\n' not in buf:
+                try:
+                    part = sock.recv(4096)
+                except socket.timeout:
+                    return None
+                if not part:
+                    return None
+                buf += part
+                continue
+            line, buf = buf.split(b'\n', 1)
+            try:
+                reply = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if reply.get('request_id') != 1:
+                continue
+            data = reply.get('data')
+            if reply.get('error') == 'success' and isinstance(data, (int, float)):
+                return float(data)
+            return None
+    except (OSError, ValueError):
+        return None
+    finally:
+        try:
+            sock.close()
+        except OSError:
+            pass
+    return None
+
+
+class PlaybackClock:
+    """mpv position when a socket exists, otherwise monotonic time from the seek origin."""
+
+    def __init__(self, origin_seconds, socket_path):
+        self.origin = float(origin_seconds)
+        self.socket_path = socket_path
+        self.started = time.monotonic()
+        self.synced = None
+
+    def now(self):
+        mono = time.monotonic()
+        if self.socket_path and (self.synced is None or mono - self.synced[0] >= 0.1):
+            pos = mpv_time_pos(self.socket_path, 0.05)
+            if pos is not None:
+                self.synced = (time.monotonic(), pos)
+        if self.synced is not None:
+            return max(0.0, self.synced[1] + (time.monotonic() - self.synced[0]))
+        return self.origin + (mono - self.started)
+
+    def close(self):
+        self.socket_path = None
+
+
 class FrameMap:
     def __init__(self, fd):
         self.fd = fd
@@ -315,12 +403,38 @@ class FrameMap:
         self.seq = even
         return even
 
+    def touch(self, width, height, flags, position_ms, duration_ms, generation):
+        """Publish new control fields for the picture already in the map."""
+        odd = self.seq + 1
+        if odd % 2 == 0:
+            odd += 1
+        even = odd + 1
+        if self.mm is not None:
+            self.mm[:HEADER] = pack_header(width, height, odd, flags, position_ms, duration_ms, generation)
+            self.mm[:HEADER] = pack_header(width, height, even, flags, position_ms, duration_ms, generation)
+        self.seq = even
+        return even
+
+
+def _install_fields(browser):
+    """Fixed install operation for the private-terminal bridge. Not a shell command."""
+    if browser == 'chrome':
+        return {'action': 'install-chrome-deb', 'deb': CHROME_DEB_NAME}
+    if browser == 'firefox-esr':
+        return {'action': 'install-firefox-esr'}
+    if browser == 'chromium':
+        return {'action': 'install-chromium'}
+    raise ProtocolError('url open requires a browser')
+
 
 class TheaterSession:
-    def __init__(self, runtime, browser=None, hold_audio=None, audio_launcher=None, play_frames=False):
+    def __init__(self, runtime, browser=None, hold_audio=None, audio_launcher=None, play_frames=False, browser_factory=None):
         self.runtime = {key: runtime[key] for key in ('role', 'commit', 'selected')}
         self.missing = runtime.get('missing') or ''
-        self.browser = browser if browser is not None else PrivateBrowser()
+        # One PrivateBrowser per URL. An injected instance is the first page, for tests.
+        self._shared_browser = browser
+        self._browser_factory = browser_factory
+        self.pages = {}
         self.hold_audio = hold_audio if hold_audio is not None else _hold_audio
         self.audio_launcher = audio_launcher
         self.play_frames = play_frames
@@ -337,17 +451,21 @@ class TheaterSession:
         self.thread = None
         self.stop_playback = threading.Event()
         self.socket_dirs = []
+        self.audio_socket = None
+        self.pending_install = None
         self.stopped = False
         self.lock = threading.Lock()
         self._fresh = []
 
     def emit(self, event):
-        self._fresh.append(event)
+        with self.lock:
+            self._fresh.append(event)
         return event
 
     def drain(self):
-        events = self._fresh
-        self._fresh = []
+        with self.lock:
+            events = self._fresh
+            self._fresh = []
         return events
 
     def start(self):
@@ -413,6 +531,10 @@ class TheaterSession:
             return self.move_browser(False)
         if name == 'pointer':
             return self.pointer(command)
+        if name == 'key':
+            return self.send_key(command)
+        if name in ('install_result', 'install_cancel'):
+            return self.complete_install(command)
         if name == 'stop':
             self.shutdown()
             self.stopped = True
@@ -458,46 +580,82 @@ class TheaterSession:
         if browser not in BROWSERS:
             raise ProtocolError('url open requires a browser')
         url = source.get('url', '')
-        if not isinstance(url, str) or not url.startswith('https://') or len(url.encode()) > PATH_MAX:
+        if not _acceptable_url(url):
             raise ProtocolError('bad url')
-        if _browser_missing(browser, self.browser.which):
-            return self.install_browser(identity, browser, url)
-        width, height = _browser_size(*self.dest)
-        try:
-            self.browser.launch(browser, url, width, height)
-        except Exception as error:
-            self.emit({'event': 'error', 'error': 'capture', 'detail': _clean(error) or 'private display unavailable'})
-            return None
-        self._remember_url(identity, url, browser)
-        return self.status(identity, 'paused')
+        if self.pending_install is not None:
+            raise ProtocolError('install in progress')
+        if _browser_missing(browser, self._which()):
+            return self.request_install(identity, browser, url)
+        return self._open_ready_url(identity, browser, url)
 
-    def install_browser(self, identity, browser, url):
-        if browser == 'chrome':
-            argv = chrome_privilege_argv(CHROME_DEB_NAME)
-        elif browser == 'firefox-esr':
-            argv = firefox_privilege_argv()
+    def _which(self):
+        if self._shared_browser is not None:
+            return getattr(self._shared_browser, 'which', None)
+        for page in self.pages.values():
+            found = getattr(page, 'which', None)
+            if found is not None:
+                return found
+        return None
+
+    def _make_page(self, identity):
+        page = self.pages.get(identity)
+        if page is not None:
+            return page
+        if self._shared_browser is not None and not self.pages:
+            page = self._shared_browser
+        elif self._browser_factory is not None:
+            page = self._browser_factory()
         else:
-            argv = ['apt-get', 'install', '-y', 'chromium']
-        if 'google-chrome-stable' in argv or 'sudo' in argv:
+            page = PrivateBrowser()
+        self.pages[identity] = page
+        return page
+
+    def _active_page(self):
+        if self.active is None:
+            return None
+        return self.pages.get(self.active)
+
+    def request_install(self, identity, browser, url):
+        """Ask the parent for one fixed install action. Do not run it here."""
+        fields = _install_fields(browser)
+        if 'sudo' in fields.values() or fields.get('action') == 'google-chrome-stable':
             raise ProtocolError('refusing a bare chrome package install')
+        self.pending_install = {'id': identity, 'browser': browser, 'url': url}
         self.emit({
-            'event': 'install', 'browser': browser, 'phase': 'starting',
-            'detail': 'private terminal', 'command': argv,
+            'event': 'install', 'id': identity, 'browser': browser,
+            'phase': 'request', **fields,
         })
-        if self.browser.privilege is None:
-            self.emit({'event': 'install', 'browser': browser, 'phase': 'error', 'detail': 'private terminal required', 'command': argv})
-            self.emit({'event': 'error', 'error': 'install', 'detail': 'private terminal required'})
+        return None
+
+    def complete_install(self, command):
+        pending = self.pending_install
+        if pending is None:
+            raise ProtocolError('no install')
+        if command.get('id') != pending['id']:
+            raise ProtocolError('install id')
+        self.pending_install = None
+        identity, browser, url = pending['id'], pending['browser'], pending['url']
+        fields = _install_fields(browser)
+        cancelled = command.get('cmd') == 'install_cancel' or command.get('ok') is not True
+        if cancelled:
+            detail = 'cancelled' if command.get('cmd') == 'install_cancel' else 'install failed'
+            self.emit({'event': 'install', 'id': identity, 'browser': browser, 'phase': 'error', 'detail': detail, **fields})
+            self.emit({'event': 'error', 'error': 'install', 'detail': detail})
             return None
-        result = self.browser.privilege(argv)
-        if result != 0:
-            self.emit({'event': 'install', 'browser': browser, 'phase': 'error', 'detail': str(result), 'command': argv})
-            self.emit({'event': 'error', 'error': 'install', 'detail': 'install failed'})
+        if _browser_missing(browser, self._which()):
+            self.emit({'event': 'install', 'id': identity, 'browser': browser, 'phase': 'error', 'detail': 'still missing', **fields})
+            self.emit({'event': 'error', 'error': 'install', 'detail': 'still missing'})
             return None
-        self.emit({'event': 'install', 'browser': browser, 'phase': 'done', 'detail': 'installed', 'command': argv})
+        self.emit({'event': 'install', 'id': identity, 'browser': browser, 'phase': 'done', 'detail': 'installed', **fields})
+        return self._open_ready_url(identity, browser, url)
+
+    def _open_ready_url(self, identity, browser, url):
         width, height = _browser_size(*self.dest)
+        page = self._make_page(identity)
         try:
-            self.browser.launch(browser, url, width, height)
+            page.launch(browser, url, width, height)
         except Exception as error:
+            self.pages.pop(identity, None)
             self.emit({'event': 'error', 'error': 'capture', 'detail': _clean(error) or 'private display unavailable'})
             return None
         self._remember_url(identity, url, browser)
@@ -523,8 +681,8 @@ class TheaterSession:
                 row['paused'] = other != identity
         self._emit_caption(identity)
         self.begin_playback()
-        state = 'playing' if not self.items[identity]['paused'] else 'paused'
-        return self.status(identity, state)
+        self._sync_shown_header()
+        return self.status(identity, self._activity_state(identity))
 
     def set_paused(self, paused):
         if self.active is None:
@@ -533,12 +691,23 @@ class TheaterSession:
             self.halt_playback()
             with self.lock:
                 self.items[self.active]['paused'] = True
+            if self.items[self.active].get('kind') == 'url':
+                try:
+                    self._apply_media(self.active, self._call_page(self.active, 'pause'))
+                except Exception as error:
+                    self.emit({'event': 'error', 'error': 'capture', 'detail': _clean(error)})
             self.hold_audio(False, os.getpid())
+            self._sync_shown_header()
         else:
             with self.lock:
                 self.items[self.active]['paused'] = False
             self.begin_playback()
-        return self.status(self.active, 'paused' if paused else 'playing')
+            self._sync_shown_header()
+        if paused:
+            state = 'paused'
+        else:
+            state = self._activity_state(self.active)
+        return self.status(self.active, state)
 
     def seek(self, position):
         if self.active is None or not isinstance(position, int) or position < 0:
@@ -551,22 +720,29 @@ class TheaterSession:
         self._emit_caption(self.active)
         if playing:
             self.begin_playback()
-        return self.status(self.active, 'paused' if item['paused'] else 'playing')
+        self._sync_shown_header()
+        return self.status(self.active, self._activity_state(self.active))
 
     def close_item(self, identity):
         if identity not in self.items:
             raise ProtocolError('unknown id')
+        kind = self.items[identity].get('kind')
         closing_active = self.active == identity
-        if closing_active:
-            self.halt_playback()
+        self.halt_playback()
         with self.lock:
             self.generation = (self.generation + 1) & 0xffffffff
             self.items.pop(identity)
             if closing_active:
                 self.active = None
-                self._clear_shown()
                 self.hold_audio(False, os.getpid())
-                self.browser.close()
+            self._clear_shown()
+        if kind == 'url':
+            page = self.pages.pop(identity, None)
+            if page is not None:
+                try:
+                    page.close()
+                except Exception:
+                    pass
         self._emit_caption(self.active)
         if self.active and not self.items[self.active]['paused']:
             self.begin_playback()
@@ -581,9 +757,15 @@ class TheaterSession:
         if playing:
             self.halt_playback()
         self.dest = (width, height)
-        if self.browser.session is not None and hasattr(self.browser.session, 'set_geometry'):
+        page = self._active_page()
+        viewport = getattr(page, 'viewport', None) if page is not None else None
+        display = getattr(page, 'session', None) if page is not None else None
+        if (
+            isinstance(viewport, tuple) and len(viewport) == 2
+            and display is not None and hasattr(display, 'set_geometry')
+        ):
             try:
-                self.browser.session.set_geometry(*_browser_size(width, height))
+                display.set_geometry(int(viewport[0]), int(viewport[1]))
             except Exception:
                 pass
         if playing:
@@ -596,10 +778,13 @@ class TheaterSession:
     def move_browser(self, popped):
         if self.active is None or self.items[self.active].get('kind') != 'url':
             raise ProtocolError('no browser item')
+        page = self._active_page()
+        if page is None:
+            raise ProtocolError('no browser item')
         if popped:
-            self.browser.popout()
+            page.popout()
         else:
-            self.browser.dock()
+            page.dock()
         return self.status(self.active, 'playing' if not self.items[self.active]['paused'] else 'paused')
 
     def pointer(self, command):
@@ -610,14 +795,84 @@ class TheaterSession:
         if not isinstance(x, int) or not isinstance(y, int) or action not in ('down', 'up', 'move'):
             raise ProtocolError('bad pointer')
         item = self.items[self.active]
-        src_w = item.get('src_w') or self.dest[0]
-        src_h = item.get('src_h') or self.dest[1]
+        src_w, src_h = self._pointer_source(item)
         content_w, content_h = contain(src_w, src_h, *self.dest)
-        display_w, display_h = bound_frame(content_w, content_h)
-        point = map_pointer(x, y, self.dest[0], self.dest[1], content_w, content_h, display_w, display_h)
-        if point is not None and item.get('kind') == 'url' and self.browser.session is not None:
-            self.browser.pointer(point[0], point[1], int(command.get('button') or 0), action)
+        point = map_pointer(x, y, self.dest[0], self.dest[1], content_w, content_h, src_w, src_h)
+        page = self._active_page()
+        if point is not None and item.get('kind') == 'url' and page is not None and getattr(page, 'session', None) is not None:
+            page.pointer(point[0], point[1], int(command.get('button') or 0), action)
         return self.status(self.active, 'playing' if not item['paused'] else 'paused')
+
+    def send_key(self, command):
+        """Forward one tap, or pasted text, to the private display.
+
+        The adapter presses and releases on a single call. An up event is
+        acknowledged and not injected again. Outer fullscreen keys stay with
+        native code; this method does not decide them.
+        """
+        if self.active is None or self.items[self.active].get('kind') != 'url':
+            raise ProtocolError('no browser item')
+        action = command.get('action', 'down')
+        if action not in ('down', 'up'):
+            raise ProtocolError('bad key')
+        text = command.get('text', '')
+        key = command.get('key', '')
+        modifiers = command.get('modifiers', 0)
+        if not isinstance(text, str) or isinstance(modifiers, bool) or not isinstance(modifiers, int):
+            raise ProtocolError('bad key')
+        if text == '' and (not isinstance(key, str) or not key or len(key) > 32):
+            raise ProtocolError('bad key')
+        item = self.items[self.active]
+        if action == 'down':
+            page = self._active_page()
+            sender = getattr(page, 'key', None)
+            if page is None or sender is None:
+                raise ProtocolError('no key input')
+            try:
+                sender(key, modifiers, text)
+            except ValueError as error:
+                raise ProtocolError(_clean(error) or 'bad key') from error
+            except Exception as error:
+                self.emit({'event': 'error', 'error': 'capture', 'detail': _clean(error) or 'key was not injected'})
+        return self.status(self.active, 'playing' if not item['paused'] else 'paused')
+
+    def _pointer_source(self, item):
+        """Private-display size. The captured frame is that fixed viewport."""
+        page = self._active_page()
+        viewport = getattr(page, 'viewport', None) if page is not None else None
+        if not item.get('src_w') and isinstance(viewport, tuple) and len(viewport) == 2:
+            return int(viewport[0]), int(viewport[1])
+        return item.get('src_w') or self.dest[0], item.get('src_h') or self.dest[1]
+
+    def _apply_media(self, identity, state):
+        if not isinstance(state, dict):
+            return
+        with self.lock:
+            item = self.items.get(identity)
+            if item is None:
+                return
+            position = state.get('position_ms')
+            if isinstance(position, (int, float)) and not isinstance(position, bool) and position >= 0:
+                item['position_ms'] = int(position)
+            duration = state.get('duration_ms')
+            if isinstance(duration, (int, float)) and not isinstance(duration, bool) and duration >= 0:
+                item['duration_ms'] = int(duration)
+
+    def _call_page(self, identity, name):
+        page = self.pages.get(identity)
+        method = getattr(page, name, None) if page is not None else None
+        if method is None:
+            return None
+        return method()
+
+    def _suspend_other_pages(self, identity):
+        for key in list(self.pages):
+            if key == identity:
+                continue
+            try:
+                self._call_page(key, 'pause')
+            except Exception:
+                pass
 
     def render_rgb(self, rgb, generation=None):
         """Fit one RGB array through MultiInk and publish it, or drop a stale generation."""
@@ -649,9 +904,7 @@ class TheaterSession:
         if generation != self.generation or self.runtime['role'] == 'missing':
             return None
         item = self.items.get(self.active) or {'position_ms': 0, 'duration_ms': 0, 'paused': True}
-        flags = 1 if item.get('paused') else 0
-        if item.get('caption_error'):
-            flags |= 4
+        flags = self._header_flags(item)
         seq = self.frames.publish(width, height, flags, item.get('position_ms', 0), item.get('duration_ms', 0), generation, pixels)
         self.shown = (width, height, seq)
         return seq
@@ -664,28 +917,37 @@ class TheaterSession:
     def begin_playback(self):
         if self.active is None:
             return
-        item = self.items[self.active]
-        if item.get('paused') or item.get('kind') != 'file':
-            if item.get('kind') == 'url' and not item.get('paused'):
-                self.hold_audio(True, os.getpid())
+        if self.thread is not None and self.thread.is_alive():
             return
+        item = self.items[self.active]
+        if item.get('paused'):
+            return
+        item.pop('decode_error', None)
+        identity = self.active
+        if item.get('kind') == 'url':
+            self._begin_url(identity)
+            return
+        if item.get('kind') != 'file':
+            return
+        self._begin_file(identity, item)
+
+    def _begin_file(self, identity, item):
+        if self.play_frames and item.get('src_w') and item.get('src_h'):
+            self._ensure_ink()
+            if self.ink is None:
+                self._fail_start(identity, 'model')
+                return
+        self._suspend_other_pages(None)
         self.hold_audio(True, os.getpid())
+        self.audio_socket = None
         if self.audio_launcher is not None:
             child = self.audio_launcher(item)
             if child is not None:
                 self.audio_child = child
         if not self.play_frames or not item.get('src_w') or not item.get('src_h'):
             return
-        if self.ink is None and self.runtime['role'] != 'missing':
-            try:
-                self.ink = load_ink(self.runtime['selected'])
-            except Exception as error:
-                self.emit({'event': 'fatal', 'error': _clean(error), 'runtime': dict(self.runtime)})
-                return
-        if self.ink is None:
-            return
         frame_w, frame_h = self.published_size(item['src_w'], item['src_h'])[:2]
-        rate = item.get('rate') or 12
+        rate = item.get('rate') or 12.0
         argv = [
             'ffmpeg', '-v', 'error', '-ss', f"{item['position_ms'] / 1000:.3f}",
             '-i', item['path'], '-an', '-f', 'rawvideo', '-pix_fmt', 'rgb24',
@@ -694,55 +956,289 @@ class TheaterSession:
         try:
             proc = spawn(argv, stdout=subprocess.PIPE)
         except OSError as error:
-            self.emit({'event': 'error', 'error': 'decode', 'detail': _clean(error)})
+            detail = _clean(error)
+            self.emit({'event': 'error', 'error': 'decode', 'detail': detail})
+            self._fail_start(identity, detail or 'decode')
             return
         self.decoder = proc
+        self.stop_playback.clear()
         generation = self.generation
         identity = self.active
-        self.stop_playback = threading.Event()
+        socket_path = self.audio_socket
         self.thread = threading.Thread(
-            target=self._decode, args=(proc, identity, generation, frame_w, frame_h, rate, item['position_ms']),
+            target=self._decode,
+            args=(proc, identity, generation, frame_w, frame_h, rate, item['position_ms'], socket_path),
             daemon=True)
         self.thread.start()
 
-    def _decode(self, proc, identity, generation, width, height, rate, origin_ms):
+    def _begin_url(self, identity):
+        if self.play_frames:
+            page = self.pages.get(identity)
+            if page is None or not hasattr(page, 'frame'):
+                self.emit({'event': 'error', 'error': 'capture', 'detail': 'browser frames are not available'})
+                self._fail_start(identity, 'browser frames are not available')
+                return
+            self._ensure_ink()
+            if self.ink is None:
+                self._fail_start(identity, 'model')
+                return
+        self.hold_audio(True, os.getpid())
+        self._suspend_other_pages(identity)
+        try:
+            state = self._call_page(identity, 'resume')
+        except Exception as error:
+            detail = _clean(error)
+            self.emit({'event': 'error', 'error': 'capture', 'detail': detail or 'private display unavailable'})
+            self._fail_start(identity, detail or 'capture')
+            return
+        self._apply_media(identity, state)
+        if not self.play_frames:
+            return
+        self.stop_playback.clear()
+        generation = self.generation
+        self.thread = threading.Thread(
+            target=self._capture, args=(identity, generation), daemon=True)
+        self.thread.start()
+
+    def _fail_start(self, identity, detail):
+        """A start that did not become playing owns no child and is not playing."""
+        item = self.items.get(identity)
+        if item is not None:
+            item['paused'] = True
+            item['decode_error'] = detail or 'playback did not start'
+        self._drop_children()
+        try:
+            self.hold_audio(False, os.getpid())
+        except Exception:
+            pass
+        self._sync_shown_header()
+
+    def _drop_children(self):
+        audio, decoder = self.audio_child, self.decoder
+        self.audio_child = None
+        self.decoder = None
+        self.audio_socket = None
+        reap(decoder)
+        reap(audio)
+
+    def _activity_state(self, identity):
+        item = self.items.get(identity) or {}
+        if item.get('decode_error'):
+            return 'error'
+        if item.get('ended'):
+            return 'ended'
+        if item.get('paused'):
+            return 'paused'
+        return 'playing'
+
+    def _header_flags(self, item):
+        flags = 1 if item.get('paused') else 0
+        if item.get('ended'):
+            flags |= 2
+        if item.get('caption_error') or item.get('decode_error'):
+            flags |= 4
+        return flags
+
+    def _sync_shown_header(self):
+        """Rewrite paused, ended, error, and position on the current picture."""
+        width, height, seq = self.shown
+        if not seq or width <= 0 or height <= 0:
+            return
+        item = self.items.get(self.active) or {}
+        new_seq = self.frames.touch(
+            width, height, self._header_flags(item),
+            item.get('position_ms', 0), item.get('duration_ms', 0), self.generation)
+        self.shown = (width, height, new_seq)
+
+    def _ensure_ink(self):
+        if self.ink is not None or self.runtime['role'] == 'missing':
+            return
+        try:
+            self.ink = load_ink(self.runtime['selected'])
+        except Exception as error:
+            self.emit({'event': 'fatal', 'error': _clean(error), 'runtime': dict(self.runtime)})
+
+    def _note_position(self, identity, generation, position_ms):
+        with self.lock:
+            if self.stop_playback.is_set() or generation != self.generation or self.active != identity:
+                return False
+            item = self.items.get(identity)
+            if item is None:
+                return False
+            item['position_ms'] = max(0, int(position_ms))
+            return True
+
+    def _current_caption(self, identity):
+        if not identity or not self.captions_on:
+            return ''
+        item = self.items.get(identity) or {}
+        if item.get('caption_error'):
+            return ''
+        text, _start, _end = cue_at(item.get('cues') or [], item.get('position_ms', 0))
+        return text
+
+    def _sync_caption(self, identity, previous):
+        text = self._current_caption(identity)
+        if text != previous:
+            self._emit_caption(identity)
+        return text
+
+    def _finish_media(self, identity, generation, ended, detail, error_name='decode'):
+        if self.stop_playback.is_set() or generation != self.generation or self.active != identity:
+            return
+        item = self.items.get(identity)
+        if item is None:
+            return
+        if ended:
+            if item.get('duration_ms'):
+                item['position_ms'] = item['duration_ms']
+            item['ended'] = True
+            item['paused'] = True
+            self._emit_caption(identity)
+            self.status(identity, 'ended')
+        else:
+            item['paused'] = True
+            item['decode_error'] = detail or error_name
+            self.emit({'event': 'error', 'error': error_name, 'detail': detail or error_name})
+            self.status(identity, 'error')
+        self._sync_shown_header()
+        try:
+            self.hold_audio(False, os.getpid())
+        except Exception:
+            pass
+        self._drop_children()
+
+    def _decode(self, proc, identity, generation, width, height, rate, origin_ms, socket_path):
         import numpy as np
         needed = width * height * 3
-        started = time.monotonic()
+        clock = PlaybackClock(origin_ms / 1000.0, socket_path)
         index = 0
-        origin = origin_ms / 1000
-        while not self.stop_playback.is_set():
-            chunk = _read_exact(proc.stdout, needed, self.stop_playback)
-            if chunk is None:
-                break
-            due = origin + index / rate
-            index += 1
-            clock = origin + (time.monotonic() - started)
-            if clock - due > 1.5 / rate:
-                continue
-            if generation != self.generation or self.active != identity:
-                break
-            rgb = np.frombuffer(chunk, dtype=np.uint8).reshape(height, width, 3)
-            try:
-                pixels, out_w, out_h = fit_bgr(self.ink, rgb)
-            except Exception:
-                break
-            with self.lock:
-                if generation != self.generation or self.active != identity or self.stop_playback.is_set():
+        origin = origin_ms / 1000.0
+        rate = rate or 12.0
+        last_status = -10 ** 9
+        last_text = self._current_caption(identity)
+        try:
+            while not self.stop_playback.is_set():
+                chunk = _read_exact(proc.stdout, needed, self.stop_playback)
+                if chunk is None:
                     break
-                self.write_frame(pixels, out_w, out_h, generation)
-        reap(proc)
+                due = origin + index / rate
+                index += 1
+                while not self.stop_playback.is_set():
+                    now = clock.now()
+                    if now + 0.001 >= due:
+                        break
+                    time.sleep(min(0.02, max(0.0, due - now)))
+                if self.stop_playback.is_set():
+                    break
+                now = clock.now()
+                if not self._note_position(identity, generation, now * 1000):
+                    break
+                if now - due <= 1.5 / rate:
+                    rgb = np.frombuffer(chunk, dtype=np.uint8).reshape(height, width, 3).copy()
+                    try:
+                        pixels, out_w, out_h = fit_bgr(self.ink, rgb)
+                    except Exception as error:
+                        self._finish_media(identity, generation, False, _clean(error))
+                        reap(proc)
+                        return
+                    if self.stop_playback.is_set() or generation != self.generation or self.active != identity:
+                        break
+                    self.write_frame(pixels, out_w, out_h, generation)
+                item = self.items.get(identity) or {}
+                pos = item.get('position_ms', 0)
+                if pos - last_status >= 100:
+                    last_status = pos
+                    self.status(identity, 'playing')
+                last_text = self._sync_caption(identity, last_text)
+        finally:
+            clock.close()
+        if self.stop_playback.is_set() or generation != self.generation or self.active != identity:
+            reap(proc)
+            return
+        try:
+            code = proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            reap(proc)
+            if not self.stop_playback.is_set():
+                self._finish_media(identity, generation, False, 'decode stalled')
+            return
+        if self.stop_playback.is_set() or generation != self.generation or self.active != identity:
+            return
+        if code == 0:
+            self._finish_media(identity, generation, True, '')
+        else:
+            self._finish_media(identity, generation, False, f'decode exit {code}')
+
+    def _browser_position(self, page, identity, origin, started):
+        state_fn = getattr(page, 'media_state', None)
+        if state_fn is not None:
+            try:
+                state = state_fn()
+            except Exception:
+                state = None
+            if isinstance(state, dict):
+                self._apply_media(identity, state)
+                pos = state.get('position_ms')
+                if isinstance(pos, (int, float)) and not isinstance(pos, bool) and pos >= 0:
+                    return float(pos)
+        return (origin + (time.monotonic() - started)) * 1000
+
+    def _capture(self, identity, generation):
+        page = self.pages.get(identity)
+        if page is None or not hasattr(page, 'frame'):
+            self.emit({'event': 'error', 'error': 'capture', 'detail': 'browser frames are not available'})
+            return
+        item = self.items.get(identity) or {}
+        origin = item.get('position_ms', 0) / 1000.0
+        started = time.monotonic()
+        last_status = -10 ** 9
+        last_text = self._current_caption(identity)
+        while not self.stop_playback.is_set():
+            position_ms = self._browser_position(page, identity, origin, started)
+            if not self._note_position(identity, generation, position_ms):
+                break
+            try:
+                frame = page.frame(0.1)
+            except Exception as error:
+                self._finish_media(identity, generation, False, _clean(error), 'capture')
+                return
+            if frame is not None:
+                try:
+                    width, height, raw = frame
+                    import numpy as np
+                    rgb = np.frombuffer(raw, dtype=np.uint8).reshape(int(height), int(width), 3).copy()
+                    with self.lock:
+                        shown = self.items.get(identity)
+                        if shown is not None and generation == self.generation:
+                            shown['src_w'] = int(width)
+                            shown['src_h'] = int(height)
+                    self.render_rgb(rgb, generation)
+                except Exception as error:
+                    self._finish_media(identity, generation, False, _clean(error), 'capture')
+                    return
+            pos = (self.items.get(identity) or {}).get('position_ms', 0)
+            if pos - last_status >= 100:
+                last_status = pos
+                self.status(identity, 'playing')
+            last_text = self._sync_caption(identity, last_text)
+            time.sleep(0.02)
 
     def halt_playback(self):
         self.stop_playback.set()
         audio, decoder, thread = self.audio_child, self.decoder, self.thread
         self.audio_child = None
         self.decoder = None
-        self.thread = None
+        self.audio_socket = None
         reap(decoder)
         reap(audio)
         if thread is not None and thread is not threading.current_thread():
-            thread.join(timeout=1)
+            thread.join(timeout=3)
+        if thread is not None and thread.is_alive():
+            self.thread = thread
+            return
+        self.thread = None
+        self.stop_playback.clear()
 
     def shutdown(self):
         self.halt_playback()
@@ -750,10 +1246,12 @@ class TheaterSession:
             self.hold_audio(False, os.getpid())
         except Exception:
             pass
-        try:
-            self.browser.close()
-        except Exception:
-            pass
+        for page in list(self.pages.values()):
+            try:
+                page.close()
+            except Exception:
+                pass
+        self.pages.clear()
         for directory in self.socket_dirs:
             try:
                 for child in Path(directory).iterdir():
@@ -849,14 +1347,18 @@ def _read_exact(stream, count, stop):
     while len(data) < count:
         if stop.is_set():
             return None
-        piece = stream.read(count - len(data))
+        try:
+            piece = stream.read(count - len(data))
+        except (OSError, ValueError):
+            return None
         if not piece:
             return None
         data.extend(piece)
     return bytes(data)
 
 
-def product_audio(session, item):
+def product_audio(session, item, ao=None):
+    session.audio_socket = None
     if not item.get('audio'):
         return None
     import shutil
@@ -866,26 +1368,101 @@ def product_audio(session, item):
     directory = Path(tempfile.mkdtemp(prefix='zell-theater-'))
     session.socket_dirs.append(directory)
     socket_path = directory / 'mpv.sock'
+    session.audio_socket = socket_path
     argv = [
         player, '--no-config', '--no-video', '--no-terminal', '--really-quiet',
         f'--input-ipc-server={socket_path}', f"--start={item.get('position_ms', 0) / 1000:.3f}",
-        '--keep-open=no', '--audio-display=no', '--', item['path'],
+        '--keep-open=no', '--audio-display=no',
     ]
+    if ao:
+        argv.append(f'--ao={ao}')
+    argv.extend(['--', item['path']])
     return spawn(argv)
+
+
+def _read_available(stdin, timeout):
+    """Read one chunk, or None at EOF. A real pipe waits at most timeout seconds."""
+    fd = None
+    try:
+        fd = stdin.fileno()
+    except (AttributeError, OSError, ValueError):
+        fd = None
+    if fd is not None:
+        try:
+            ready, _, _ = select.select([fd], [], [], timeout)
+        except (ValueError, OSError):
+            return b''
+        if not ready:
+            return b''
+        reader = getattr(stdin, 'read1', None)
+        try:
+            data = reader(65536) if reader is not None else os.read(fd, 65536)
+        except BlockingIOError:
+            return b''
+        if isinstance(data, str):
+            data = data.encode()
+        if not data:
+            return None
+        return data
+    data = stdin.read(65536)
+    if isinstance(data, str):
+        data = data.encode()
+    if not data:
+        return None
+    return data
+
+
+def _feed(stdout, session, pending, discarding, chunk):
+    """Assemble lines without holding more than LINE_MAX of an unfinished line."""
+    view = chunk
+    while view and not session.stopped:
+        if discarding:
+            nl = view.find(b'\n')
+            if nl < 0:
+                return pending, True
+            view = view[nl + 1:]
+            discarding = False
+            continue
+        nl = view.find(b'\n')
+        take = view if nl < 0 else view[:nl]
+        if len(pending) + len(take) > LINE_MAX:
+            pending = bytearray()
+            _write(stdout, {'event': 'error', 'error': 'malformed', 'detail': 'line too long'})
+            if nl < 0:
+                return pending, True
+            view = view[nl + 1:]
+            continue
+        if nl < 0:
+            pending.extend(view)
+            return pending, False
+        line = bytes(pending) + view[:nl]
+        pending = bytearray()
+        view = view[nl + 1:]
+        if not line.strip():
+            continue
+        for event in session.handle_line(line):
+            _write(stdout, event)
+    return pending, discarding
 
 
 def serve(stdin, stdout, session, frame_fd=None):
     session.attach(frame_fd)
     for event in session.start():
         _write(stdout, event)
+    pending = bytearray()
+    discarding = False
     while not session.stopped:
-        line = stdin.readline()
-        if not line:
-            break
-        if not line.strip():
-            continue
-        for event in session.handle_line(line):
+        for event in session.drain():
             _write(stdout, event)
+        if session.stopped:
+            break
+        chunk = _read_available(stdin, 0.05)
+        if chunk is None:
+            break
+        if chunk:
+            pending, discarding = _feed(stdout, session, pending, discarding, chunk)
+    for event in session.drain():
+        _write(stdout, event)
     session.shutdown()
     return 0
 
@@ -900,8 +1477,7 @@ def _write(stdout, event):
 
 def main():
     runtime = select_runtime()
-    browser = PrivateBrowser()
-    session = TheaterSession(runtime, browser=browser, play_frames=True)
+    session = TheaterSession(runtime, play_frames=True)
     session.audio_launcher = lambda item: product_audio(session, item)
     raw = os.environ.get('ZELL_THEATER_FD')
     frame_fd = int(raw) if raw else None
