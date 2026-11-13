@@ -168,20 +168,27 @@ class SafetyTests(unittest.TestCase):
         records.assert_not_called()
         self.assertEqual(calls[-1],['nmcli','connection','up','uuid','a'*36])
 
-    def test_display_change_rolls_back_on_timeout_and_error(self):
-        text='HDMI-1 connected 1920x1080+0+0\n   1920x1080 60.0*\n   1280x720 60.0\n'
-        outputs=devices.display_inventory(text)
-        for fail in (False,True):
-            calls=[]
-            def run(argv,**kwargs):
-                calls.append(argv)
-                if kwargs.get('capture'):return text
-                if fail and len(calls)==2:raise RuntimeError('Partial display change failed')
-            with patch.object(devices,'run',side_effect=run),patch.object(devices,'pick',side_effect=[outputs[0],'mode','1280x720']),patch.object(devices,'confirm'),patch.object(devices.select,'select',return_value=([],[],[])):
-                if fail:
-                    with self.assertRaises(RuntimeError):devices.displays()
-                else:devices.displays()
-            self.assertEqual(calls[-1],['xrandr','--output','HDMI-1','--mode','1920x1080','--pos','0x0'])
+    def test_owner_failure_keeps_a_short_explanation(self):
+        completed=subprocess.CompletedProcess(['pleb'],1,'','pleb-lock: a local X11 desktop is required\n')
+        with patch.object(core,'tool',return_value='/usr/bin/pleb'),patch.object(core.subprocess,'run',return_value=completed):
+            with self.assertRaisesRegex(RuntimeError,'local X11 desktop'):
+                core.run(['pleb','lock'],detail=True)
+
+    def test_brightness_still_uses_brightnessctl(self):
+        with patch.object(devices,'run') as run,patch.object(devices,'positive',return_value=40),patch.object(devices,'confirm'):
+            devices.brightness()
+        self.assertEqual([call.args[0] for call in run.call_args_list],[['brightnessctl','info'],['brightnessctl','set','40%']])
+
+    def test_tinkerer_does_not_grow_a_second_locker_or_display_autostart(self):
+        text=Path(devices.__file__).read_text()
+        for banned in ('xrandr','xss-lock','xsettingsd','loginctl'):
+            self.assertNotIn(banned,text)
+        labels=[label for label,_key in core.entries('tinkerer')]
+        self.assertEqual(labels[0],'Display resolution, arrangement and external monitors')
+        self.assertIn('Display brightness',labels)
+        self.assertLessEqual(len(labels),16)
+        for label in ('Lock the screen now','Automatic screen lock','Display blanking and power saving','Night light','Themes, icons, cursor and Kilix font'):
+            self.assertIn(label,labels)
 
     def test_service_units_are_private_escaped_and_preserve_calendar(self):
         with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,{'KILIX_ZELL_STATE':tmp+'/space % and $/state','XDG_CONFIG_HOME':tmp}),patch.object(schedule,'run') as run:
@@ -290,5 +297,207 @@ class MusicTests(unittest.TestCase):
                         conn.recv(4096);conn.sendall(b'{"event":"start-file"}\n{"error":"success"}\n')
                 worker=threading.Thread(target=reply);worker.start()
                 self.assertEqual(audio.rpc(path,{'command':['test']}),{'error':'success'});worker.join()
+
+def display_fixture():
+    output={'name':'HDMI-1','identity':'a'*64,'enabled':True,'primary':True,'mode':'1920x1080','rate':'60.00',
+            'x':0,'y':0,'rotation':'normal','scale':1.0,'filter':''}
+    inventory={'outputs':[{**output,'modes':{'1920x1080':['60.00'],'1280x720':['60.00']},'safe':True}],'maximum':[8192,8192]}
+    return inventory,{'version':2,'outputs':[dict(output)]}
+
+class TinkererOwnerTests(unittest.TestCase):
+    def test_lock_calls_pleb_and_a_failure_is_not_success(self):
+        with patch.object(devices,'confirm'),patch.object(devices,'run',side_effect=RuntimeError('pleb exited with status 1. a local X11 desktop is required')):
+            with self.assertRaisesRegex(RuntimeError,'not locked'):
+                devices.lock_screen()
+            self.assertEqual(devices.run.call_args.args[0],['pleb','lock'])
+        with patch.object(devices,'confirm'),patch.object(devices,'run',side_effect=FileNotFoundError('pleb is missing. Install pleb using Merchant.')):
+            with self.assertRaisesRegex(FileNotFoundError,'pleb is missing'):
+                devices.lock_screen()
+
+    def test_screen_lock_argv_read_back_and_preserved_policy(self):
+        saved={'version':1,'policy':'on','idle_seconds':600}
+        calls=[]
+        def runner(argv):
+            calls.append(argv)
+            if '--show' in argv:
+                return json.dumps({'idle_seconds':1,'policy':'session','version':1})
+            return ''
+        with self.assertRaisesRegex(RuntimeError,'previous policy'):
+            devices.apply_screen_lock('off',0,saved,runner)
+        self.assertEqual(calls[0],['pleb','screen-lock','--set','off','--idle-seconds','0'])
+        self.assertEqual(calls[1],['pleb','screen-lock','--show'])
+        self.assertEqual(calls[2],['pleb','screen-lock','--set','on','--idle-seconds','600'])
+        self.assertNotIn('lid',str(calls))
+        calls.clear()
+        def unreadable(argv):
+            calls.append(argv)
+            if '--show' in argv:return 'not json'
+            return ''
+        with self.assertRaisesRegex(RuntimeError,'previous policy'):
+            devices.apply_screen_lock('off',15,saved,unreadable)
+        self.assertEqual(calls[-1],['pleb','screen-lock','--set','on','--idle-seconds','600'])
+        calls.clear()
+        def show(argv):
+            calls.append(argv)
+            if '--set' in argv:
+                saved.update(policy=argv[argv.index('--set')+1], idle_seconds=int(argv[argv.index('--idle-seconds')+1]))
+                return 'Saved. Changes apply at your next login.\n'
+            return json.dumps(saved)
+        with redirect_stdout(io.StringIO()) as output:
+            devices.apply_screen_lock('session',90,dict(saved),show)
+        self.assertIn('next login',output.getvalue())
+        self.assertEqual(saved,{'version':1,'policy':'session','idle_seconds':90})
+        calls.clear()
+        with patch.object(devices,'run',side_effect=lambda argv,**kwargs:'not json') as show_run:
+            with self.assertRaises(ValueError):devices.screen_lock()
+            self.assertEqual(show_run.call_args_list[0].args[0],['pleb','screen-lock','--show'])
+            self.assertEqual(len(show_run.call_args_list),1)
+
+    def test_display_preview_timeout_cancel_and_fake_rollback(self):
+        inventory,layout=display_fixture()
+        proposed=json.loads(json.dumps(layout))
+        proposed['outputs'][0]['mode']='1280x720'
+        before=json.loads(json.dumps(layout))
+        for event in ('timeout','cancel','ui_dead','hotplug'):
+            preview=devices.DisplayPreview(before)
+            preview.start(proposed)
+            self.assertEqual(preview.saved,before)
+            getattr(preview,event)()
+            self.assertEqual(preview.saved,before)
+            self.assertEqual(preview.live,before)
+            with self.assertRaises(RuntimeError):preview.confirm()
+        preview=devices.DisplayPreview(before)
+        preview.start(proposed)
+        preview.live['outputs'][0]['mode']='640x480'
+        self.assertEqual(preview.confirm(),'reverted')
+        self.assertEqual(preview.saved,before)
+        self.assertEqual(preview.live,before)
+        preview=devices.DisplayPreview(before)
+        preview.start(proposed)
+        self.assertEqual(preview.confirm(),'confirmed')
+        self.assertEqual(preview.saved,proposed)
+        with tempfile.TemporaryDirectory() as tmp:
+            seen=[]
+            def runner(argv,**kwargs):
+                seen.append((list(argv),Path(argv[3]).read_text()))
+                return 1
+            with patch.object(devices,'run',side_effect=runner),patch.object(devices,'tool',return_value='/usr/bin/pleb'):
+                self.assertEqual(devices.commit_preview(layout,inventory,Path(tmp)),1)
+            self.assertEqual(seen[0][0],['pleb','displays','preview',str(Path(tmp)/'layout.json'),'--timeout','15'])
+            self.assertNotIn('modes',seen[0][1])
+            self.assertNotIn('xrandr',seen[0][1])
+            self.assertFalse((Path(tmp)/'layout.json').exists())
+            def interrupt(argv,**kwargs):
+                self.assertTrue(Path(argv[3]).is_file())
+                raise KeyboardInterrupt
+            with patch.object(devices,'run',side_effect=interrupt),patch.object(devices,'tool',return_value='/usr/bin/pleb'):
+                with self.assertRaises(KeyboardInterrupt):devices.commit_preview(layout,inventory,Path(tmp))
+            self.assertFalse((Path(tmp)/'layout.json').exists())
+            with patch.object(devices,'tool',side_effect=FileNotFoundError('pleb is missing. Install pleb using Merchant.')):
+                with self.assertRaisesRegex(FileNotFoundError,'pleb is missing'):
+                    devices.commit_preview(layout,inventory,Path(tmp))
+            self.assertEqual(list(Path(tmp).iterdir()),[])
+        refused=json.loads(json.dumps(layout))
+        refused['outputs'][0]['enabled']=False
+        refused['outputs'][0]['primary']=False
+        with patch.object(devices,'run') as run,patch.object(devices,'tool') as tool:
+            with self.assertRaisesRegex(ValueError,'Nothing was changed'):
+                devices.commit_preview(refused,inventory)
+            run.assert_not_called();tool.assert_not_called()
+
+    def test_declined_display_confirmation_does_not_preview(self):
+        inventory,layout=display_fixture()
+        calls=[]
+        def runner(argv,**kwargs):
+            calls.append(argv)
+            return json.dumps(inventory if argv[2]=='list' else layout)
+        with patch.object(devices,'run',side_effect=runner),patch.object(devices,'pick',side_effect=[layout['outputs'][0],'mode','1280x720','60.00']),patch.object(devices,'confirm',side_effect=core.Cancelled):
+            with self.assertRaises(core.Cancelled):devices.displays()
+        self.assertEqual([argv[2] for argv in calls],['list','snapshot'])
+
+    def test_blanking_preserves_settings_and_stay_awake_is_only_an_inhibitor(self):
+        with self.assertRaisesRegex(ValueError,'owned by the screen-lock policy'):
+            devices.blanking_argv('/xfce4-power-manager/lid-action-on-ac','uint','4')
+        calls=[]
+        def missing(argv):
+            calls.append(argv)
+            raise RuntimeError('xfconf-query exited with status 1.')
+        with self.assertRaisesRegex(RuntimeError,'Nothing was changed'):
+            devices.apply_blanking('/xfce4-power-manager/dpms-enabled','bool','false',missing)
+        self.assertEqual(calls,[['xfconf-query','-c','xfce4-power-manager','-l']])
+        calls.clear()
+        def mismatch(argv):
+            calls.append(list(argv))
+            if argv[-1]=='-l':return '/xfce4-power-manager/dpms-enabled'
+            if '--set' in argv:return ''
+            return 'true'
+        with self.assertRaisesRegex(RuntimeError,'previous value'):
+            devices.apply_blanking('/xfce4-power-manager/dpms-enabled','bool','false',mismatch)
+        self.assertEqual(calls[-1],['xfconf-query','-c','xfce4-power-manager','-p','/xfce4-power-manager/dpms-enabled','--create','--type','bool','--set','true'])
+        with patch.object(devices,'confirm',side_effect=core.Cancelled),patch.object(devices,'run') as run:
+            with self.assertRaises(core.Cancelled):devices.stay_awake()
+            run.assert_not_called()
+        with patch.object(devices,'confirm'),patch.object(devices,'run') as run,redirect_stdout(io.StringIO()):
+            devices.stay_awake()
+        self.assertEqual(run.call_args.args[0],devices.AWAKE)
+        self.assertNotIn('xfconf-query',str(run.call_args.args[0]))
+
+    def test_night_light_missing_tool_and_failure_leave_config_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home=Path(tmp)
+            with patch.object(devices,'tool',side_effect=FileNotFoundError('redshift is missing. Install redshift using Merchant.')):
+                with self.assertRaisesRegex(FileNotFoundError,'redshift is missing'):
+                    devices.apply_night_light(4500,True,home,lambda argv: None)
+            self.assertEqual(list(home.rglob('*')),[])
+            foreign=home/'redshift'
+            foreign.mkdir();config=foreign/'redshift.conf';config.write_text('temp-day=3400\n')
+            with patch.object(devices,'tool',return_value='/usr/bin/redshift'):
+                with self.assertRaisesRegex(RuntimeError,'left unchanged'):
+                    devices.apply_night_light(4500,True,home,lambda argv: None)
+            self.assertEqual(config.read_text(),'temp-day=3400\n')
+            config.write_text(devices.NIGHT_MARKER+'old\n')
+            def fail(argv):
+                raise RuntimeError('redshift exited with status 1.')
+            with patch.object(devices,'tool',return_value='/usr/bin/redshift'):
+                with self.assertRaisesRegex(RuntimeError,'exited'):
+                    devices.apply_night_light(4500,True,home,fail)
+            self.assertEqual(config.read_text(),devices.NIGHT_MARKER+'old\n')
+            self.assertFalse((home/'autostart'/'kilix-zell-redshift.desktop').exists())
+            calls=[]
+            with patch.object(devices,'tool',return_value='/usr/bin/redshift'),redirect_stdout(io.StringIO()):
+                devices.apply_night_light(4500,True,home,lambda argv: calls.append(argv))
+            self.assertEqual(calls,[['redshift','-O','4500']])
+            text=config.read_text()
+            self.assertIn('temp-day=4500',text);self.assertIn('temp-night=4500',text)
+            self.assertIn('Exec=redshift -c ',(home/'autostart'/'kilix-zell-redshift.desktop').read_text())
+            self.assertEqual(config.stat().st_mode&0o777,0o600)
+
+    def test_theme_and_font_read_back_restores_the_previous_value(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);theme=root/'Clearlooks';(theme/'gtk-3.0').mkdir(parents=True)
+            (root/'linked').symlink_to(theme)
+            self.assertEqual(devices.installed_choices('theme',[root]),['Clearlooks'])
+        calls=[]
+        def mismatch(argv):
+            calls.append(list(argv))
+            if argv[-1]=='-l':return '/Net/ThemeName'
+            if '--set' in argv:return ''
+            return 'Adwaita'
+        with self.assertRaisesRegex(RuntimeError,'previous value'):
+            devices.apply_theme('/Net/ThemeName','Clearlooks',mismatch)
+        self.assertEqual(calls[-1][-1],'Adwaita')
+        self.assertNotIn('xsettingsd',str(calls))
+        calls.clear()
+        def font(argv,**kwargs):
+            calls.append(list(argv))
+            if argv[2]=='show':return 'font_size 11.0\n'
+            return 'font_size 14\n'
+        with self.assertRaisesRegex(RuntimeError,'previous size'):
+            devices.apply_font('14','11',font)
+        self.assertEqual(calls,[['kilix','screen-size','set','14'],['kilix','screen-size','show'],['kilix','screen-size','set','11']])
+        calls.clear()
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(devices.apply_font('14','11',lambda argv,**kwargs: calls.append(argv) or 'font_size 14\n'),'14')
+        self.assertEqual(calls[0],['kilix','screen-size','set','14'])
 
 if __name__=='__main__':unittest.main()
