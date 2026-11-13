@@ -330,9 +330,17 @@ class TheaterTests(unittest.TestCase):
             return proc
 
         session = self.session(play_frames=True, audio_launcher=launch, hold_audio=hold)
-        session.items['a'] = theater._blank('file', str(self.file('a.mp4')), {
-            'width': 16, 'height': 8, 'duration_ms': 20000, 'audio': True, 'rate': 12,
-        })
+        clip = os.environ.get('PLAYBACK_FIXTURE')
+        clip = str(Path(clip) / 'sample-a.mp4') if clip else ''
+        if clip and Path(clip).is_file():
+            session.handle_line(json.dumps({
+                'cmd': 'open', 'id': 'a', 'browser': None,
+                'source': {'kind': 'file', 'path': clip},
+            }).encode())
+        else:
+            session.items['a'] = theater._blank('file', str(self.file('a.mp4')), {
+                'width': 160, 'height': 96, 'duration_ms': 20000, 'audio': True, 'rate': 12,
+            })
         original = theater.load_ink
 
         def boom(_selected):
@@ -341,14 +349,20 @@ class TheaterTests(unittest.TestCase):
         theater.load_ink = boom
         try:
             events = session.handle_line(json.dumps({'cmd': 'use', 'id': 'a'}).encode())
+            started = list(holds)
         finally:
             theater.load_ink = original
             session.shutdown()
-        self.assertTrue(any(event.get('event') == 'fatal' for event in events))
+        fatal_at = next(index for index, event in enumerate(events) if event.get('event') == 'fatal')
+        status_at = next(index for index, event in enumerate(events) if event.get('event') == 'status')
+        self.assertLess(fatal_at, status_at)
+        self.assertEqual(events[fatal_at]['error'], 'synthetic model load failure')
+        self.assertNotEqual(events[status_at]['state'], 'playing')
         self.assertFalse(any(event.get('state') == 'playing' for event in events))
         self.assertEqual(session.items['a']['paused'], True)
+        self.assertIsNone(session.audio_child)
         self.assertEqual(children, [])
-        self.assertNotIn(True, holds)
+        self.assertEqual(started, [])
 
     def test_decoder_start_failure_reaps_the_audio_child(self):
         holds = []

@@ -955,7 +955,7 @@ class TheaterSession:
         except OSError as error:
             detail = _clean(error)
             self.emit({'event': 'error', 'error': 'decode', 'detail': detail})
-            self._fail_start(identity, detail or 'decode')
+            self._fail_start(identity, detail or 'decode', release_hold=True)
             return
         self.decoder = proc
         self.stop_playback.clear()
@@ -986,7 +986,7 @@ class TheaterSession:
         except Exception as error:
             detail = _clean(error)
             self.emit({'event': 'error', 'error': 'capture', 'detail': detail or 'private display unavailable'})
-            self._fail_start(identity, detail or 'capture')
+            self._fail_start(identity, detail or 'capture', release_hold=True)
             return
         self._apply_media(identity, state)
         if not self.play_frames:
@@ -997,17 +997,18 @@ class TheaterSession:
             target=self._capture, args=(identity, generation), daemon=True)
         self.thread.start()
 
-    def _fail_start(self, identity, detail):
+    def _fail_start(self, identity, detail, release_hold=False):
         """A start that did not become playing owns no child and is not playing."""
         item = self.items.get(identity)
         if item is not None:
             item['paused'] = True
             item['decode_error'] = detail or 'playback did not start'
         self._drop_children()
-        try:
-            self.hold_audio(False, os.getpid())
-        except Exception:
-            pass
+        if release_hold:
+            try:
+                self.hold_audio(False, os.getpid())
+            except Exception:
+                pass
         self._sync_shown_header()
 
     def _drop_children(self):
