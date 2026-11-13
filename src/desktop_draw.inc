@@ -27,6 +27,41 @@ static void desktop_stool_front(sr_canvas *c,int cx,int cy){
  sr_canvas src;sr_canvas_wrap(&src,a->pixels,a->width,a->height);
  sr_blit_scaled(c,&src,-cx,-cy,a->width,a->height,1.f);
 }
+/* Full-canvas foreground. The asset compiler keeps the 1536x1024 anchor. */
+static void desktop_registered_front(sr_canvas *c,int art,int cx,int cy){
+ const zell_art *sheet=zell_art_get(art);if(!sheet)return;
+ sr_canvas src;sr_canvas_wrap(&src,sheet->pixels,sheet->width,sheet->height);
+ sr_blit_scaled(c,&src,-cx,-cy,sheet->width,sheet->height,1.f);
+}
+static int desktop_room_background(int room){
+ if(room==1)return ZELL_ART_COMMAND_ROOM;
+ if(room==2)return ZELL_ART_LAUNDRY_ROOM;
+ if(room==3)return ZELL_ART_VAULT_ROOM;
+ if(room==4)return ZELL_ART_WORKSHOP_ROOM;
+ if(room==5)return ZELL_ART_GAME_ROOM;
+ if(room==6)return ZELL_ART_THEATER_ROOM;
+ if(room==7)return ZELL_ART_MEDITATION_ROOM;
+ if(room==8)return ZELL_ART_LIBRARY_ROOM;
+ return 0;
+}
+static int desktop_room_foreground(int room){
+ if(room==5)return ZELL_ART_GAME_FOREGROUND;
+ if(room==6)return ZELL_ART_THEATER_FOREGROUND;
+ if(room==7)return ZELL_ART_MEDITATION_FOREGROUND;
+ if(room==8)return ZELL_ART_LIBRARY_FOREGROUND;
+ return -1;
+}
+static const char *desktop_room_title(int room){
+ if(room==1)return "ZELL / COMMAND";
+ if(room==2)return "ZELL / LAUNDRY";
+ if(room==3)return "ZELL / VAULT";
+ if(room==4)return "ZELL / WORKSHOP";
+ if(room==5)return "ZELL / GAME";
+ if(room==6)return "ZELL / THEATER";
+ if(room==7)return "ZELL / MEDITATION";
+ if(room==8)return "ZELL / LIBRARY";
+ return "ZELL / " ZELL_VERSION;
+}
 static void desktop_label(sr_canvas *c,int x,int y,const char *text,uint32_t color){
  int w=sr_text_width_in(SR_FONT_FIXED_8X16,text,1);
  /* Keep labels for wall objects inside the view. */
@@ -306,9 +341,14 @@ static void desktop_cave(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
  int near=zell_desktop_near(s);int height=112;
  for(int i=0;i<ZELL_STATIONS&&s->room==0;i++){
   if(!zell_desktop_station_visible(s,i)||zell_desktop_station_in_front(s,i)!=front)continue;
+  const zell_station *p=&zell_stations[i];int x=(int)(p->x*(float)ZELL_WORLD_W)-cx,y=(int)(p->y*(float)ZELL_WORLD_H)-cy;
+  if(i>=ZELL_GAME_HATCH&&i<=ZELL_LIBRARY_HATCH){
+   int art=p->art+(i==near?(ZELL_ART_GAME_HATCH_OPEN-ZELL_ART_GAME_HATCH):0);
+   const char *label=i==ZELL_GAME_HATCH?"Game room":i==ZELL_THEATER_HATCH?"Movie theater":i==ZELL_MEDITATION_HATCH?"Meditation":"Library";
+   desktop_hatch(c,art,x,y,i==near,label);
+   continue;
+  }
   if(i>=ZELL_WORKSHOP_COMPUTER)continue;
-  const zell_station *p=&zell_stations[i];int x=(int)(p->x*(float)ZELL_WORLD_W),y=(int)(p->y*(float)ZELL_WORLD_H);
-  x-=cx;y-=cy;
   int h=(i<6||(i>=32&&i<42))?height:height*3/4;
   if(i==12){x+=ZELL_SWITCH_WALL_DX;y+=ZELL_SWITCH_WALL_DY;}
   /* A floor glow under a wall fitting would hang in the air; its label marks it. */
@@ -372,10 +412,10 @@ static void zell_notice_show(const zell_scene *s,sr_canvas *c,const char *hint){
  sr_text(c,(float)(right-width),(float)(c->h-22),line,0xe9d49fu,1,1);
 }
 static void desktop_world_layer(const zell_scene *s,sr_canvas *c,int cx,int cy){
- static sr_canvas backgrounds[5];
- int room=s->room>=0&&s->room<5?s->room:0;
+ static sr_canvas backgrounds[9];
+ int room=s->room>=0&&s->room<9?s->room:0;
  sr_canvas *background=&backgrounds[room];
- const zell_art *a=zell_art_get(room==1?ZELL_ART_COMMAND_ROOM:room==2?ZELL_ART_LAUNDRY_ROOM:room==3?ZELL_ART_VAULT_ROOM:room==4?ZELL_ART_WORKSHOP_ROOM:0);
+ const zell_art *a=zell_art_get(desktop_room_background(room));
  if(!background->px&&a){if(sr_canvas_init(background,ZELL_WORLD_W,ZELL_WORLD_H)){sr_canvas src;sr_canvas_wrap(&src,a->pixels,a->width,a->height);sr_blit_scaled(background,&src,0,0,ZELL_WORLD_W,ZELL_WORLD_H,1);}}
  sr_clear(c,0x081319u);
  if(background->px){for(int y=0;y<c->h&&y+cy<ZELL_WORLD_H;y++){int w=c->w;if(w+cx>ZELL_WORLD_W)w=ZELL_WORLD_W-cx;memcpy(c->px+(size_t)y*(size_t)c->w,background->px+(size_t)(y+cy)*ZELL_WORLD_W+(size_t)cx,(size_t)w*4);}}
@@ -421,6 +461,7 @@ static void desktop_world_layer(const zell_scene *s,sr_canvas *c,int cx,int cy){
  sr_fill_ellipse(c,s->x-(float)cx,s->y-(float)cy,17.f*shadow,5.f*shadow,0x071719u,.45f);
  desktop_art(c,pose.art,(int)s->x-cx+pose.offset_x,(int)s->y-cy+pose.offset_y+seat_dy,height*3/4);
  if(s->room==4&&s->seated&&s->seat_ticks==ZELL_SEAT_HOP_TICKS)desktop_stool_front(c,cx,cy);
+ if(desktop_room_foreground(s->room)>=0)desktop_registered_front(c,desktop_room_foreground(s->room),cx,cy);
  if(s->room)desktop_room(s,c,cx,cy,true);else desktop_cave(s,c,cx,cy,true);
  if(s->debug_blocks[0].enabled){
   int blocks=zell_desktop_block_count(s);
@@ -437,7 +478,7 @@ static void desktop_chrome(const zell_scene *s,sr_canvas *c,int cx,int cy){
  if(c->w>=500&&s->mode==ZELL_MODE_WALK){
   int mx=c->w-140,my=42;sr_fill_rect(c,(float)mx,(float)my,128,88,0x0c1921u,.9f);
   sr_stroke_rect(c,(float)mx,(float)my,128,88,1,0x4b7777u,1);
-  for(int i=0;i<ZELL_STATIONS;i++)if(i<ZELL_WORKSHOP_COMPUTER&&zell_desktop_station_visible(s,i))sr_fill_circle(c,(float)(mx+4)+zell_stations[i].x*120,(float)(my+4)+zell_stations[i].y*80,2,0xd9ba79u,1);
+  for(int i=0;i<ZELL_STATIONS;i++)if((i<ZELL_WORKSHOP_COMPUTER||(i>=ZELL_GAME_HATCH&&i<=ZELL_LIBRARY_HATCH))&&zell_desktop_station_visible(s,i))sr_fill_circle(c,(float)(mx+4)+zell_stations[i].x*120,(float)(my+4)+zell_stations[i].y*80,2,0xd9ba79u,1);
   {
    float x0,y0,x1,y1;
    zell_screen_to_world(s,0.f,0.f,&x0,&y0);
@@ -447,7 +488,7 @@ static void desktop_chrome(const zell_scene *s,sr_canvas *c,int cx,int cy){
   sr_fill_circle(c,(float)(mx+4)+s->x/ZELL_WORLD_W*120,(float)(my+4)+s->y/ZELL_WORLD_H*80,3,0x8af8d4u,1);
  }
  sr_fill_rect(c,0,0,(float)c->w,30,0x0c1921u,.97f);
- sr_text(c,12,7,s->room==1?"ZELL / COMMAND":s->room==2?"ZELL / LAUNDRY":s->room==3?"ZELL / VAULT":s->room==4?"ZELL / WORKSHOP":"ZELL / " ZELL_VERSION,0xf0d69bu,1,1);
+ sr_text(c,12,7,desktop_room_title(s->room),0xf0d69bu,1,1);
  if(s->dictation_on)desktop_label(c,c->w/2,82,"Listening / click dictation to finish",0xb7f3d5u);
  char status[100];time_t now=time(NULL);struct tm local;localtime_r(&now,&local);
  snprintf(status,sizeof status,"%02d:%02d  %d fps",local.tm_hour,local.tm_min,s->frame_rate);
@@ -465,12 +506,14 @@ static void desktop_base(const zell_scene *s,sr_canvas *c){
  if(!world.px&&!sr_canvas_init(&world,ZELL_WORLD_W,ZELL_WORLD_H)){
   desktop_world_layer(s,c,cx,cy);
   desktop_chrome(s,c,cx,cy);
+  zell_theater_draw(s,c);
   return;
  }
  /* Every room is drawn in world pixels, then placed with one transform. */
  desktop_world_layer(s,&world,0,0);
  desktop_present_room(s,c,&world);
  desktop_chrome(s,c,cx,cy);
+ zell_theater_draw(s,c);
 }
 static void desktop_text(sr_canvas *c,int x,int y,const char *text,uint32_t color,int width){
  char line[160];int cap=width/8;if(cap<1)return;if(cap>159)cap=159;

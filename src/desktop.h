@@ -10,12 +10,17 @@
 #define ZELL_ROOM_VITALS_H 38
 #define ZELL_ROOM_HUD_BOTTOM (ZELL_ROOM_VITALS_Y + ZELL_ROOM_VITALS_H)
 #define ZELL_ROOM_STATUS_STRIP 30
-#define ZELL_STATIONS 52
+#define ZELL_STATIONS 56
 /* The Command Center computer that zooms into a usage browser. */
 #define ZELL_MANA_CONSOLE 48
 #define ZELL_WORKSHOP_COMPUTER 49
 #define ZELL_FLEET_BOARD 50
 #define ZELL_FLOOR_PANEL 51
+/* Cave hatches for the four approved rooms, one row above the old four. */
+#define ZELL_GAME_HATCH 52
+#define ZELL_THEATER_HATCH 53
+#define ZELL_MEDITATION_HATCH 54
+#define ZELL_LIBRARY_HATCH 55
 #define ZELL_ZOOM_TICKS 22
 #define ZELL_CAVE_STATIONS 15
 /* Where the Neuronte lever is drawn, relative to its floor interaction point. */
@@ -46,6 +51,8 @@ bool zell_desktop_station_visible(const zell_scene *s,int station);
 bool zell_desktop_on_stairs(const zell_scene *s);
 /* World-unit footprints. Screens come from the command layout, not a second table. */
 bool zell_desktop_blocked(const zell_scene *s,float x,float y);
+/* North edge of the walkable floor. Rooms 1–4 keep the old corridor. */
+float zell_desktop_north(int room);
 int zell_desktop_block_count(const zell_scene *s);
 void zell_desktop_block_rect(const zell_scene *s,int index,float *x0,float *y0,float *x1,float *y1);
 int zell_desktop_block_table(int index,int *room,float *x0,float *y0,float *x1,float *y1);
@@ -102,4 +109,31 @@ int64_t zell_notice_clock_ms(void);
 void zell_notice_set_clock(int64_t ms);
 /* Empty text clears the deadline. The same text again does not move it. */
 void zell_notice_apply(zell_scene *s,const char *text);
+/* Theater helper, separate from the station service. Draw is screen-space. */
+struct sr_canvas;
+void zell_theater_draw(const zell_scene *s,struct sr_canvas *canvas);
+int zell_theater_input(zell_scene *s,const zell_controls *c);
+bool zell_theater_click(zell_scene *s);
+bool zell_theater_typing(const zell_scene *s);
+void zell_theater_shutdown(void);
+bool zell_theater_install_json(char *dst,size_t cap);
+int zell_theater_copy_frame(const void *map,size_t map_bytes,uint32_t want_generation,uint32_t *last_seq,uint32_t *dst,size_t dst_pixels,int *out_w,int *out_h);
+void zell_theater_contain(int src_w,int src_h,int dest_w,int dest_h,int *x,int *y,int *w,int *h);
+void zell_theater_video_rect(zell_rect *r);
+void zell_theater_caption_rect(zell_rect *r);
+void zell_theater_remote_rect(zell_rect *r);
+void zell_theater_queue_rect(int index,int width,int height,zell_rect *r);
+bool zell_theater_install_argv_ok(int argc,char **argv);
+int zell_theater_format_open_file(char *dst,size_t cap,const char *id,const char *path);
+void zell_theater_test_reset(void);
+int zell_theater_apply_line(zell_scene *s,const char *line);
+bool zell_theater_submit(zell_scene *s,const char *json);
+bool zell_theater_menu_open(void);
+bool zell_theater_fullscreen(void);
+int zell_theater_queue_count(void);
+const char *zell_theater_error(void);
+const char *zell_theater_caption(void);
+const char *zell_theater_last_command(void);
+void zell_theater_menu_layout(const zell_scene *s,zell_rect *panel,zell_rect *rows,int row_cap,int *row_count);
+int zell_theater_present(const void *map,size_t map_bytes);
 #endif

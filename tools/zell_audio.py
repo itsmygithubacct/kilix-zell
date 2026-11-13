@@ -54,6 +54,64 @@ def state():
     value=read_state('room-music.json',{})
     return value if isinstance(value,dict) else {}
 
+def _pid_alive(pid):
+    if type(pid) is not int or pid<=0:return False
+    try:os.kill(pid,0)
+    except ProcessLookupError:return False
+    except PermissionError:return True
+    return True
+
+def _theater_live(value):
+    return _pid_alive(value.get('theater_owner'))
+
+def _clear_theater_hold(value):
+    """Release one playback's hold. Resume the DJ only if this hold paused it, it is still paused, and neither mute nor dj_held owns that pause."""
+    if value.get('theater_paused_dj') and not value.get('muted') and not value.get('dj_held'):
+        try:
+            if amp('state').get('state')=='paused':amp('play')
+        except (OSError,ValueError,RuntimeError):pass
+    value.pop('theater_owner',None)
+    value.pop('theater_paused_dj',None)
+
+def theater_audio(active, owner):
+    """Pause room music and a playing DJ for one theater owner.
+
+    dj_active is left to the real Amp session. A different pid cannot release
+    the hold, and a dead owner is cleared by MusicMonitor.poll as well as by
+    the parent reap calling this with active False.
+    """
+    from zell_schedule import locked
+    if type(owner) is not int or owner<=0:raise ValueError('theater audio owner must be a process id')
+    with locked():
+        value=state()
+        dead=None
+        if value.get('theater_owner') is not None and not _pid_alive(value.get('theater_owner')):
+            dead=value.get('theater_owner')
+            _clear_theater_hold(value)
+        if not active:
+            if value.get('theater_owner')!=owner:
+                if dead is not None:
+                    try:background_pause(bool(value.get('muted')) or bool(value.get('dj_active')))
+                    except (OSError,ValueError,RuntimeError):pass
+                    write_state('room-music.json',value)
+                return dead==owner
+            _clear_theater_hold(value)
+        elif _theater_live(value) and value.get('theater_owner')!=owner:
+            return False
+        else:
+            paused_dj=bool(value.get('theater_paused_dj')) and value.get('theater_owner')==owner
+            try:
+                current=amp('state').get('state')
+                if current in {'playing','loading'}:
+                    amp('pause');paused_dj=True
+            except (OSError,ValueError,RuntimeError):pass
+            value['theater_owner']=owner
+            value['theater_paused_dj']=paused_dj
+        try:background_pause(bool(value.get('muted')) or bool(value.get('dj_active')) or _theater_live(value) or bool(active and value.get('theater_owner')==owner))
+        except (OSError,ValueError,RuntimeError):pass
+        write_state('room-music.json',value)
+        return True
+
 def dj_started():
     from zell_schedule import locked
     with locked():
@@ -70,10 +128,19 @@ def toggle_mute():
             current=amp('state').get('state')
             if muted and current in {'playing','loading'}:
                 amp('pause');value.update(dj_held=True,dj_pause_seen=False,mute_requested=time.time())
-            elif not muted and value.get('dj_held') and current=='paused':amp('play');value['dj_held']=False
+            elif muted and value.get('theater_paused_dj') and current=='paused':
+                # The theater already paused this DJ. Mute takes the resume.
+                value.update(dj_held=True,dj_pause_seen=False,mute_requested=time.time())
+            elif not muted and value.get('dj_held') and current=='paused':
+                if _theater_live(value):
+                    # Mute owned this pause. The live theater takes the one resume.
+                    value['dj_held']=False
+                    value['theater_paused_dj']=True
+                else:
+                    amp('play');value['dj_held']=False
         except (OSError,ValueError,RuntimeError):pass
         value['muted']=muted
-        try:background_pause(muted or value.get('dj_active',False))
+        try:background_pause(muted or value.get('dj_active',False) or _theater_live(value))
         except (OSError,ValueError,RuntimeError):pass
         write_state('room-music.json',value)
     return muted
@@ -94,6 +161,9 @@ class MusicMonitor:
         from zell_schedule import locked
         with locked():
             value=state()
+            if value.get('theater_owner') is not None and not _pid_alive(value.get('theater_owner')):
+                _clear_theater_hold(value)
+                write_state('room-music.json',value)
             previous=dict(value)
             try:
                 current=amp('state').get('state')
@@ -108,7 +178,7 @@ class MusicMonitor:
                 value['dj_active']=active
             if value!=previous:write_state('room-music.json',value)
         source=value.get('source')
-        paused=value.get('muted',False) or active
+        paused=value.get('muted',False) or active or _theater_live(value)
         if self.process is not None and self.process.poll() is not None:
             self.process=None;self.source=None
         if source!=self.source:

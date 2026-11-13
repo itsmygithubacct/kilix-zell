@@ -843,7 +843,8 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
 
     memset(controls, 0, sizeof *controls);
     bool typing = scene->mode == ZELL_MODE_QUESTION || scene->mode == ZELL_MODE_TYPE || scene->mode==ZELL_MODE_LAUNCHER ||
-                  (scene->mode == ZELL_MODE_SERVICE && scene->service_phase == 1);
+                  (scene->mode == ZELL_MODE_SERVICE && scene->service_phase == 1) ||
+                  zell_theater_typing(scene);
 
     controls->run = !typing &&
         (kittykb_input_key_down(&keyboard.input, KITTYKB_KEY_LEFT_SHIFT) ||
@@ -897,6 +898,9 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
         } else if (event.key == KITTYKB_KEY_ENTER &&
                    event.action == KITTYKB_ACTION_PRESS) {
             controls->confirm = true;
+        } else if (event.key == KITTYKB_KEY_F11 &&
+                   event.action == KITTYKB_ACTION_PRESS) {
+            controls->fullscreen_key = true;
         } else if (event.key == KITTYKB_KEY_BACKSPACE &&
                    typing) {
             controls->backspace = true;
@@ -1043,6 +1047,18 @@ static int run_scene(void)
             speech_stop(&speech);proc_stop(&proc);
             service_start(&service,&scene);
         }
+        if(scene.theater_install_request&&!scene.theater_install_watching){
+            /* A live station terminal is left running. The install is refused. */
+            if(service.pid>0){
+                scene.theater_install_request=false;
+                scene.theater_install_finished=true;
+                scene.theater_install_code=-2;
+            }else if(!service_start_install(&service,&scene)){
+                scene.theater_install_request=false;
+                scene.theater_install_finished=true;
+                scene.theater_install_code=-1;
+            }
+        }
         /* service_frame ignores a job frame whose window generation does not match. */
         service_pump(&vitals,&scene);
         service_pump(&service,&scene);
@@ -1082,6 +1098,7 @@ static int run_scene(void)
     }
 
     dictation_stop(&dictation);
+    zell_theater_shutdown();
     service_stop(&vitals);
     service_stop(&service);
     free(scene.terminal_pixels);

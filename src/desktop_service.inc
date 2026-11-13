@@ -237,8 +237,18 @@ static void terminal_frame(desktop_service *p,zell_scene *s){
     uint32_t *previous=s->terminal_pixels;s->terminal_pixels=p->frame_scratch;p->frame_scratch=previous;
     s->terminal_width=(int)w;s->terminal_height=(int)height;p->frame_seq=seq;
 }
+/* One note per install. A later close, reap, or replacement cannot fire again. */
+static void theater_install_note(zell_scene *s,int code){
+    if(!s||!s->theater_install_watching)return;
+    s->theater_install_watching=false;
+    s->theater_install_finished=true;
+    s->theater_install_code=code;
+    s->theater_install_request=false;
+}
 static void service_start_mode(desktop_service *p,zell_scene *s,bool monitor){
     int generation=0;
+    /* Replacing the floating terminal abandons an install that was using it. */
+    if(!monitor&&s&&s->theater_install_watching)theater_install_note(s,-1);
     /* The new generation is on the slot before the previous helper is stopped
      * and before the new helper is forked. Four used slots skip both. */
     if(!monitor&&!window_prepare_slot0(s,&generation)){s->desktop_launch=false;return;}
@@ -322,6 +332,7 @@ static void service_pump(desktop_service *p,zell_scene *s){
         int slot=p->window_slot;
         if(service_owns_window(p,s,slot)&&s->windows[slot].close_requested&&!s->windows[slot].cancel_blocked){
             int generation=p->window_generation;bool sensitive=p->sensitive;
+            theater_install_note(s,-1);
             service_stop(p);
             window_release_owner(s,slot,generation);
             zell_terminal_restore(s);s->service_phase=4;s->service_scroll=0;
@@ -367,6 +378,7 @@ static void service_pump(desktop_service *p,zell_scene *s){
     if(ended==p->pid){
         p->pid=0;
         if(p->monitor){s->fatigue=-1;s->screens_ready=false;s->coding_yolo_ready=false;s->weather_state=0;memset(s->screen_preview,0,sizeof s->screen_preview);service_stop(p);return;}
+        if(s->theater_install_watching)theater_install_note(s,WIFEXITED(status)?WEXITSTATUS(status):-1);
         if(p->cancelled)service_append(s,"\nCancelled.");
         else if(!WIFEXITED(status)||WEXITSTATUS(status)!=0)service_append(s,"\nThe station helper failed. Please try again.");
         else if(!s->service_text[0])service_append(s,"Done.");
@@ -381,4 +393,84 @@ static void service_pump(desktop_service *p,zell_scene *s){
             explicit_bzero(s->service_input,sizeof s->service_input);
         }
     }
+}
+/* Privilege install uses the floating terminal. It never runs inside the theater helper. */
+static bool service_start_install(desktop_service *p,zell_scene *s){
+    char script[4096],payload[8192];
+    int to_child[2],from_child[2],generation=0;
+    ssize_t n;
+    if(!p||!s||p->pid>0)return false;
+    if(!zell_theater_install_json(payload,sizeof payload))return false;
+    if(!window_prepare_slot0(s,&generation))return false;
+    service_stop(p);
+    p->monitor=false;
+    p->sensitive=true;
+    p->window_slot=0;
+    p->window_generation=generation;
+    if(s->terminal_pixels){explicit_bzero(s->terminal_pixels,1200u*640u*4u);free(s->terminal_pixels);}
+    s->terminal_pixels=NULL;s->terminal_width=s->terminal_height=0;
+    s->desktop_launch=false;s->mode=ZELL_MODE_SERVICE;s->service_phase=0;
+    s->terminal_maximized=s->terminal_minimized=false;
+    s->terminal_private=true;
+    snprintf(s->terminal_title,sizeof s->terminal_title,"Theater install");
+    snprintf(s->windows[0].title,sizeof s->windows[0].title,"Theater install");
+    s->windows[0].private_surface=true;
+    s->windows[0].minimized=s->windows[0].maximized=false;
+    s->service_text[0]=s->service_title[0]=s->service_input[0]=0;
+    s->service_scroll=0;s->service_send=s->service_cancel=false;
+    n=readlink("/proc/self/exe",script,sizeof script-32);
+    if(n<0)goto failed;
+    script[n]=0;
+    {
+        char *slash=strrchr(script,'/');
+        if(!slash)goto failed;
+        strcpy(slash+1,"tools/desktop.py");
+    }
+    if(pipe(to_child)!=0)goto failed;
+    if(pipe(from_child)!=0){close(to_child[0]);close(to_child[1]);goto failed;}
+    p->frame_fd=(int)syscall(SYS_memfd_create,"zell-terminal",0);
+    if(p->frame_fd>=0&&ftruncate(p->frame_fd,(off_t)ZELL_TERMINAL_BYTES)==0){
+        p->frame_map=mmap(NULL,ZELL_TERMINAL_BYTES,PROT_READ|PROT_WRITE,MAP_SHARED,p->frame_fd,0);
+        if(p->frame_map==MAP_FAILED)p->frame_map=NULL;
+    }
+    if(!p->frame_map){if(p->frame_fd>=0)close(p->frame_fd);p->frame_fd=-1;}
+    else{
+        terminal_size(p,s);
+        s->terminal_pixels=calloc(1200u*640u,4);
+        p->frame_scratch=malloc(1200u*640u*4u);
+    }
+    if(!p->frame_map||!s->terminal_pixels||!p->frame_scratch){
+        close(to_child[0]);close(to_child[1]);close(from_child[0]);close(from_child[1]);
+        service_stop(p);free(s->terminal_pixels);s->terminal_pixels=NULL;
+        goto failed;
+    }
+    p->pid=fork();
+    if(p->pid==0){
+        if(setsid()<0)_exit(127);
+        dup2(to_child[0],STDIN_FILENO);dup2(from_child[1],STDOUT_FILENO);
+        {
+            int nullfd=open("/dev/null",O_WRONLY);
+            if(nullfd>=0){dup2(nullfd,STDERR_FILENO);close(nullfd);}
+        }
+        close(to_child[0]);close(to_child[1]);close(from_child[0]);close(from_child[1]);
+        if(p->frame_map){char fd[24];snprintf(fd,sizeof fd,"%d",p->frame_fd);setenv("ZELL_TERMINAL_FD",fd,1);}
+        signal(SIGINT,SIG_DFL);signal(SIGTERM,SIG_DFL);signal(SIGPIPE,SIG_DFL);
+        execlp("python3","python3",script,"--theater-install",payload,"--dialogue",(char *)NULL);
+        _exit(127);
+    }
+    close(to_child[0]);close(from_child[1]);p->in_fd=to_child[1];p->out_fd=from_child[0];
+    if(p->pid<0){service_stop(p);goto failed;}
+    if(p->frame_map)fcntl(p->frame_fd,F_SETFD,FD_CLOEXEC);
+    fcntl(p->out_fd,F_SETFL,fcntl(p->out_fd,F_GETFL)|O_NONBLOCK);
+    fcntl(p->in_fd,F_SETFL,fcntl(p->in_fd,F_GETFL)|O_NONBLOCK);
+    fcntl(p->out_fd,F_SETFD,FD_CLOEXEC);fcntl(p->in_fd,F_SETFD,FD_CLOEXEC);
+    s->theater_install_request=false;
+    s->theater_install_watching=true;
+    s->theater_install_finished=false;
+    return true;
+failed:
+    window_release_owner(s,0,generation);
+    strcpy(s->service_text,"Could not start the theater install.");
+    s->service_phase=4;
+    return false;
 }

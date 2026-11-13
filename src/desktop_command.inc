@@ -13,7 +13,13 @@ static void zell_room_logical(const zell_scene *s,int *left,int *top,int *right,
   *left=64;*top=140;*right=ZELL_WORLD_W;*bottom=ZELL_WORLD_H;
   return;
  }
- /* Command Center and every downstairs room: floor corridor x=.135W..865W,
+ /* Rooms 5–8 fill the canvas. Their video and furniture run wider than
+  * the old .135W..865W corridor, and the fit below reserves HUD and status. */
+ if(s->room>=5&&s->room<=8){
+  *left=0;*top=0;*right=ZELL_WORLD_W;*bottom=ZELL_WORLD_H;
+  return;
+ }
+ /* Command Center and the older downstairs rooms: floor corridor x=.135W..865W,
   * y=64 through the exit. The Workshop stool (opaque from y=291) and the
   * stair corridors are inside this rectangle. */
  *left=(int)(0.135f*(float)ZELL_WORLD_W);

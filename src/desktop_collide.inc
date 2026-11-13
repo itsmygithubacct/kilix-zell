@@ -16,7 +16,19 @@ static const zell_block zell_blocks[]={
 {4,1000.f,328.f,1328.f,468.f}, /* workshop: right desk and cabinets */
 {4,1255.f,430.f,1328.f,528.f}, /* workshop: right scroll bin */
 {4,207.f,760.f,310.f,932.f}, /* workshop: left stair-mouth rock */
-{4,1220.f,770.f,1328.f,932.f} /* workshop: right stair-mouth rock */
+{4,1220.f,770.f,1328.f,932.f}, /* workshop: right stair-mouth rock */
+{5,0.f,0.f,1536.f,380.f}, /* game: back wall and center cabinets; floor starts at 380 */
+{5,72.f,336.f,424.f,680.f}, /* game: left cabinets */
+{5,1056.f,280.f,1504.f,656.f}, /* game: right cabinets */
+{6,0.f,0.f,1536.f,735.f}, /* theater: screen and caption wall; aisle starts at 735 */
+{6,0.f,592.f,600.f,1024.f}, /* theater: left seats, aisle stays open */
+{6,912.f,688.f,1536.f,1024.f}, /* theater: right seats, aisle stays open */
+{7,0.f,0.f,1536.f,400.f}, /* meditation: back wall; floor starts at 400 */
+{7,32.f,160.f,480.f,592.f}, /* meditation: left altar */
+{7,1104.f,312.f,1504.f,600.f}, /* meditation: right shrine */
+{8,0.f,0.f,1536.f,400.f}, /* library: back wall, ladders, plant, upper shelves; floor starts at 400 */
+{8,40.f,256.f,400.f,600.f}, /* library: left shelves */
+{8,1136.f,256.f,1496.f,592.f} /* library: right shelves */
 };
 #define ZELL_BLOCK_CAP 64
 _Static_assert(sizeof zell_blocks/sizeof zell_blocks[0] + 6 <= ZELL_BLOCK_CAP,
@@ -51,6 +63,12 @@ static int spans_for(const zell_scene *s,zell_span *out,int cap){
   n++;
  }
  return n;
+}
+float zell_desktop_north(int room){
+ if(room==5)return 380.f;
+ if(room==6)return 735.f;
+ if(room==7||room==8)return 400.f;
+ return (float)ZELL_WORLD_H*.32f;
 }
 bool zell_desktop_blocked(const zell_scene *s,float x,float y){
  zell_span spans[ZELL_BLOCK_CAP];

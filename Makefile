@@ -63,7 +63,7 @@ $(ROOT)/zell: $(APP_OBJS) $(LIB_OBJS) | $(BUILD)
 $(BUILD)/test-scene: $(TEST_OBJS) | $(BUILD)
 	$(CC) $(CFLAGS) $^ -lz -lm -o $@
 
-$(BUILD)/main.o: $(ROOT)/src/main.c | $(BUILD)
+$(BUILD)/main.o: $(ROOT)/src/main.c $(ROOT)/src/desktop_service.inc | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/scene.o: $(ROOT)/src/scene.c | $(BUILD)
@@ -244,7 +244,7 @@ test-neuronte: test-process-neuronte
 test-process-neuronte: $(BUILD)/test-process-neuronte
 	python3 $(ROOT)/tests/test_process.py $(BUILD)/test-process-neuronte
 
-$(BUILD)/desktop.o: $(ROOT)/src/desktop.c $(ROOT)/src/desktop.h $(ROOT)/src/desktop_collide.inc $(ROOT)/src/desktop_command.inc | $(BUILD)
+$(BUILD)/desktop.o: $(ROOT)/src/desktop.c $(ROOT)/src/desktop.h $(ROOT)/src/desktop_collide.inc $(ROOT)/src/desktop_command.inc $(ROOT)/src/desktop_theater.inc | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/art_%.o: $(ROOT)/src/desktop_art/%.c | $(BUILD)

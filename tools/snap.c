@@ -77,11 +77,13 @@ static bool write_png(const sr_canvas *canvas, const char *path)
     return ok;
 }
 
-static int shot(const zell_scene *scene, sr_canvas *canvas, const char *prefix,
+static int shot(zell_scene *scene, sr_canvas *canvas, const char *prefix,
                 const char *name)
 {
     char path[512], png[512];
 
+    /* Same fit main uses before a frame, so a room shot is the room's rectangle. */
+    if(scene->desktop)zell_room_view_identity(scene);
     zell_draw(scene, canvas);
     if (snprintf(path, sizeof path, "%s-%s.ppm", prefix, name) >= (int)sizeof path ||
         !sr_write_ppm(canvas, path)) {
@@ -151,6 +153,10 @@ int main(int argc, char **argv)
              "Ctrl+Shift+W. 0123456789 {}[]()<>|/\\ ~!@#$%%^&*_+-=");
     failed += shot(&scene, &canvas, argv[1], "answer");
 
+#ifndef ZELL_RENDER_NEURONTE
+    /* The soft raster can draw the desktop. Room shots do not need Neuronte. */
+    zell_desktop_init(&scene);
+#endif
     if(scene.desktop){
         scene.mode=ZELL_MODE_WALK;scene.running=true;scene.direction=ZELL_DIR_RIGHT;scene.step_ticks=8;
         failed+=shot(&scene,&canvas,argv[1],"dash");
@@ -182,10 +188,15 @@ int main(int argc, char **argv)
         /* Kilix half hidden behind a staff member, then in front of one. */
         scene.room=3;scene.x=ZELL_WORLD_W*.52f;scene.y=ZELL_WORLD_H*.52f;failed+=shot(&scene,&canvas,argv[1],"vault");
         scene.room=4;scene.x=ZELL_WORLD_W*.48f;scene.y=ZELL_WORLD_H*.58f;failed+=shot(&scene,&canvas,argv[1],"workshop");
+        scene.room=0;scene.x=ZELL_WORLD_W*.50f;scene.y=ZELL_WORLD_H*.52f;failed+=shot(&scene,&canvas,argv[1],"cave-hatches");
+        scene.room=5;scene.x=ZELL_WORLD_W*.50f;scene.y=ZELL_WORLD_H*ZELL_ROOM_ENTRY_Y;failed+=shot(&scene,&canvas,argv[1],"game");
+        scene.room=6;scene.x=ZELL_WORLD_W*.50f;scene.y=ZELL_WORLD_H*ZELL_ROOM_ENTRY_Y;failed+=shot(&scene,&canvas,argv[1],"theater");
+        scene.room=7;scene.x=ZELL_WORLD_W*.50f;scene.y=ZELL_WORLD_H*ZELL_ROOM_ENTRY_Y;failed+=shot(&scene,&canvas,argv[1],"meditation");
+        scene.room=8;scene.x=ZELL_WORLD_W*.50f;scene.y=ZELL_WORLD_H*ZELL_ROOM_ENTRY_Y;failed+=shot(&scene,&canvas,argv[1],"library");
         scene.debug_blocks[0].enabled=true;
         {
-            static const char *const names[]={"cave","command","laundry","vault","workshop"};
-            for(int i=0;i<5;i++){
+            static const char *const names[]={"cave","command","laundry","vault","workshop","game","theater","meditation","library"};
+            for(int i=0;i<9;i++){
                 char name[32];
                 scene.room=i;scene.x=ZELL_WORLD_W*.50f;scene.y=ZELL_WORLD_H*.62f;
                 snprintf(scene.debug_blocks[0].label,sizeof scene.debug_blocks[0].label,"%s",names[i]);

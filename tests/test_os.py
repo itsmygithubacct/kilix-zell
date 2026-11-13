@@ -280,6 +280,170 @@ class MusicTests(unittest.TestCase):
             with patch.object(audio,'amp',return_value={'state':'stopped'}):monitor.poll()
             bg.assert_called_with(False)
 
+    def test_theater_pauses_a_playing_dj_without_writing_dj_active(self):
+        with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,{'KILIX_ZELL_STATE':tmp}),patch.object(audio,'background_pause') as bg:
+            core.write_state('room-music.json',{'dj_active':True,'muted':False})
+            with patch.object(audio,'amp',side_effect=[{'state':'playing'},{}]) as amp:
+                self.assertTrue(audio.theater_audio(True,os.getpid()))
+                self.assertEqual([call.args for call in amp.call_args_list],[('state',),('pause',)])
+            saved=audio.state()
+            self.assertEqual(saved['theater_owner'],os.getpid())
+            self.assertTrue(saved['theater_paused_dj'])
+            self.assertTrue(saved['dj_active'])
+            self.assertNotIn('theater_active',saved)
+            bg.assert_called_with(True)
+
+    def test_theater_release_resumes_only_its_own_paused_dj(self):
+        with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,{'KILIX_ZELL_STATE':tmp}),patch.object(audio,'background_pause') as bg:
+            core.write_state('room-music.json',{'dj_active':True,'theater_owner':os.getpid(),'theater_paused_dj':True})
+            self.assertFalse(audio.theater_audio(False,os.getpid()+1))
+            self.assertEqual(audio.state()['theater_owner'],os.getpid())
+            with patch.object(audio,'amp',side_effect=[{'state':'paused'},{}]) as amp:
+                self.assertTrue(audio.theater_audio(False,os.getpid()))
+                self.assertEqual([call.args for call in amp.call_args_list],[('state',),('play',)])
+            saved=audio.state()
+            self.assertNotIn('theater_owner',saved)
+            self.assertNotIn('theater_paused_dj',saved)
+            bg.assert_called_with(True)
+
+    def test_theater_without_a_dj_pauses_and_restores_background(self):
+        with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,{'KILIX_ZELL_STATE':tmp}),patch.object(audio,'background_pause') as bg,patch.object(audio,'amp',side_effect=OSError):
+            self.assertTrue(audio.theater_audio(True,os.getpid()))
+            self.assertFalse(audio.state().get('theater_paused_dj'))
+            bg.assert_called_with(True)
+            self.assertTrue(audio.theater_audio(False,os.getpid()))
+            self.assertNotIn('theater_owner',audio.state())
+            bg.assert_called_with(False)
+
+    def test_dead_theater_owner_is_cleared_by_the_monitor(self):
+        with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,{'KILIX_ZELL_STATE':tmp}),patch.object(audio,'background_pause') as bg:
+            core.write_state('room-music.json',{'muted':False,'dj_active':True,'theater_owner':4242,'theater_paused_dj':True})
+            monitor=audio.MusicMonitor()
+            with patch.object(audio,'_pid_alive',return_value=False),patch.object(audio,'amp',side_effect=[{'state':'paused'},{},{'state':'playing'}]) as amp:
+                result=monitor.poll()
+            self.assertNotIn('theater_owner',result)
+            self.assertFalse(result.get('theater_paused_dj'))
+            self.assertEqual(amp.call_args_list[0].args,('state',))
+            self.assertEqual(amp.call_args_list[1].args,('play',))
+            bg.assert_called_with(True)
+
+    def test_muted_release_does_not_resume_the_dj(self):
+        with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,{'KILIX_ZELL_STATE':tmp}),patch.object(audio,'background_pause') as bg:
+            core.write_state('room-music.json',{'muted':True,'dj_active':True,'theater_owner':os.getpid(),'theater_paused_dj':True})
+            with patch.object(audio,'amp') as amp:
+                self.assertTrue(audio.theater_audio(False,os.getpid()))
+                amp.assert_not_called()
+            saved=audio.state()
+            self.assertNotIn('theater_owner',saved)
+            self.assertNotIn('theater_paused_dj',saved)
+            self.assertTrue(saved['muted'])
+            self.assertTrue(saved['dj_active'])
+            bg.assert_called_with(True)
+            core.write_state('room-music.json',{'muted':False,'dj_held':True,'dj_active':True,'theater_owner':os.getpid(),'theater_paused_dj':True})
+            with patch.object(audio,'amp') as amp:
+                self.assertTrue(audio.theater_audio(False,os.getpid()))
+                amp.assert_not_called()
+            saved=audio.state()
+            self.assertNotIn('theater_paused_dj',saved)
+            self.assertTrue(saved['dj_held'])
+
+    def test_muted_dead_owner_does_not_resume_the_dj(self):
+        with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,{'KILIX_ZELL_STATE':tmp}),patch.object(audio,'background_pause') as bg:
+            core.write_state('room-music.json',{'muted':True,'dj_active':True,'theater_owner':4242,'theater_paused_dj':True,'dj_held':False})
+            monitor=audio.MusicMonitor()
+            with patch.object(audio,'_pid_alive',return_value=False),patch.object(audio,'amp',return_value={'state':'paused'}) as amp:
+                result=monitor.poll()
+            self.assertNotIn('theater_owner',result)
+            self.assertFalse(result.get('theater_paused_dj'))
+            self.assertTrue(result['muted'])
+            self.assertNotIn(('play',),[call.args for call in amp.call_args_list])
+            core.write_state('room-music.json',{'muted':True,'dj_active':True,'theater_owner':4242,'theater_paused_dj':True})
+            with patch.object(audio,'_pid_alive',return_value=False),patch.object(audio,'amp') as amp:
+                self.assertTrue(audio.theater_audio(False,4242))
+                amp.assert_not_called()
+            saved=audio.state()
+            self.assertNotIn('theater_owner',saved)
+            self.assertNotIn('theater_paused_dj',saved)
+            self.assertTrue(saved['muted'])
+            bg.assert_called_with(True)
+
+    def test_mute_during_theater_resumes_the_dj_after_release(self):
+        with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,{'KILIX_ZELL_STATE':tmp}),patch.object(audio,'background_pause'):
+            core.write_state('room-music.json',{'muted':False,'dj_active':True})
+            with patch.object(audio,'amp',side_effect=[{'state':'playing'},{}]):
+                self.assertTrue(audio.theater_audio(True,os.getpid()))
+            with patch.object(audio,'amp',return_value={'state':'paused'}) as amp:
+                self.assertTrue(audio.toggle_mute())
+                self.assertEqual([call.args for call in amp.call_args_list],[('state',)])
+            saved=audio.state()
+            self.assertTrue(saved['muted'] and saved['dj_held'] and saved['theater_paused_dj'])
+            with patch.object(audio,'amp') as amp:
+                self.assertTrue(audio.theater_audio(False,os.getpid()))
+                amp.assert_not_called()
+            saved=audio.state()
+            self.assertTrue(saved['muted'] and saved['dj_held'])
+            self.assertNotIn('theater_owner',saved)
+            self.assertNotIn('theater_paused_dj',saved)
+            with patch.object(audio,'amp',side_effect=[{'state':'paused'},{}]) as amp:
+                self.assertFalse(audio.toggle_mute())
+                self.assertEqual([call.args for call in amp.call_args_list],[('state',),('play',)])
+            saved=audio.state()
+            self.assertFalse(saved['muted'])
+            self.assertFalse(saved.get('dj_held'))
+
+    def test_unmute_while_theater_is_live_does_not_play_the_dj(self):
+        with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,{'KILIX_ZELL_STATE':tmp}),patch.object(audio,'background_pause') as bg:
+            core.write_state('room-music.json',{'muted':True,'dj_held':True,'dj_active':True,'theater_owner':os.getpid(),'theater_paused_dj':True})
+            with patch.object(audio,'amp',return_value={'state':'paused'}) as amp:
+                self.assertFalse(audio.toggle_mute())
+                self.assertEqual([call.args for call in amp.call_args_list],[('state',)])
+            saved=audio.state()
+            self.assertFalse(saved['muted'])
+            self.assertFalse(saved.get('dj_held'))
+            self.assertTrue(saved['theater_paused_dj'])
+            self.assertEqual(saved['theater_owner'],os.getpid())
+            bg.assert_called_with(True)
+            with patch.object(audio,'amp',side_effect=[{'state':'paused'},{}]) as amp:
+                self.assertTrue(audio.theater_audio(False,os.getpid()))
+                self.assertEqual([call.args for call in amp.call_args_list],[('state',),('play',)])
+
+    def test_premute_then_unmute_during_theater_resumes_after_the_movie(self):
+        with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,{'KILIX_ZELL_STATE':tmp}),patch.object(audio,'background_pause'):
+            core.write_state('room-music.json',{'muted':False,'dj_active':True})
+            with patch.object(audio,'amp',side_effect=[{'state':'playing'},{}]) as amp:
+                self.assertTrue(audio.toggle_mute())
+                self.assertEqual([call.args for call in amp.call_args_list],[('state',),('pause',)])
+            saved=audio.state()
+            self.assertTrue(saved['muted'] and saved['dj_held'])
+            self.assertFalse(saved.get('theater_paused_dj'))
+            with patch.object(audio,'amp',return_value={'state':'paused'}) as amp:
+                self.assertTrue(audio.theater_audio(True,os.getpid()))
+                self.assertEqual([call.args for call in amp.call_args_list],[('state',)])
+            saved=audio.state()
+            self.assertEqual(saved['theater_owner'],os.getpid())
+            self.assertFalse(saved.get('theater_paused_dj'))
+            with patch.object(audio,'amp',return_value={'state':'paused'}) as amp:
+                self.assertFalse(audio.toggle_mute())
+                self.assertEqual([call.args for call in amp.call_args_list],[('state',)])
+            saved=audio.state()
+            self.assertFalse(saved['muted'])
+            self.assertFalse(saved.get('dj_held'))
+            self.assertTrue(saved['theater_paused_dj'])
+            with patch.object(audio,'amp',side_effect=[{'state':'paused'},{}]) as amp:
+                self.assertTrue(audio.theater_audio(False,os.getpid()))
+                self.assertEqual([call.args for call in amp.call_args_list],[('state',),('play',)])
+            saved=audio.state()
+            self.assertNotIn('theater_owner',saved)
+            self.assertNotIn('theater_paused_dj',saved)
+            self.assertFalse(saved.get('dj_held'))
+
+    def test_unmute_keeps_background_paused_while_theater_holds_it(self):
+        with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,{'KILIX_ZELL_STATE':tmp}),patch.object(audio,'background_pause') as bg:
+            core.write_state('room-music.json',{'muted':True,'theater_owner':os.getpid(),'theater_paused_dj':False})
+            with patch.object(audio,'amp',return_value={'state':'stopped'}):
+                self.assertFalse(audio.toggle_mute())
+            bg.assert_called_with(True)
+
     def test_owned_amp_socket_is_distinct_from_other_music(self):
         with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,{'XDG_RUNTIME_DIR':tmp,'KILIX_AMP_SOCKET':'/tmp/other-player.sock'}):
             env=audio.amp_environment()

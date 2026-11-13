@@ -558,6 +558,15 @@ def desktop(station,action):
         return page_text(now.strftime('%A %d %B %Y, %H:%M:%S')+'\n\n'+calendar.month(now.year,now.month))
     raise ValueError('Unknown station')
 
+def theater_install_argv_ok(argv):
+    """Accept the floating-terminal install command. Refuse sudo and a bare Chrome package."""
+    if not isinstance(argv,list) or not 1<=len(argv)<=8:return False
+    for item in argv:
+        if not isinstance(item,str) or not 1<=len(item)<=512:return False
+        if '\n' in item or '\x00' in item:return False
+        if item in {'sudo','google-chrome-stable'}:return False
+    return True
+
 if __name__=='__main__':
     if len(sys.argv)>2 and sys.argv[1]=='--terminal':
         argv=fit_neuronte(json.loads(sys.argv[2]))
@@ -567,6 +576,22 @@ if __name__=='__main__':
             input(f'\nCommand exited {status}. Enter to close this tab... ')
         except (EOFError,KeyboardInterrupt):pass
         raise SystemExit(0)
+    if '--theater-install' in sys.argv:
+        try:
+            at=sys.argv.index('--theater-install')
+            if at+1>=len(sys.argv):raise SystemExit(1)
+            payload=json.loads(sys.argv[at+1])
+            argv=payload.get('argv') if isinstance(payload,dict) else None
+            title=payload.get('title') if isinstance(payload,dict) else None
+            if not isinstance(title,str) or not title:title='Theater install'
+            if not theater_install_argv_ok(argv):raise SystemExit(1)
+            DIALOGUE=Dialogue();DIALOGUE.install()
+            code=zell_terminal.terminal_loop(sys.modules[__name__],argv,title=title)
+            raise SystemExit(0 if code==0 else 1)
+        except SystemExit:
+            raise
+        except (OSError,ValueError,TypeError,KeyError):
+            raise SystemExit(1)
     if '--dialogue' in sys.argv:
         DIALOGUE=Dialogue();DIALOGUE.install()
     try:

@@ -52,5 +52,12 @@ class DesktopTests(unittest.TestCase):
     def test_missing_command_does_not_spawn(self):
         with patch.object(d.shutil,'which',return_value=None),patch.object(d.subprocess,'run') as run:
             self.assertEqual(d.run(['missing-tool']),127);run.assert_not_called()
+    def test_theater_install_refuses_sudo_and_the_bare_chrome_package(self):
+        deb=['apt-get','install','-y','google-chrome-stable_current_amd64.deb']
+        self.assertTrue(d.theater_install_argv_ok(deb))
+        self.assertFalse(d.theater_install_argv_ok(['sudo','apt-get','install','-y',deb[-1]]))
+        self.assertFalse(d.theater_install_argv_ok(['apt-get','install','-y','google-chrome-stable']))
+        self.assertFalse(d.theater_install_argv_ok([]))
+        self.assertFalse(d.theater_install_argv_ok(['apt-get','install','-y','has\nnewline']))
 
 if __name__=='__main__':unittest.main()

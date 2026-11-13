@@ -88,6 +88,8 @@ typedef struct zell_controls {
     bool cancel;
     bool backspace;
     unsigned character;
+    /* F11. Letter f stays a typed character for theater fields. */
+    bool fullscreen_key;
 } zell_controls;
 
 typedef struct zell_scene {
@@ -195,6 +197,11 @@ typedef struct zell_scene {
     int64_t notice_until_ms;
     char notice_key[64];
     zell_debug_block debug_blocks[ZELL_DEBUG_BLOCKS];
+    /* The theater helper asked for the floating terminal. main owns that process. */
+    bool theater_install_request;
+    bool theater_install_watching;
+    bool theater_install_finished;
+    int theater_install_code;
 } zell_scene;
 
 typedef struct zell_request {

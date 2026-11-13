@@ -12,11 +12,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TABLE = ROOT / "src" / "desktop_collide.inc"
 ROOMS = (
-    (0, "cave", ROOT / "assets/v0.1.0/cave.png"),
-    (1, "command", ROOT / "assets/v0.1.1/command-center.png"),
-    (2, "laundry", ROOT / "assets/v0.1.1/laundry.png"),
-    (3, "vault", ROOT / "assets/v0.1.1/vault.png"),
-    (4, "workshop", ROOT / "assets/v0.1.1/workshop.png"),
+    (0, "cave", ROOT / "assets/v0.1.0/cave.png", None),
+    (1, "command", ROOT / "assets/v0.1.1/command-center.png", None),
+    (2, "laundry", ROOT / "assets/v0.1.1/laundry.png", None),
+    (3, "vault", ROOT / "assets/v0.1.1/vault.png", None),
+    (4, "workshop", ROOT / "assets/v0.1.1/workshop.png", None),
+    (5, "game", ROOT / "assets/v0.1.1/game-room.png", ROOT / "assets/v0.1.1/game-room-foreground.png"),
+    (6, "theater", ROOT / "assets/v0.1.1/movie-theater.png", ROOT / "assets/v0.1.1/movie-theater-foreground.png"),
+    (7, "meditation", ROOT / "assets/v0.1.1/meditation-room.png", ROOT / "assets/v0.1.1/meditation-room-foreground.png"),
+    (8, "library", ROOT / "assets/v0.1.1/library-room.png", ROOT / "assets/v0.1.1/library-room-foreground.png"),
 )
 RECT = re.compile(
     r"\{(\d+)\s*,\s*([0-9.]+)f\s*,\s*([0-9.]+)f\s*,\s*([0-9.]+)f\s*,\s*([0-9.]+)f\s*\}"
@@ -34,8 +38,11 @@ def draw(blocks, out_dir):
     from PIL import Image, ImageDraw
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    for room, name, path in ROOMS:
-        image = Image.open(path).convert("RGB")
+    for room, name, path, front in ROOMS:
+        image = Image.open(path).convert("RGBA")
+        if front is not None:
+            image.alpha_composite(Image.open(front).convert("RGBA"))
+        image = image.convert("RGB")
         pen = ImageDraw.Draw(image)
         step_x = image.width * 0.05
         step_y = image.height * 0.05

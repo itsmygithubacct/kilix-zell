@@ -883,6 +883,273 @@ static void test_floor_panels(void){
     }
 #endif
 }
+static void test_four_rooms(void){
+    zell_scene s;
+    zell_controls c;
+    const int hatches[4]={ZELL_GAME_HATCH,ZELL_THEATER_HATCH,ZELL_MEDITATION_HATCH,ZELL_LIBRARY_HATCH};
+    const float xs[4]={.30f,.46f,.62f,.78f};
+    const int expect_blocks[4]={3,3,3,3};
+    const float floors[4]={380.f,735.f,400.f,400.f};
+    float sx,sy,wx,wy;
+    assert(ZELL_ART_GAME_ROOM==ZELL_ART_WORKSHOP_STOOL+1);
+    assert(ZELL_ART_THEATER_ROOM==ZELL_ART_GAME_ROOM+1);
+    assert(ZELL_ART_GAME_FOREGROUND==ZELL_ART_LIBRARY_ROOM+1);
+    assert(ZELL_ART_THEATER_FOREGROUND==ZELL_ART_GAME_FOREGROUND+1);
+    assert(ZELL_ART_MEDITATION_FOREGROUND==ZELL_ART_THEATER_FOREGROUND+1);
+    assert(ZELL_ART_LIBRARY_FOREGROUND==ZELL_ART_MEDITATION_FOREGROUND+1);
+    assert(ZELL_ART_LIBRARY_HATCH_OPEN==ZELL_ART_WORKSHOP_STOOL+16);
+    assert(ZELL_ART_GAME_HATCH_OPEN==ZELL_ART_GAME_HATCH+4);
+    for(int i=0;i<4;i++){
+        float hx,hy;
+        int blocks;
+        assert(zell_stations[hatches[i]].x==xs[i]);
+        assert(zell_stations[hatches[i]].y==.52f);
+        assert(zell_stations[hatches[i]].y<zell_stations[13].y);
+        assert(zell_desktop_actions(hatches[i])==1);
+        hx=zell_stations[hatches[i]].x*(float)ZELL_WORLD_W;
+        hy=zell_stations[hatches[i]].y*(float)ZELL_WORLD_H;
+        place_room(&s,0,hx,hy);
+        assert(zell_desktop_station_visible(&s,hatches[i]));
+        assert(zell_desktop_near(&s)==hatches[i]);
+        c=(zell_controls){.confirm=true};
+        zell_scene_tick(&s,&c);
+        assert(s.room==5+i&&s.mode==ZELL_MODE_WALK&&!s.desktop_launch);
+        assert(!zell_desktop_on_stairs(&s));
+        assert(!zell_desktop_blocked(&s,s.x,s.y));
+        assert(!zell_desktop_blocked(&s,768.f,970.f));
+        assert(!zell_desktop_blocked(&s,(float)ZELL_WORLD_W*.50f,(float)ZELL_WORLD_H*ZELL_ROOM_ENTRY_Y));
+        assert(zell_desktop_blocked(&s,768.f,floors[i]-40.f));
+        assert(fabsf(zell_desktop_north(5+i)-floors[i])<0.1f);
+        if(i==1)assert(!zell_desktop_blocked(&s,886.f,862.f));
+        assert(zell_desktop_block_count(&s)==expect_blocks[i]);
+        blocks=zell_desktop_block_count(&s);
+        for(int b=0;b<blocks;b++){
+            float x0,y0,x1,y1,mx,my;
+            zell_desktop_block_rect(&s,b,&x0,&y0,&x1,&y1);
+            mx=(x0+x1)*0.5f;my=(y0+y1)*0.5f;
+            assert(zell_desktop_blocked(&s,mx,my));
+            assert(!(mx>676.f&&mx<860.f&&my>900.f));
+            walk_into_rect(&s,x0,y0,x1,y1);
+        }
+        place_room(&s,5+i,(float)ZELL_WORLD_W*.50f,(float)ZELL_WORLD_H*.78f);
+        c=(zell_controls){.move_y=1};
+        {
+            int ticks=0;
+            while(s.room==5+i&&ticks<400){zell_scene_tick(&s,&c);ticks++;}
+        }
+        assert(s.room==0&&s.mode==ZELL_MODE_WALK&&!s.leave);
+        assert(fabsf(s.x-hx)<1.f);
+        assert(fabsf(s.y-hy-50.f)<1.f);
+        for(int other=1;other<=4;other++){
+            s.room=other;
+            assert(!zell_desktop_station_visible(&s,hatches[i]));
+        }
+    }
+    {
+        const int views[4][2]={{1536,1000},{960,600},{640,400},{820,1000}};
+        for(int v=0;v<4;v++){
+            for(int i=0;i<4;i++){
+                float hx=zell_stations[hatches[i]].x*(float)ZELL_WORLD_W;
+                float hy=zell_stations[hatches[i]].y*(float)ZELL_WORLD_H;
+                zell_scene_init(&s,views[v][0],views[v][1]);
+                zell_desktop_init(&s);
+                s.room=0;s.mode=ZELL_MODE_WALK;s.mouse_valid=true;
+                zell_room_view_identity(&s);
+                assert(view_contains(&s,hx,hy));
+                click_world(&s,hx,hy);
+                assert(zell_desktop_click(&s));
+                assert(s.room==5+i&&s.mode==ZELL_MODE_WALK);
+                zell_room_view_identity(&s);
+                assert(s.room_view.logical_x==0&&s.room_view.logical_y==0);
+                assert(s.room_view.logical_w==ZELL_WORLD_W&&s.room_view.logical_h==ZELL_WORLD_H);
+                assert(s.room_view.scale<1.f);
+                if(i==1){
+                    assert(view_contains(&s,64.f,54.f)&&view_contains(&s,1471.f,54.f));
+                    assert(view_contains(&s,64.f,638.f)&&view_contains(&s,1471.f,638.f));
+                    assert(view_contains(&s,82.f,677.f)&&view_contains(&s,1451.f,720.f));
+                    assert(view_contains(&s,840.f,790.f)&&view_contains(&s,931.f,934.f));
+                }
+                assert(view_contains(&s,768.f,980.f));
+                zell_world_to_screen(&s,768.f,980.f,&sx,&sy);
+                zell_screen_to_world(&s,sx,sy,&wx,&wy);
+                assert(fabsf(wx-768.f)<1.f&&fabsf(wy-980.f)<1.f);
+            }
+        }
+    }
+#ifndef ZELL_RENDER_NEURONTE
+    {
+        sr_canvas big,small;
+        zell_scene full,fitted;
+        float bx,by;
+        int ix,iy,jx,jy;
+        assert(sr_canvas_init(&big,ZELL_WORLD_W,ZELL_WORLD_H));
+        assert(sr_canvas_init(&small,960,600));
+        zell_scene_init(&full,ZELL_WORLD_W,ZELL_WORLD_H);zell_desktop_init(&full);
+        full.room=6;full.flame_tick=0;full.x=700.f;full.y=500.f;
+        zell_scene_init(&fitted,960,600);zell_desktop_init(&fitted);
+        fitted.room=6;fitted.flame_tick=0;fitted.x=full.x;fitted.y=full.y;
+        zell_room_view_identity(&full);zell_room_view_identity(&fitted);
+        zell_draw(&full,&big);zell_draw(&fitted,&small);
+        zell_world_to_screen(&fitted,900.f,800.f,&sx,&sy);
+        ix=(int)floorf(sx);iy=(int)floorf(sy);
+        assert(ix>=0&&ix<960&&iy>=ZELL_ROOM_HUD_BOTTOM&&iy<600-ZELL_ROOM_STATUS_STRIP);
+        zell_screen_to_world(&fitted,(float)ix,(float)iy,&bx,&by);
+        jx=(int)floorf(bx);jy=(int)floorf(by);
+        assert(jx>=0&&jy>=0&&jx<ZELL_WORLD_W&&jy<ZELL_WORLD_H);
+        assert(small.px[(size_t)iy*960u+(size_t)ix]==big.px[(size_t)jy*(size_t)ZELL_WORLD_W+(size_t)jx]);
+        sr_canvas_free(&big);sr_canvas_free(&small);
+    }
+#endif
+    if(ZELL_ART_COUNT>ZELL_ART_LIBRARY_HATCH_OPEN){
+        const int rooms[4]={ZELL_ART_GAME_ROOM,ZELL_ART_THEATER_ROOM,ZELL_ART_MEDITATION_ROOM,ZELL_ART_LIBRARY_ROOM};
+        const int fronts[4]={ZELL_ART_GAME_FOREGROUND,ZELL_ART_THEATER_FOREGROUND,ZELL_ART_MEDITATION_FOREGROUND,ZELL_ART_LIBRARY_FOREGROUND};
+        const zell_art *command=zell_art_get(ZELL_ART_COMMAND_HATCH);
+        for(int i=0;i<4;i++){
+            const zell_art *back=zell_art_get(rooms[i]);
+            const zell_art *front=zell_art_get(fronts[i]);
+            const zell_art *closed=zell_art_get(ZELL_ART_GAME_HATCH+i);
+            assert(back&&back->width==1536&&back->height==1024);
+            assert(front&&front->width==1536&&front->height==1024);
+            assert(command&&closed&&closed->width==command->width&&closed->width==136&&closed->height==155);
+        }
+        {
+            int foot=(int)(zell_stations[ZELL_GAME_HATCH].y*(float)ZELL_WORLD_H)+14;
+            int top=foot-155;
+            int staff=(int)(zell_stations[1].y*(float)ZELL_WORLD_H);
+            int old_top=(int)(zell_stations[13].y*(float)ZELL_WORLD_H)+14-command->height;
+            assert(top>staff&&foot<old_top);
+        }
+    }
+    {
+        const float samples[4][2]={{768.f,350.f},{768.f,500.f},{768.f,350.f},{200.f,350.f}};
+        for(int i=0;i<4;i++){
+            zell_controls north={.move_y=-1},south={.move_y=1};
+            place_room(&s,5+i,(float)ZELL_WORLD_W*.50f,(float)ZELL_WORLD_H*ZELL_ROOM_ENTRY_Y);
+            assert(zell_desktop_blocked(&s,samples[i][0],samples[i][1]));
+            for(int tick=0;tick<500&&s.room==5+i;tick++){
+                float y=s.y;
+                zell_scene_tick(&s,&north);
+                if(s.y>=y-0.01f)break;
+            }
+            assert(s.room==5+i&&fabsf(s.y-floors[i])<1.f&&s.y>samples[i][1]);
+            s.x=(float)ZELL_WORLD_W*.50f;
+            for(int tick=0;tick<400&&s.room==5+i;tick++)zell_scene_tick(&s,&south);
+            assert(s.room==0&&s.mode==ZELL_MODE_WALK);
+        }
+    }
+}
+static void put_le32(unsigned char *p,uint32_t v){
+    p[0]=(unsigned char)(v&255u);
+    p[1]=(unsigned char)((v>>8)&255u);
+    p[2]=(unsigned char)((v>>16)&255u);
+    p[3]=(unsigned char)((v>>24)&255u);
+}
+static int rects_overlap(const zell_rect *a,const zell_rect *b){
+    return a->x<b->x+b->w&&b->x<a->x+a->w&&a->y<b->y+b->h&&b->y<a->y+a->h;
+}
+static void test_theater(void){
+    zell_scene s;
+    zell_controls c;
+    zell_rect queue,tab,panel,rows[12];
+    unsigned char map[128];
+    uint32_t pixels[8],seq;
+    int x,y,w,h,ow,oh,nrow;
+    char line[1024];
+    char *chrome[]={"apt-get","install","-y","google-chrome-stable_current_amd64.deb"};
+    char *sudo_argv[]={"sudo","apt-get","install","-y","google-chrome-stable_current_amd64.deb"};
+    char *bare[]={"apt-get","install","-y","google-chrome-stable"};
+    float y0;
+    zell_theater_test_reset();
+    zell_theater_contain(1920,1080,1408,585,&x,&y,&w,&h);
+    assert(x==184&&y==0&&w==1040&&h==585);
+    memset(map,0,sizeof map);
+    seq=0;
+    assert(zell_theater_copy_frame(map,sizeof map,1,&seq,pixels,8,&ow,&oh)==0);
+    map[0]='Z';map[1]='T';map[2]='H';map[3]='R';
+    put_le32(map+4,1);put_le32(map+8,2);put_le32(map+12,2);put_le32(map+16,2);
+    put_le32(map+32,8);put_le32(map+36,1);put_le32(map+40,7);
+    memset(map+64,0x11,16);
+    assert(zell_theater_copy_frame(map,sizeof map,7,&seq,pixels,8,&ow,&oh)==1);
+    assert(seq==2&&ow==2&&oh==2);
+    assert(zell_theater_copy_frame(map,sizeof map,7,&seq,pixels,8,&ow,&oh)==0);
+    put_le32(map+16,3);seq=0;
+    assert(zell_theater_copy_frame(map,sizeof map,7,&seq,pixels,8,&ow,&oh)==0&&seq==0);
+    put_le32(map+16,2);seq=0;
+    assert(zell_theater_copy_frame(map,sizeof map,9,&seq,pixels,8,&ow,&oh)==0);
+    put_le32(map+16,0);
+    assert(zell_theater_copy_frame(map,sizeof map,7,&seq,pixels,8,&ow,&oh)==-1);
+    zell_theater_queue_rect(0,1536,1000,&queue);
+    tab=(zell_rect){ZELL_WINDOW_ROW_X,1000-64,236,26};
+    assert(queue.x>=260&&!rects_overlap(&queue,&tab));
+    zell_scene_init(&s,1536,1000);zell_desktop_init(&s);
+    s.room=6;s.mode=ZELL_MODE_WALK;s.mouse_valid=true;
+    zell_room_view_identity(&s);
+    click_world(&s,886.f,862.f);
+    assert(zell_desktop_click(&s)&&zell_theater_menu_open()&&zell_theater_queue_count()==0);
+    zell_theater_menu_layout(&s,&panel,rows,12,&nrow);
+    assert(nrow>=1&&rows[0].w>0);
+    s.mouse_click=true;s.mouse_x=rows[0].x+2;s.mouse_y=rows[0].y+2;
+    assert(zell_desktop_click(&s)&&zell_theater_typing(&s));
+    memset(&c,0,sizeof c);c.character='f';
+    assert(zell_desktop_tick(&s,&c)==1&&!zell_theater_fullscreen());
+    memset(&c,0,sizeof c);c.confirm=true;
+    assert(zell_desktop_tick(&s,&c)==1);
+    assert(strstr(zell_theater_last_command(),"\"cmd\":\"open\""));
+    assert(strstr(zell_theater_last_command(),"\"browser\":null"));
+    assert(strstr(zell_theater_last_command(),"\"path\":\"f\""));
+    assert(strstr(zell_theater_error(),"theater helper"));
+    assert(zell_theater_queue_count()==0&&!zell_theater_fullscreen());
+    zell_theater_test_reset();
+    zell_scene_init(&s,1536,1000);zell_desktop_init(&s);
+    s.room=6;s.mode=ZELL_MODE_WALK;s.mouse_valid=true;
+    zell_room_view_identity(&s);
+    click_world(&s,886.f,862.f);
+    assert(zell_desktop_click(&s)&&zell_theater_menu_open());
+    memset(&c,0,sizeof c);c.fullscreen_key=true;
+    assert(zell_desktop_tick(&s,&c)==1&&zell_theater_fullscreen());
+    memset(&c,0,sizeof c);c.cancel=true;
+    assert(zell_desktop_tick(&s,&c)==1&&!zell_theater_fullscreen()&&s.mode==ZELL_MODE_WALK);
+    zell_theater_test_reset();
+    place_room(&s,0,(float)ZELL_WORLD_W*.50f,(float)ZELL_WORLD_H*.50f);
+    y0=s.y;memset(&c,0,sizeof c);c.fullscreen_key=true;
+    zell_desktop_tick(&s,&c);
+    assert(!zell_theater_fullscreen()&&s.y==y0&&s.mode==ZELL_MODE_WALK);
+    zell_theater_test_reset();
+    zell_scene_init(&s,960,600);zell_desktop_init(&s);s.room=6;s.mode=ZELL_MODE_WALK;
+    assert(zell_theater_apply_line(&s,"{\"event\":\"caption\",\"id\":\"q1\",\"text\":\"hello\",\"generation\":3}")==0);
+    assert(strcmp(zell_theater_caption(),"hello")==0);
+    map[0]='Z';map[1]='T';map[2]='H';map[3]='R';
+    put_le32(map+4,1);put_le32(map+8,2);put_le32(map+12,2);put_le32(map+16,2);
+    put_le32(map+32,8);put_le32(map+36,1);put_le32(map+40,3);
+    assert(zell_theater_present(map,sizeof map)==1);
+    put_le32(map+16,4);put_le32(map+40,9);
+    assert(zell_theater_present(map,sizeof map)==0);
+    assert(!zell_theater_submit(&s,"{\"cmd\":\"use\",\"id\":\"q1\"}"));
+    assert(zell_theater_caption()[0]==0);
+    assert(strstr(zell_theater_last_command(),"\"cmd\":\"use\""));
+    assert(strstr(zell_theater_error(),"theater helper"));
+    put_le32(map+16,6);put_le32(map+40,3);
+    assert(zell_theater_present(map,sizeof map)==0);
+    assert(zell_theater_format_open_file(line,sizeof line,"q1","clips/reel.mp4")>0);
+    assert(strstr(line,"\"cmd\":\"open\"")&&strstr(line,"clips/reel.mp4")&&strstr(line,"\"browser\":null"));
+    assert(zell_theater_install_argv_ok(4,chrome));
+    assert(!zell_theater_install_argv_ok(5,sudo_argv));
+    assert(!zell_theater_install_argv_ok(4,bare));
+    zell_theater_test_reset();
+    zell_scene_init(&s,960,600);zell_desktop_init(&s);
+    assert(zell_theater_apply_line(&s,"{\"event\":\"install\",\"id\":\"q1\",\"phase\":\"request\",\"argv\":[\"sudo\",\"apt-get\"]}")==0);
+    assert(strstr(zell_theater_error(),"refused"));
+    assert(strstr(zell_theater_last_command(),"\"ok\":false"));
+    assert(!s.theater_install_request);
+    zell_theater_test_reset();
+    assert(zell_theater_apply_line(&s,"{\"event\":\"install\",\"id\":\"q1\",\"phase\":\"request\",\"argv\":[\"apt-get\",\"install\",\"-y\",\"google-chrome-stable_current_amd64.deb\"]}")==1);
+    assert(s.theater_install_request);
+    assert(strstr(zell_theater_error(),"")==NULL||zell_theater_error()[0]==0);
+    assert(zell_theater_install_json(line,sizeof line));
+    assert(strstr(line,"Theater install")&&strstr(line,"apt-get")&&strstr(line,"google-chrome-stable_current_amd64.deb"));
+    assert(!strstr(line,"sudo"));
+    zell_theater_test_reset();
+}
 int main(void) {
     zell_scene s;
     zell_controls c={0};
@@ -1291,12 +1558,14 @@ int main(void) {
     zell_neuronte_close();
 #endif
     test_room_fit();
+    test_four_rooms();
     test_fleet_board();
     test_notice_deadlines();
     test_floor_panels();
     test_contract_fixtures();
     test_obstacles();
     test_workshop_hop();
+    test_theater();
     puts("desktop world, camera, alpha, idle/walk animation, launcher and voice: ok");
     return 0;
 }
