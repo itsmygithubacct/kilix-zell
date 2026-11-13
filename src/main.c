@@ -1042,7 +1042,7 @@ static int run_scene(void)
             speech_stop(&speech);proc_stop(&proc);
             service_start(&service,&scene);
         }
-        /* L2 calls zell_window_accepts_frame from service_frame. */
+        /* service_frame ignores a job frame whose window generation does not match. */
         service_pump(&vitals,&scene);
         service_pump(&service,&scene);
         if (scene.mode != ZELL_MODE_WAIT) {

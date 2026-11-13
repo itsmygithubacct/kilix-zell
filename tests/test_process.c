@@ -13,7 +13,7 @@ static void graceful_exit(int signum){
 
 static void test_terminal_transport(zell_scene *scene){
     char restart[]="J31",notice[]="N32204a6f622066696e6973686564",audio[]="A312031";
-    service_frame(scene,restart,SERVICE_ORIGIN_MONITOR);service_frame(scene,notice,SERVICE_ORIGIN_MONITOR);service_frame(scene,audio,SERVICE_ORIGIN_MONITOR);
+    service_frame(scene,restart,SERVICE_ORIGIN_MONITOR,0,0);service_frame(scene,notice,SERVICE_ORIGIN_MONITOR,0,0);service_frame(scene,audio,SERVICE_ORIGIN_MONITOR,0,0);
     assert(scene->restart_needed&&scene->notice_count==2&&!strcmp(scene->notice_text,"Job finished"));
     assert(scene->music_muted&&scene->dj_active);
     int dictpipe[2];assert(pipe(dictpipe)==0);
@@ -26,10 +26,10 @@ static void test_terminal_transport(zell_scene *scene){
     assert(dict.pid==0&&scene->mode==ZELL_MODE_QUESTION&&!scene->request_ready);
     assert(!strcmp(scene->question,"Review these words"));dictation_stop(&dict);
     char weather[]="W31203320343720460a4578616d706c650a5261696e";
-    service_frame(scene,weather,SERVICE_ORIGIN_MONITOR);
+    service_frame(scene,weather,SERVICE_ORIGIN_MONITOR,0,0);
     assert(scene->weather_state==1&&scene->weather_icon==3);
     assert(!strcmp(scene->weather_temperature,"47 F")&&!strcmp(scene->weather_place,"Example"));
-    char removed[]="W302037200a0a";service_frame(scene,removed,SERVICE_ORIGIN_MONITOR);
+    char removed[]="W302037200a0a";service_frame(scene,removed,SERVICE_ORIGIN_MONITOR,0,0);
     assert(scene->weather_state==0&&!scene->weather_place[0]);
     unsigned char bytes[TERMINAL_KEY_BYTES];
     kittykb_event event={.action=KITTYKB_ACTION_PRESS,.key='e',.text_length=3,.text={0xe9,0x1f642,'x'}};
@@ -328,6 +328,128 @@ static void send_text(const frame_peer *peer,desktop_service *svc,zell_scene *sc
     frame_line(line,sizeof line,kind,text);
     peer_pump(peer,svc,scene,line);
 }
+static void expect_first_menu(const zell_scene *s){
+    assert(strcmp(s->service_title,"First menu / 2 results")==0);
+    assert(s->service_count==3&&s->service_index==0&&s->service_scroll==0);
+    assert(!s->service_text[0]);
+    assert(strcmp(s->service_choices[0],"old one")==0);
+    assert(strcmp(s->service_choices[1],"old two")==0);
+    assert(strcmp(s->service_choices[2],"Filter (all)")==0);
+}
+/* Slot 0's generation is part of the frame identity. A late frame and another
+ * job's frame both go through service_pump and must leave the menu in place. */
+static void test_window_ownership(zell_scene *scene){
+    frame_peer owner=frame_peer_open();
+    frame_peer other=frame_peer_open();
+    desktop_service owner_svc=peer_service(&owner,false);
+    desktop_service other_svc=peer_service(&other,false);
+    memset(scene->windows,0,sizeof scene->windows);
+    int generation=0;
+    assert(window_prepare_slot0(scene,&generation));
+    assert(generation>0&&scene->windows[0].used&&scene->windows[0].generation==generation);
+    assert(!scene->windows[0].close_requested&&scene->windows[0].owner_service==0);
+    owner_svc.window_slot=0;
+    owner_svc.window_generation=generation;
+    other_svc.window_slot=1;
+    other_svc.window_generation=generation+30;
+    scene->windows[1].used=true;
+    scene->windows[1].generation=generation+3;
+    scene->mode=ZELL_MODE_SERVICE;
+    scene->service_phase=0;
+    scene->service_text[0]=scene->service_title[0]=scene->service_input[0]=0;
+    scene->service_count=scene->service_index=scene->service_scroll=0;
+    const char first[]=
+        "M4669727374206d656e75202f203220726573756c7473\n"
+        "L6f6c64206f6e65\n"
+        "L6f6c642074776f\n"
+        "L46696c7465722028616c6c29\n"
+        "Q\n";
+    peer_pump(&owner,&owner_svc,scene,first);
+    expect_first_menu(scene);
+    assert(scene->service_phase==2);
+    const char foreign[]=
+        "T\n"
+        "P4e616d653f\n"
+        "O6869\n"
+        "C\n"
+        "L6e6577\n"
+        "R\n"
+        "Q\n"
+        "M5365636f6e64206d656e75202f203120726573756c7473\n"
+        "L6e657720616374696f6e\n"
+        "L46696c7465722028616c6c29\n"
+        "Q\n";
+    peer_pump(&other,&other_svc,scene,foreign);
+    expect_first_menu(scene);
+    assert(scene->service_phase==2);
+    int previous=generation;
+    assert(window_prepare_slot0(scene,&generation));
+    assert(generation!=previous&&scene->windows[0].generation==generation&&scene->windows[0].used);
+    peer_pump(&owner,&owner_svc,scene,foreign);
+    expect_first_menu(scene);
+    assert(scene->service_phase==2);
+    owner_svc.window_generation=generation;
+    const char second[]=
+        "M5365636f6e64206d656e75202f203120726573756c7473\n"
+        "L6e657720616374696f6e\n"
+        "L46696c7465722028616c6c29\n"
+        "Q\n";
+    peer_pump(&owner,&owner_svc,scene,second);
+    assert(strcmp(scene->service_title,"Second menu / 1 results")==0);
+    assert(scene->service_count==2&&scene->service_index==0);
+    assert(strcmp(scene->service_choices[0],"new action")==0);
+    assert(strcmp(scene->service_choices[1],"Filter (all)")==0);
+    peer_reap(&owner,&owner_svc);
+    peer_reap(&other,&other_svc);
+
+    int ready[2];assert(pipe(ready)==0);
+    pid_t child=fork();assert(child>=0);
+    if(!child){
+        assert(setsid()>=0);
+        close(ready[0]);
+        assert(write(ready[1],"R",1)==1);
+        for(;;)pause();
+    }
+    close(ready[1]);
+    char mark=0;assert(read(ready[0],&mark,1)==1&&mark=='R');
+    close(ready[0]);
+    desktop_service live_svc={.pid=child,.in_fd=-1,.out_fd=-1,.frame_fd=-1,.window_slot=0,.window_generation=40};
+    memset(scene->windows,0,sizeof scene->windows);
+    for(int i=0;i<ZELL_WINDOWS;i++){
+        scene->windows[i].used=true;
+        scene->windows[i].generation=40+i;
+    }
+    strcpy(scene->service_title,"Kept menu");
+    scene->service_count=2;
+    strcpy(scene->service_choices[0],"stay");
+    scene->desktop_launch=true;
+    service_start(&live_svc,scene);
+    assert(live_svc.pid==child&&!scene->desktop_launch);
+    assert(scene->windows[0].generation==40&&scene->windows[0].used);
+    assert(strcmp(scene->service_title,"Kept menu")==0);
+    assert(scene->service_count==2&&strcmp(scene->service_choices[0],"stay")==0);
+    scene->windows[0].cancel_blocked=true;
+    scene->windows[0].close_requested=true;
+    service_pump(&live_svc,scene);
+    assert(live_svc.pid==child&&scene->windows[0].used&&scene->windows[0].close_requested);
+    scene->windows[0].cancel_blocked=false;
+    service_pump(&live_svc,scene);
+    assert(live_svc.pid==0);
+    assert(scene->windows[0].close_requested&&!scene->windows[0].used&&scene->windows[0].generation==0);
+    assert(waitpid(child,NULL,WNOHANG)==-1&&errno==ECHILD);
+
+    scene->desktop=true;scene->mode=ZELL_MODE_SERVICE;scene->service_phase=5;
+    scene->terminal_minimized=false;scene->terminal_width=160;scene->terminal_height=64;
+    scene->mouse_valid=true;
+    scene->windows[0].used=true;scene->windows[0].generation=8;scene->windows[0].close_requested=false;
+    zell_terminal_layout layout;zell_terminal_layout_for(scene,scene->width,scene->height,&layout);
+    scene->mouse_x=layout.close.x+3;scene->mouse_y=layout.close.y+3;scene->mouse_click=true;
+    assert(zell_terminal_click(scene)&&scene->windows[0].close_requested);
+    assert(scene->mode==ZELL_MODE_SERVICE&&!scene->terminal_minimized);
+    kittykb_event escape={.action=KITTYKB_ACTION_PRESS,.key=KITTYKB_KEY_ESCAPE};
+    unsigned char key[8];
+    assert(terminal_key_bytes(&escape,key)==1&&key[0]==27);
+}
 static void test_contract_frames(zell_scene *scene){
     frame_peer job=frame_peer_open();
     frame_peer mon=frame_peer_open();
@@ -542,6 +664,7 @@ int main(void)
     test_terminal_transport(&scene);
     test_menu_and_mana(&scene);
     test_contract_frames(&scene);
+    test_window_ownership(&scene);
     puts("process test ok");
     return 0;
 }

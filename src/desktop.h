@@ -62,7 +62,7 @@ bool zell_desktop_click(zell_scene *s);
 /* The DJ task that opens a text browser in the floating window. */
 #define ZELL_DJ_STATION 4
 #define ZELL_DJ_BROWSER_ACTION 9
-typedef struct { zell_rect frame, image, minimize, maximize, tab; } zell_terminal_layout;
+typedef struct { zell_rect frame, image, minimize, maximize, close, tab; } zell_terminal_layout;
 void zell_terminal_layout_for(const zell_scene *s,int width,int height,zell_terminal_layout *out);
 void zell_terminal_cells(const zell_scene *s,int *cols,int *rows);
 bool zell_terminal_click(zell_scene *s);

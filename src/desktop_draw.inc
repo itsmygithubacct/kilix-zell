@@ -359,6 +359,7 @@ static void desktop_button(const zell_scene *s,sr_canvas *c,const zell_rect *r,i
  int cx=r->x+r->w/2,cy=r->y+r->h/2;
  if(kind==0)sr_fill_rect(c,(float)(cx-6),(float)(cy+4),12,2,ink,1);
  else if(kind==1)sr_stroke_rect(c,(float)(cx-6),(float)(cy-5),12,10,2,ink,1);
+ else if(kind==3){sr_line(c,(float)(cx-5),(float)(cy-5),(float)(cx+5),(float)(cy+5),2,ink,1,0,0);sr_line(c,(float)(cx-5),(float)(cy+5),(float)(cx+5),(float)(cy-5),2,ink,1,0,0);}
  else {sr_stroke_rect(c,(float)(cx-3),(float)(cy-6),10,8,1,ink,1);sr_fill_rect(c,(float)(cx-7),(float)(cy-2),10,8,hover?0x2f5f63u:0x1b3a42u,1);sr_stroke_rect(c,(float)(cx-7),(float)(cy-2),10,8,1,ink,1);}
 }
 /* The minimized terminal: a button on the bottom bar, in every mode. */
@@ -384,9 +385,10 @@ static void desktop_service(const zell_scene *s,sr_canvas *c){
    sr_stroke_rect(c,(float)l.frame.x,(float)l.frame.y,(float)l.frame.w,(float)l.frame.h,2,0x74b8a9u,1);
    sr_canvas frame;sr_canvas_wrap(&frame,s->terminal_pixels,w,h);sr_blit_scaled(c,&frame,x,y,w,h,1);
    char title[160];snprintf(title,sizeof title,"%s / %s",s->terminal_title[0]?s->terminal_title:"ZELL",s->terminal_private?"PRIVATE TERMINAL":"INTERACTIVE TERMINAL");
-   desktop_text(c,x,y-23,title,0xe5cf98u,w-72);
+   desktop_text(c,x,y-23,title,0xe5cf98u,w-104);
    desktop_button(s,c,&l.minimize,0);
    desktop_button(s,c,&l.maximize,s->terminal_maximized?2:1);
+   desktop_button(s,c,&l.close,3);
    desktop_text(c,x,y+h+7,s->terminal_private?"Hidden secret input | Ctrl-C cancels":"Type here for sudo | Ctrl-C interrupts command",0xabc8c0u,w);
   }else desktop_label(c,c->w/2,c->h/2,"Opening Neuronte terminal...",0xc9e4d5u);
   return;
