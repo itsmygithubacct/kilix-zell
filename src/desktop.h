@@ -4,6 +4,12 @@
 #define ZELL_VERSION "0.1.1"
 #define ZELL_WORLD_W 1536
 #define ZELL_WORLD_H 1024
+/* Measured chrome. Vitals bars are y=39 h=38, so the HUD ends at row 77.
+ * The status strip is the bottom 30 rows. The room fit reserves both. */
+#define ZELL_ROOM_VITALS_Y 39
+#define ZELL_ROOM_VITALS_H 38
+#define ZELL_ROOM_HUD_BOTTOM (ZELL_ROOM_VITALS_Y + ZELL_ROOM_VITALS_H)
+#define ZELL_ROOM_STATUS_STRIP 30
 #define ZELL_STATIONS 52
 /* The Command Center computer that zooms into a usage browser. */
 #define ZELL_MANA_CONSOLE 48

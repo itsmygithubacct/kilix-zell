@@ -24,6 +24,87 @@ static char *read_fixture(const char *path,char *buf,size_t cap){
     buf[n]=0;
     return buf;
 }
+static void click_world(zell_scene *s,float wx,float wy){
+    float mx,my;
+    zell_world_to_screen(s,wx,wy,&mx,&my);
+    s->mouse_x=(int)floorf(mx);
+    s->mouse_y=(int)floorf(my);
+    s->mouse_click=true;
+}
+static void test_room_fit(void){
+    zell_scene s;
+    float x,y,sx,sy,wx,wy,sx2,sy2;
+    int room,cx,cy;
+    const int fitted[2][2]={{960,600},{640,400}};
+    zell_scene_init(&s,800,500);
+    zell_desktop_init(&s);
+    x=s.x;y=s.y;room=s.room;
+    zell_scene_resize(&s,1536,1000);
+    zell_room_view_identity(&s);
+    assert(s.room_view.scale==1.f);
+    assert(s.x==x&&s.y==y&&s.room==room);
+    assert(s.room_view.logical_y==64);
+    assert(s.room_view.logical_h==ZELL_WORLD_H-64);
+    assert(s.room_view.logical_x==(int)(0.135f*(float)ZELL_WORLD_W));
+    assert(s.room_view.logical_w==(int)(0.865f*(float)ZELL_WORLD_W)-s.room_view.logical_x);
+    zell_world_to_screen(&s,100.f,200.f,&sx,&sy);
+    zell_world_to_screen(&s,180.f,280.f,&sx2,&sy2);
+    assert(fabsf((sx2-sx)-(sy2-sy))<0.001f);
+    for(int i=0;i<2;i++){
+        float top_x,top_y;
+        zell_scene_resize(&s,fitted[i][0],fitted[i][1]);
+        assert(s.x==x&&s.y==y&&s.room==room);
+        assert(s.room_view.scale<1.f);
+        zell_world_to_screen(&s,100.f,200.f,&sx,&sy);
+        zell_world_to_screen(&s,180.f,200.f,&sx2,&sy2);
+        assert(fabsf((sx2-sx)-80.f*s.room_view.scale)<0.001f);
+        zell_world_to_screen(&s,100.f,280.f,&sx2,&sy2);
+        assert(fabsf((sy2-sy)-80.f*s.room_view.scale)<0.001f);
+        top_x=(float)s.room_view.logical_x+(float)s.room_view.logical_w*0.5f;
+        top_y=(float)s.room_view.logical_y;
+        zell_world_to_screen(&s,top_x,top_y,&sx,&sy);
+        assert(sx>=0.f&&sx<(float)s.width);
+        assert(sy>=(float)ZELL_ROOM_HUD_BOTTOM&&sy<(float)s.height);
+        zell_screen_to_world(&s,sx,sy,&wx,&wy);
+        assert(fabsf(wx-top_x)<1.f&&fabsf(wy-top_y)<1.f);
+        zell_desktop_camera(&s,&cx,&cy);
+        assert(cy>s.room_view.logical_y);
+    }
+#ifndef ZELL_RENDER_NEURONTE
+    {
+        sr_canvas big,small;
+        zell_scene full,fitted_scene;
+        int matched=0,differed=0;
+        const float samples[4][2]={{1100.f,500.f},{900.f,800.f},{400.f,900.f},{250.f,200.f}};
+        assert(sr_canvas_init(&big,ZELL_WORLD_W,ZELL_WORLD_H));
+        assert(sr_canvas_init(&small,640,400));
+        zell_scene_init(&full,ZELL_WORLD_W,ZELL_WORLD_H);zell_desktop_init(&full);
+        full.room=1;full.flame_tick=0;
+        zell_scene_init(&fitted_scene,640,400);zell_desktop_init(&fitted_scene);
+        fitted_scene.room=1;fitted_scene.flame_tick=0;
+        fitted_scene.x=full.x;fitted_scene.y=full.y;
+        zell_draw(&full,&big);
+        zell_draw(&fitted_scene,&small);
+        zell_desktop_camera(&fitted_scene,&cx,&cy);
+        for(int i=0;i<4;i++){
+            float bx,by;int ix,iy,jx,jy,safe;
+            zell_world_to_screen(&fitted_scene,samples[i][0],samples[i][1],&sx,&sy);
+            ix=(int)floorf(sx);iy=(int)floorf(sy);
+            safe=ix>=0&&ix<490&&iy>=ZELL_ROOM_HUD_BOTTOM&&iy<400-ZELL_ROOM_STATUS_STRIP;
+            if(!safe)continue;
+            zell_screen_to_world(&fitted_scene,(float)ix,(float)iy,&bx,&by);
+            jx=(int)floorf(bx);jy=(int)floorf(by);
+            assert(jx>=0&&jy>=0&&jx<ZELL_WORLD_W&&jy<ZELL_WORLD_H);
+            assert(small.px[(size_t)iy*640u+(size_t)ix]==big.px[(size_t)jy*(size_t)ZELL_WORLD_W+(size_t)jx]);
+            matched++;
+            if(cx+ix>=0&&cy+iy>=0&&cx+ix<ZELL_WORLD_W&&cy+iy<ZELL_WORLD_H&&
+               big.px[(size_t)(cy+iy)*(size_t)ZELL_WORLD_W+(size_t)(cx+ix)]!=small.px[(size_t)iy*640u+(size_t)ix])differed++;
+        }
+        assert(matched>=1&&differed>=1);
+        sr_canvas_free(&big);sr_canvas_free(&small);
+    }
+#endif
+}
 static void test_contract_fixtures(void){
     char text[4096];
     int rows=0,width,height,scale,offset_x,offset_y;
@@ -32,25 +113,20 @@ static void test_contract_fixtures(void){
     while(fscanf(geometry,"%d %d %d %d %d",&width,&height,&scale,&offset_x,&offset_y)==5){
         zell_scene view;
         float sx,sy,wx,wy,x,y;
+        int view_room;
+        /* geometry.txt records the pre-fit adapter. The live view is the fit. */
+        assert(scale==1&&offset_x==0&&offset_y==0);
         zell_scene_init(&view,width,height);
-        assert(view.room_view.logical_x==0&&view.room_view.logical_y==0);
-        assert(view.room_view.logical_w==ZELL_WORLD_W&&view.room_view.logical_h==ZELL_WORLD_H);
-        assert(view.room_view.viewport_x==0&&view.room_view.viewport_y==0);
-        assert(view.room_view.viewport_w==width&&view.room_view.viewport_h==height);
-        assert(view.room_view.scale==(float)scale);
-        assert(view.room_view.offset_x==offset_x&&view.room_view.offset_y==offset_y);
-        x=view.x;y=view.y;
-        zell_room_view_identity(&view);
-        assert(view.x==x&&view.y==y);
         zell_desktop_init(&view);
-        x=view.x;y=view.y;
+        x=view.x;y=view.y;view_room=view.room;
+        zell_room_view_identity(&view);
+        assert(view.x==x&&view.y==y&&view.room==view_room);
         zell_scene_resize(&view,width,height);
-        assert(view.x==x&&view.y==y);
-        assert(view.room_view.scale==(float)scale&&view.room_view.offset_x==offset_x&&view.room_view.offset_y==offset_y);
-        zell_world_to_screen(&view,100.f,200.f,&sx,&sy);
-        assert(sx==100.f&&sy==200.f);
+        assert(view.x==x&&view.y==y&&view.room==view_room);
+        zell_world_to_screen(&view,(float)view.room_view.logical_x+25.f,(float)view.room_view.logical_y+25.f,&sx,&sy);
         zell_screen_to_world(&view,sx,sy,&wx,&wy);
-        assert(wx==100.f&&wy==200.f);
+        assert(fabsf(wx-((float)view.room_view.logical_x+25.f))<1.f);
+        assert(fabsf(wy-((float)view.room_view.logical_y+25.f))<1.f);
         rows++;
     }
     fclose(geometry);
@@ -230,8 +306,7 @@ int main(void) {
         zell_rect frame,display;zell_monitor_layout(screen,&frame,&display);
         assert(frame.w>=(screen?320:420)&&display.w>=249);
         assert(display.x>frame.x&&display.x+display.w<frame.x+frame.w);
-        zell_desktop_camera(&s,&cx,&cy);
-        s.mouse_x=display.x+display.w/2-cx;s.mouse_y=display.y+display.h/2-cy;s.mouse_click=true;
+        click_world(&s,(float)(display.x+display.w/2),(float)(display.y+display.h/2));
         assert(zell_desktop_click(&s)&&s.station==15+screen&&s.mode==ZELL_MODE_DESK);
         s.mode=ZELL_MODE_WALK;
     }
@@ -372,8 +447,8 @@ int main(void) {
         t.room=1;t.mouse_valid=true;
         for(int i=0;i<2;i++){
             t.x=zell_stations[46+i].x*ZELL_WORLD_W;t.y=zell_stations[46+i].y*ZELL_WORLD_H;
-            zell_rect r;zell_command_switch_layout(i,&r);zell_desktop_camera(&t,&cx,&cy);
-            t.mode=ZELL_MODE_WALK;t.mouse_x=r.x+r.w/2-cx;t.mouse_y=r.y+r.h/2-cy;t.mouse_click=true;
+            zell_rect r;zell_command_switch_layout(i,&r);
+            t.mode=ZELL_MODE_WALK;click_world(&t,(float)(r.x+r.w/2),(float)(r.y+r.h/2));
             assert(zell_desktop_click(&t)&&t.station==46+i&&t.desktop_launch);
             t.mode=ZELL_MODE_WALK;t.desktop_launch=false;
             c=(zell_controls){.confirm=true};zell_scene_tick(&t,&c);
@@ -491,6 +566,7 @@ int main(void) {
 #ifdef ZELL_RENDER_NEURONTE
     zell_neuronte_close();
 #endif
+    test_room_fit();
     test_contract_fixtures();
     puts("desktop world, camera, alpha, idle/walk animation, launcher and voice: ok");
     return 0;

@@ -3,6 +3,7 @@
 #include "desktop_assets.h"
 #include <time.h>
 #include <stdlib.h>
+#include <math.h>
 static void desktop_art(sr_canvas *c,int id,int x,int foot,int height){
  const zell_art *a=zell_art_get(id);if(!a)return;sr_canvas src;sr_canvas_wrap(&src,a->pixels,a->width,a->height);
  int width=height*a->width/a->height;sr_blit_scaled(c,&src,x-width/2,foot-height,width,height,1.0f);
@@ -105,10 +106,13 @@ static void desktop_mana_console(const zell_scene *s,sr_canvas *c,int cx,int cy,
 /* The console screen grows to fill the view before its browser tab opens. */
 static void desktop_zoom(const zell_scene *s,sr_canvas *c){
  zell_rect frame,display;zell_mana_console_layout(&frame,&display);
- int cx,cy;zell_desktop_camera(s,&cx,&cy);
- float t=(float)s->zoom_ticks/(float)ZELL_ZOOM_TICKS;if(t>1)t=1;t=t*t*(3-2*t);
- float x=(float)(display.x-cx)*(1-t),y=(float)(display.y-cy)*(1-t);
- float w=(float)display.w+((float)c->w-(float)display.w)*t,h=(float)display.h+((float)c->h-(float)display.h)*t;
+ float x0,y0,x1,y1,dw,dh,t,x,y,w,h;
+ zell_world_to_screen(s,(float)display.x,(float)display.y,&x0,&y0);
+ zell_world_to_screen(s,(float)(display.x+display.w),(float)(display.y+display.h),&x1,&y1);
+ dw=x1-x0;dh=y1-y0;
+ t=(float)s->zoom_ticks/(float)ZELL_ZOOM_TICKS;if(t>1)t=1;t=t*t*(3-2*t);
+ x=x0*(1-t);y=y0*(1-t);
+ w=dw+((float)c->w-dw)*t;h=dh+((float)c->h-dh)*t;
  sr_fill_rect(c,x,y,w,h,0x07141au,1);
  sr_stroke_rect(c,x,y,w,h,2,0x96ead0u,1);
  int scale=t>.6f&&w>520?2:1;
@@ -162,13 +166,13 @@ static void desktop_vitals(const zell_scene *s,sr_canvas *c){
  for(int i=0;i<3;i++){
   int x=12+i*(width+8);char label[40];
   if(values[i]<0)snprintf(label,sizeof label,"%s ?",names[i]);else snprintf(label,sizeof label,"%s %d%s",width<110?(i==0?"HP":i==1?"MP":"FT"):names[i],values[i],i==1&&s->mana_age>=3600?"*":"%");
-  sr_fill_rect(c,(float)x,39,(float)width,38,0x0c1921u,.95f);
-  sr_text(c,(float)(x+4),42,label,colors[i],1,1);
-  sr_fill_rect(c,(float)(x+4),64,(float)(width-8),7,0x263940u,1);
-  if(values[i]>0)sr_fill_rect(c,(float)(x+4),64,(float)(width-8)*(float)values[i]/100,7,colors[i],1);
+  sr_fill_rect(c,(float)x,ZELL_ROOM_VITALS_Y,(float)width,ZELL_ROOM_VITALS_H,0x0c1921u,.95f);
+  sr_text(c,(float)(x+4),ZELL_ROOM_VITALS_Y+3,label,colors[i],1,1);
+  sr_fill_rect(c,(float)(x+4),ZELL_ROOM_VITALS_Y+25,(float)(width-8),7,0x263940u,1);
+  if(values[i]>0)sr_fill_rect(c,(float)(x+4),ZELL_ROOM_VITALS_Y+25,(float)(width-8)*(float)values[i]/100,7,colors[i],1);
  }
  if(s->hp>=0&&s->hp<100&&s->room==0&&s->mode==ZELL_MODE_WALK)sr_text(c,12,83,s->restart_needed?"Restart needed: visit Gatekeeper":s->dirty_files>0?"Health low: hover bar for details":"Admin: OS update due",0xe5ad87u,1,1);
- if(s->mouse_valid&&s->mouse_x>=12&&s->mouse_x<12+width&&s->mouse_y>=39&&s->mouse_y<77){
+ if(s->mouse_valid&&s->mouse_x>=12&&s->mouse_x<12+width&&s->mouse_y>=ZELL_ROOM_VITALS_Y&&s->mouse_y<ZELL_ROOM_HUD_BOTTOM){
   char tip[600];
   char os[240],git[200];
   if(s->update_age_days<0)snprintf(os,sizeof os,"OS upgrade history is unknown; no age penalty is assumed.");
@@ -215,17 +219,39 @@ static void desktop_cave(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
   if(i==near)desktop_label(c,x,y+(i==12?28:8),p->name,0xb9f8dbu);
  }
 }
-static void desktop_base(const zell_scene *s,sr_canvas *c){
+static int desktop_view_identity(const zell_scene *s){
+ float x,y;
+ if(s->room_view.scale!=1.f)return 0;
+ zell_world_to_screen(s,0.f,0.f,&x,&y);
+ return x==0.f&&y==0.f;
+}
+/* Copy one world-pixel room through the fitted view. HUD is drawn later. */
+static void desktop_present_room(const zell_scene *s,sr_canvas *dst,const sr_canvas *world){
+ sr_clear(dst,0x081319u);
+ if(!world->px)return;
+ if(desktop_view_identity(s)&&dst->w==world->w&&dst->h==world->h){
+  memcpy(dst->px,world->px,(size_t)dst->w*(size_t)dst->h*4u);
+  return;
+ }
+ for(int sy=0;sy<dst->h;sy++)for(int sx=0;sx<dst->w;sx++){
+  float wx,wy;int ix,iy;
+  zell_screen_to_world(s,(float)sx,(float)sy,&wx,&wy);
+  ix=(int)floorf(wx);iy=(int)floorf(wy);
+  if(ix<0||iy<0||ix>=world->w||iy>=world->h)continue;
+  dst->px[(size_t)sy*(size_t)dst->w+(size_t)sx]=world->px[(size_t)iy*(size_t)world->w+(size_t)ix];
+ }
+}
+static void desktop_world_layer(const zell_scene *s,sr_canvas *c,int cx,int cy){
  static sr_canvas backgrounds[5];
  int room=s->room>=0&&s->room<5?s->room:0;
  sr_canvas *background=&backgrounds[room];
  const zell_art *a=zell_art_get(room==1?ZELL_ART_COMMAND_ROOM:room==2?ZELL_ART_LAUNDRY_ROOM:room==3?ZELL_ART_VAULT_ROOM:room==4?ZELL_ART_WORKSHOP_ROOM:0);
  if(!background->px&&a){if(sr_canvas_init(background,ZELL_WORLD_W,ZELL_WORLD_H)){sr_canvas src;sr_canvas_wrap(&src,a->pixels,a->width,a->height);sr_blit_scaled(background,&src,0,0,ZELL_WORLD_W,ZELL_WORLD_H,1);}}
- int cx,cy;zell_desktop_camera(s,&cx,&cy);sr_clear(c,0x081319u);
+ sr_clear(c,0x081319u);
  if(background->px){for(int y=0;y<c->h&&y+cy<ZELL_WORLD_H;y++){int w=c->w;if(w+cx>ZELL_WORLD_W)w=ZELL_WORLD_W-cx;memcpy(c->px+(size_t)y*(size_t)c->w,background->px+(size_t)(y+cy)*ZELL_WORLD_W+(size_t)cx,(size_t)w*4);}}
  if(s->room)desktop_room(s,c,cx,cy,false);
  desktop_weather(s,c,cx,cy);
- int near=zell_desktop_near(s);int height=112;
+ int height=112;
  desktop_cave(s,c,cx,cy,false);
  if(s->room==0){
   bool enabled[3]={s->voice_on,s->dictation_on,!s->music_muted};
@@ -254,11 +280,19 @@ static void desktop_base(const zell_scene *s,sr_canvas *c){
  }
  zell_actor_pose pose=zell_desktop_pose(s,-1);sr_fill_ellipse(c,s->x-(float)cx,s->y-(float)cy,17,5,0x071719u,.45f);desktop_art(c,pose.art,(int)s->x-cx+pose.offset_x,(int)s->y-cy+pose.offset_y,height*3/4);
  if(s->room)desktop_room(s,c,cx,cy,true);else desktop_cave(s,c,cx,cy,true);
+}
+static void desktop_chrome(const zell_scene *s,sr_canvas *c,int cx,int cy){
+ int near=zell_desktop_near(s);
  if(c->w>=500&&s->mode==ZELL_MODE_WALK){
   int mx=c->w-140,my=42;sr_fill_rect(c,(float)mx,(float)my,128,88,0x0c1921u,.9f);
   sr_stroke_rect(c,(float)mx,(float)my,128,88,1,0x4b7777u,1);
   for(int i=0;i<ZELL_STATIONS;i++)if(i<ZELL_WORKSHOP_COMPUTER&&zell_desktop_station_visible(s,i))sr_fill_circle(c,(float)(mx+4)+zell_stations[i].x*120,(float)(my+4)+zell_stations[i].y*80,2,0xd9ba79u,1);
-  sr_stroke_rect(c,(float)(mx+4)+((float)cx/ZELL_WORLD_W)*120,(float)(my+4)+((float)cy/ZELL_WORLD_H)*80,(float)c->w/ZELL_WORLD_W*120,(float)c->h/ZELL_WORLD_H*80,1,0x407b85u,1);
+  if(s->room==1){
+   float x0,y0,x1,y1;
+   zell_screen_to_world(s,0.f,0.f,&x0,&y0);
+   zell_screen_to_world(s,(float)c->w,(float)c->h,&x1,&y1);
+   sr_stroke_rect(c,(float)(mx+4)+(x0/(float)ZELL_WORLD_W)*120,(float)(my+4)+(y0/(float)ZELL_WORLD_H)*80,((x1-x0)/(float)ZELL_WORLD_W)*120,((y1-y0)/(float)ZELL_WORLD_H)*80,1,0x407b85u,1);
+  }else sr_stroke_rect(c,(float)(mx+4)+((float)cx/ZELL_WORLD_W)*120,(float)(my+4)+((float)cy/ZELL_WORLD_H)*80,(float)c->w/ZELL_WORLD_W*120,(float)c->h/ZELL_WORLD_H*80,1,0x407b85u,1);
   sr_fill_circle(c,(float)(mx+4)+s->x/ZELL_WORLD_W*120,(float)(my+4)+s->y/ZELL_WORLD_H*80,3,0x8af8d4u,1);
  }
  sr_fill_rect(c,0,0,(float)c->w,30,0x0c1921u,.97f);
@@ -269,10 +303,25 @@ static void desktop_base(const zell_scene *s,sr_canvas *c){
  char status[100];time_t now=time(NULL);struct tm local;localtime_r(&now,&local);
  snprintf(status,sizeof status,"%02d:%02d  %d fps",local.tm_hour,local.tm_min,s->frame_rate);
  int sw=sr_text_width_in(SR_FONT_FIXED_8X16,status,1);sr_text(c,(float)(c->w-sw-12),7,status,0xa6d9ccu,1,1);
- sr_fill_rect(c,0,(float)(c->h-30),(float)c->w,30,0x0c1921u,.97f);
+ sr_fill_rect(c,0,(float)(c->h-ZELL_ROOM_STATUS_STRIP),(float)c->w,ZELL_ROOM_STATUS_STRIP,0x0c1921u,.97f);
  const char *hint=s->mode==ZELL_MODE_WALK&&s->running?"Dashing | Release Shift to stop":s->mode==ZELL_MODE_WALK&&s->run_charge>0?"Charging dash... | Release Shift to cancel":s->mode==ZELL_MODE_SERVICE?"Station window | Esc back":near>=0?"Enter interact | Tab stations":c->w<500?"WASD | Shift run | Tab":"WASD walk | Hold Shift run | Tab stations";
  sr_text(c,12,(float)(c->h-22),hint,0xc7d8dau,1,1);
  desktop_vitals(s,c);
+}
+static void desktop_base(const zell_scene *s,sr_canvas *c){
+ int cx,cy;zell_desktop_camera(s,&cx,&cy);
+ if(s->room==1){
+  static sr_canvas world;
+  if(!world.px&&!sr_canvas_init(&world,ZELL_WORLD_W,ZELL_WORLD_H)){
+   desktop_world_layer(s,c,cx,cy);
+   desktop_chrome(s,c,cx,cy);
+   return;
+  }
+  /* Draw the room in world pixels, then place that picture with one transform. */
+  desktop_world_layer(s,&world,0,0);
+  desktop_present_room(s,c,&world);
+ }else desktop_world_layer(s,c,cx,cy);
+ desktop_chrome(s,c,cx,cy);
 }
 static void desktop_text(sr_canvas *c,int x,int y,const char *text,uint32_t color,int width){
  char line[160];int cap=width/8;if(cap<1)return;if(cap>159)cap=159;
