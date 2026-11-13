@@ -11,6 +11,10 @@ typedef struct {
     void *frame_map;
     unsigned frame_seq;
     uint32_t *frame_scratch;
+    /* Slot and generation captured when this job reserved its window.
+     * A frame keeps this identity after the slot's generation changes. */
+    int window_slot;
+    int window_generation;
 } desktop_service;
 
 #define ZELL_TERMINAL_BYTES (32u+1200u*640u*4u)
@@ -43,8 +47,58 @@ static void service_mana(zell_scene *s,const char *text){
     for(int i=0;i<3;i++)s->provider_mana[i]=v[i]<-2||v[i]>100?-1:v[i];
     s->provider_mana_ready=true;
 }
-static void service_frame(zell_scene *s,char *frame,int origin){
-    /* L2 will reject late frames through zell_window_accepts_frame. */
+static int window_generation_clock;
+static int window_used_count(const zell_scene *s){
+    int count=0;
+    for(int i=0;i<ZELL_WINDOWS;i++)if(s->windows[i].used)count++;
+    return count;
+}
+static int window_next_generation(const zell_scene *s){
+    int floor=window_generation_clock;
+    for(int i=0;i<ZELL_WINDOWS;i++)if(s->windows[i].generation>floor)floor=s->windows[i].generation;
+    int generation=floor+1;
+    if(generation<=0||generation>1000000000)generation=1;
+    for(int attempt=0;attempt<ZELL_WINDOWS+1;attempt++){
+        bool taken=false;
+        for(int i=0;i<ZELL_WINDOWS;i++)if(s->windows[i].generation==generation)taken=true;
+        if(!taken&&generation!=0){window_generation_clock=generation;return generation;}
+        if(++generation<=0||generation>1000000000)generation=1;
+    }
+    window_generation_clock=generation;
+    return generation;
+}
+/* Drop a slot when its owning job is gone. A generation of 0 is the legacy
+ * terminal and does not own a reserved slot. close_requested stays visible. */
+static void window_release_owner(zell_scene *s,int slot,int generation){
+    if(!s||generation==0||slot<0||slot>=ZELL_WINDOWS)return;
+    zell_window *w=&s->windows[slot];
+    if(w->generation!=generation)return;
+    bool close_requested=w->close_requested;
+    memset(w,0,sizeof *w);
+    w->close_requested=close_requested;
+}
+/* Reserve window 0 for the one station service. At four used slots, leave
+ * every running job alone: do not kill one and do not overwrite its slot. */
+static bool window_prepare_slot0(zell_scene *s,int *generation){
+    if(window_used_count(s)>=ZELL_WINDOWS)return false;
+    int open_order=1,z_order=0,gen=window_next_generation(s);
+    for(int i=0;i<ZELL_WINDOWS;i++){
+        if(s->windows[i].open_order>=open_order)open_order=s->windows[i].open_order+1;
+        if(s->windows[i].used&&s->windows[i].z_order>=z_order)z_order=s->windows[i].z_order+1;
+    }
+    zell_window *w=&s->windows[0];
+    *w=(zell_window){0};
+    w->generation=gen;
+    w->open_order=open_order;
+    w->z_order=z_order;
+    w->used=true;
+    w->owner_service=0;
+    *generation=gen;
+    return true;
+}
+static void service_frame(zell_scene *s,char *frame,int origin,int slot,int generation){
+    /* A job frame is ignored unless zell_window_accepts_frame says this slot
+     * still has the generation captured with the owning pipe. */
     char kind=frame[0],decoded[4096];size_t n=0;
     for(size_t i=1;frame[i]&&frame[i+1]&&n+1<sizeof decoded;i+=2){
         int a=service_hex(frame[i]),b=service_hex(frame[i+1]);if(a<0||b<0)return;
@@ -119,6 +173,7 @@ static void service_frame(zell_scene *s,char *frame,int origin){
     }
     /* Telemetry belongs to the monitor. A job M is a menu even when the title is numeric. */
     if(kind&&strchr("GHFUVYNSWAJDB",kind))return;
+    if(kind&&strchr("TPQROLCM",kind)&&!zell_window_accepts_frame(s,slot,generation))return;
     if(kind=='T'){s->service_phase=5;s->terminal_maximized=s->terminal_minimized=false;return;}
     /* A helper that leaves the terminal for a prompt or report must be seen. */
     if(kind=='P'||kind=='Q'||kind=='R')zell_terminal_restore(s);
@@ -173,8 +228,14 @@ static void terminal_frame(desktop_service *p,zell_scene *s){
     s->terminal_width=(int)w;s->terminal_height=(int)height;p->frame_seq=seq;
 }
 static void service_start_mode(desktop_service *p,zell_scene *s,bool monitor){
+    int generation=0;
+    /* The new generation is on the slot before the previous helper is stopped
+     * and before the new helper is forked. Four used slots skip both. */
+    if(!monitor&&!window_prepare_slot0(s,&generation)){s->desktop_launch=false;return;}
     service_stop(p);
     p->monitor=monitor;
+    p->window_slot=0;
+    p->window_generation=monitor?0:generation;
     p->sensitive=!monitor&&(s->station==0||s->station==2||s->station==3||s->station==8||s->station==9||s->station>=31);
     if(!monitor){
     if(s->terminal_pixels){explicit_bzero(s->terminal_pixels,1200u*640u*4u);free(s->terminal_pixels);}
@@ -183,6 +244,9 @@ static void service_start_mode(desktop_service *p,zell_scene *s,bool monitor){
     s->terminal_maximized=s->terminal_minimized=false;
     s->terminal_private=p->sensitive;
     snprintf(s->terminal_title,sizeof s->terminal_title,"%s",s->station==ZELL_DJ_STATION&&s->menu_index==ZELL_DJ_BROWSER_ACTION?"Browser":zell_stations[s->station].name);
+    snprintf(s->windows[0].title,sizeof s->windows[0].title,"%s",s->terminal_title);
+    s->windows[0].private_surface=p->sensitive;
+    s->windows[0].minimized=s->windows[0].maximized=false;
     s->service_text[0]=s->service_title[0]=s->service_input[0]=0;
     s->service_scroll=0;s->service_send=s->service_cancel=false;
     }
@@ -229,12 +293,34 @@ static void service_start_mode(desktop_service *p,zell_scene *s,bool monitor){
     fcntl(p->out_fd,F_SETFD,FD_CLOEXEC);fcntl(p->in_fd,F_SETFD,FD_CLOEXEC);
     return;
 failed:
+    if(!monitor)window_release_owner(s,0,generation);
     if(monitor)return;
     strcpy(s->service_text,"Could not start this station's helper.");s->service_phase=4;
 }
 static void service_start(desktop_service *p,zell_scene *s){service_start_mode(p,s,false);}
+static bool service_owns_window(const desktop_service *p,const zell_scene *s,int slot){
+    if(slot<0||slot>=ZELL_WINDOWS)return false;
+    /* Generation 0 is the legacy terminal only while the slot is still unarmed. */
+    if(p->window_generation==0)return slot==0&&s->windows[slot].generation==0;
+    return s->windows[slot].generation==p->window_generation;
+}
 static void service_pump(desktop_service *p,zell_scene *s){
     if(p->pid<=0)return;
+    if(!p->monitor){
+        int slot=p->window_slot;
+        if(service_owns_window(p,s,slot)&&s->windows[slot].close_requested&&!s->windows[slot].cancel_blocked){
+            int generation=p->window_generation;bool sensitive=p->sensitive;
+            service_stop(p);
+            window_release_owner(s,slot,generation);
+            zell_terminal_restore(s);s->service_phase=4;s->service_scroll=0;
+            if(sensitive){
+                if(s->terminal_pixels){explicit_bzero(s->terminal_pixels,1200u*640u*4u);free(s->terminal_pixels);s->terminal_pixels=NULL;s->terminal_width=s->terminal_height=0;}
+                explicit_bzero(s->service_reply,sizeof s->service_reply);
+                explicit_bzero(s->service_input,sizeof s->service_input);
+            }
+            return;
+        }
+    }
     if(p->monitor&&s->coding_yolo_refresh){
         if(write(p->in_fd,"Y\n",2)==2)s->coding_yolo_refresh=false;
     }
@@ -257,7 +343,7 @@ static void service_pump(desktop_service *p,zell_scene *s){
                 if(p->length&&p->length<sizeof p->frame){
                     p->frame[p->length]=0;
                     if(!p->monitor||strchr("VDBSWJNAYGHFMU",p->frame[0]))
-                        service_frame(s,p->frame,p->monitor?SERVICE_ORIGIN_MONITOR:SERVICE_ORIGIN_JOB);
+                        service_frame(s,p->frame,p->monitor?SERVICE_ORIGIN_MONITOR:SERVICE_ORIGIN_JOB,p->window_slot,p->window_generation);
                 }
                 p->length=0;
             }else if(p->length+1<sizeof p->frame)p->frame[p->length++]=bytes[i];
@@ -273,7 +359,9 @@ static void service_pump(desktop_service *p,zell_scene *s){
         else if(!WIFEXITED(status)||WEXITSTATUS(status)!=0)service_append(s,"\nThe station helper failed. Please try again.");
         else if(!s->service_text[0])service_append(s,"Done.");
         bool sensitive=p->sensitive;
+        int slot=p->window_slot,generation=p->window_generation;
         service_stop(p);zell_terminal_restore(s);s->service_phase=4;s->service_scroll=0;
+        window_release_owner(s,slot,generation);
         if((s->station==45||s->station==46)&&WIFEXITED(status)&&WEXITSTATUS(status)==0)s->mode=ZELL_MODE_WALK;
         if(sensitive){
             if(s->terminal_pixels){explicit_bzero(s->terminal_pixels,1200u*640u*4u);free(s->terminal_pixels);s->terminal_pixels=NULL;s->terminal_width=s->terminal_height=0;}

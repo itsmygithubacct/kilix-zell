@@ -331,15 +331,23 @@ void zell_terminal_layout_for(const zell_scene *s,int width,int height,zell_term
  out->frame=(zell_rect){out->image.x-8,out->image.y-30,w+16,h+58};
  out->maximize=(zell_rect){out->frame.x+out->frame.w-34,out->frame.y+5,26,20};
  out->minimize=(zell_rect){out->maximize.x-30,out->frame.y+5,26,20};
+ out->close=(zell_rect){out->minimize.x-30,out->frame.y+5,26,20};
  /* Window buttons share the bottom row and line up from the left. The
   * button is as wide as its title. */
  int title=(int)strlen(s->terminal_title[0]?s->terminal_title:"Neuronte terminal")*8+36;
  if(title>236)title=236;
  out->tab=(zell_rect){ZELL_WINDOW_ROW_X,height-64,title,26};
 }
+static void window_note_terminal(zell_scene *s){
+ if(!s->windows[0].used)return;
+ s->windows[0].minimized=s->terminal_minimized;
+ s->windows[0].maximized=s->terminal_maximized;
+ s->windows[0].private_surface=s->terminal_private;
+}
 void zell_terminal_restore(zell_scene *s){
  if(!s->terminal_minimized)return;
  s->terminal_minimized=false;s->mode=ZELL_MODE_SERVICE;
+ window_note_terminal(s);
 }
 static bool rect_holds(const zell_rect *r,int x,int y){return x>=r->x&&x<r->x+r->w&&y>=r->y&&y<r->y+r->h;}
 void zell_monitor_layout(int screen,zell_rect *frame,zell_rect *display){
@@ -389,8 +397,10 @@ bool zell_terminal_click(zell_scene *s){
   zell_terminal_restore(s);return true;
  }
  if(s->mode!=ZELL_MODE_SERVICE||s->terminal_width<=0)return false;
- if(rect_holds(&l.minimize,s->mouse_x,s->mouse_y)){s->terminal_minimized=true;s->mode=ZELL_MODE_WALK;return true;}
- if(rect_holds(&l.maximize,s->mouse_x,s->mouse_y)){s->terminal_maximized=!s->terminal_maximized;return true;}
+ /* Close asks this slot to stop. Escape stays a key for the terminal. */
+ if(rect_holds(&l.close,s->mouse_x,s->mouse_y)){s->windows[0].close_requested=true;return true;}
+ if(rect_holds(&l.minimize,s->mouse_x,s->mouse_y)){s->terminal_minimized=true;s->mode=ZELL_MODE_WALK;window_note_terminal(s);return true;}
+ if(rect_holds(&l.maximize,s->mouse_x,s->mouse_y)){s->terminal_maximized=!s->terminal_maximized;window_note_terminal(s);return true;}
  return false;
 }
 
