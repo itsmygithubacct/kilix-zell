@@ -494,6 +494,9 @@ def desktop(station,action):
             import zell_mana
             # L5 calls zell_provider_apply; this monitor G line stays three integers.
             DIALOGUE.send('G',' '.join(str(value) for value in zell_mana.readings()))
+            import zell_providers
+            for kind,payload in zell_providers.monitor_frames(BASE):
+                DIALOGUE.send(kind,payload)
             zell_mana.refresh_in_background(ui)
             from zell_schedule import aggregate
             notices=aggregate();DIALOGUE.send('N',str(notices['count'])+' '+notices['text'])

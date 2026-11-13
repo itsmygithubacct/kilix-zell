@@ -15,6 +15,7 @@ import threading
 import time
 from pathlib import Path
 
+import zell_providers
 import zell_vitals
 
 PROVIDERS = zell_vitals.PROVIDERS
@@ -122,7 +123,8 @@ def refresh_in_background(ui, now=None):
 
 
 def summary(ui):
-    lines = [zell_vitals.snapshot(ui)['details'], '',
+    directory = getattr(ui, "BASE", None)
+    lines = [zell_providers.mode_line(directory), zell_vitals.snapshot(ui, directory)['details'], '',
              'Automatic readings: ' + ('on' if automatic(ui) else 'off') +
              f' (every {MAX_AGE // 60} minutes while Zell runs; no tokens are spent).']
     blocked = needs()

@@ -19,9 +19,23 @@ import stat
 import subprocess
 import sys
 
+import zell_providers
+
 APP = 'kilix-zell'
 PROVIDERS = {'codex': 'Codex / OpenAI', 'claude': 'Claude', 'grok': 'Grok / xAI', 'qwen': 'Qwen / DashScope'}
 HERE = str(Path(__file__).resolve())
+
+
+def api_key_menu():
+    """Launch clients keep their labels. Other registry ids are API-key choices only."""
+    choices = [(name, key) for key, name in PROVIDERS.items()]
+    choices.extend((zell_providers.LABELS[key], key) for key in zell_providers.IDS if key not in PROVIDERS)
+    choices.append(('Other API key', 'api'))
+    return choices
+
+
+def accepts_kind(kind):
+    return kind in {*PROVIDERS, *zell_providers.IDS, 'api', 'login', 'secret'}
 
 
 def binary():
@@ -103,7 +117,7 @@ def hub(ui):
         if action in {'lock', 'doctor'}:
             return ui.page_text(metadata(action) or 'Vault locked.')
         if action in {'api', 'login', 'secret'}:
-            provider = ui.choose('API key provider', [(name, key) for key, name in PROVIDERS.items()]+[('Other API key', 'api')]) if action == 'api' else None
+            provider = ui.choose('API key provider', api_key_menu()) if action == 'api' else None
             if action == 'api' and not provider:
                 return
             # Even labels are collected in the private form, outside history.
@@ -163,10 +177,13 @@ def save_form(kind):
         value = json.dumps({'username': username, 'password': password}).encode()
         field, record_type = 'login-json', 'login'
     else:
-        value = getpass.getpass('API key (hidden): ' if kind in {*PROVIDERS, 'api'} else 'Secret value (hidden): ').encode()
-        field, record_type = ('api-key', 'api-key') if kind in {*PROVIDERS, 'api'} else ('value', 'secret')
+        api_kind = kind in {*zell_providers.IDS, 'api'}
+        value = getpass.getpass('API key (hidden): ' if api_kind else 'Secret value (hidden): ').encode()
+        field, record_type = ('api-key', 'api-key') if api_kind else ('value', 'secret')
         if kind in PROVIDERS:
             label = PROVIDERS[kind] + ' / ' + label
+        elif kind in zell_providers.LABELS:
+            label = zell_providers.LABELS[kind] + ' / ' + label
     if not value or len(value) > 65536:
         raise ValueError('Secret is empty or exceeds the vault limit.')
     fd = os.memfd_create('zell-vault-input', os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING)
@@ -260,7 +277,7 @@ def main(argv=None):
             input('Enter to return... ')
             return status
         elif opts.action == 'save' and len(opts.args) == 1:
-            if opts.args[0] not in {*PROVIDERS, 'api', 'login', 'secret'}:
+            if not accepts_kind(opts.args[0]):
                 raise ValueError('Unknown secret kind.')
             save_form(opts.args[0])
         elif opts.action == 'token' and len(opts.args) == 1:

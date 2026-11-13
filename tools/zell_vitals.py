@@ -151,7 +151,7 @@ def provider_value(entry, now):
     return min(values)
 
 
-def mana(ui, now):
+def mana(ui, now, provider_directory=None):
     cache = read_json(config_path().parent / '.loop/usage-pages.json')
     entries = cache.get('providers', {})
     if not isinstance(entries, dict):
@@ -178,16 +178,36 @@ def mana(ui, now):
                      (f'; checked {datetime.fromtimestamp(stamp).isoformat(timespec="seconds")}' if stamp else '; never checked'))
     lines.append('Mana: mean of known provider minima; unknown providers excluded.')
     lines.append('Missing/unknown providers: ' + (', '.join(missing) or 'none'))
-    return round(sum(values) / len(values)) if values else -1, max(ages) if ages else -1, lines
+    value = round(sum(values) / len(values)) if values else -1
+    import zell_providers
+    directory = provider_directory if isinstance(provider_directory, (str, Path)) else None
+    if directory is None:
+        base = getattr(ui, "BASE", None)
+        if isinstance(base, (str, Path)):
+            directory = base
+    if directory is None:
+        directory = zell_providers.state_directory()
+    mode = zell_providers.account_mode(directory)
+    lines.append('Account mode: ' + mode)
+    if mode != zell_providers.UNSET and directory is not None:
+        try:
+            hosted = zell_providers.load_state(directory, now)
+        except (OSError, ValueError):
+            hosted = None
+        if hosted is not None:
+            adjusted = zell_providers.verified_mean(hosted['sources'], mode, now)
+            if adjusted is not None:
+                value = adjusted
+    return value, max(ages) if ages else -1, lines
 
 
-def snapshot(ui):
+def snapshot(ui, provider_directory=None):
     now = time.time()
     upgraded = last_upgrade(ui)
     age = max(0, int((now - upgraded) // 86400)) if upgraded else -1
     health = max(10, 100 - 10 * age) if age >= 0 else -1
     remaining = fatigue()
-    magic, magic_age, lines = mana(ui, now)
+    magic, magic_age, lines = mana(ui, now, provider_directory)
     details = '\n'.join([f'Health: {health}; days since successful upgrade: {age}',
         'Health stays 100 for 24 hours, then loses 10 per elapsed day (floor 10). Unknown = -1.',
         f'Fatigue headroom: {remaining}%; min(CPU idle, available memory), smoothed with 25% new sample.',
