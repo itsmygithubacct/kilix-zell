@@ -824,6 +824,28 @@ class TheaterTests(unittest.TestCase):
         self.assertEqual(lines[-1]['event'], 'status')
         self.assertFalse(hasattr(page, 'point'))
 
+    def test_malformed_id_stays_in_the_protocol(self):
+        session = self.session()
+        payload = b''.join(
+            json.dumps(command).encode() + b'\n'
+            for command in (
+                {'cmd': 'use', 'id': []},
+                {'cmd': 'use', 'id': {}},
+                {'cmd': 'close', 'id': []},
+                {'cmd': 'close', 'id': {}},
+                {'cmd': 'stop'},
+            ))
+        stdout = io.BytesIO()
+        code = theater.serve(io.BytesIO(payload), stdout, session, None)
+        self.assertEqual(code, 0)
+        lines = [json.loads(line) for line in stdout.getvalue().splitlines()]
+        bad = [event for event in lines if event.get('detail') == 'bad id']
+        self.assertEqual(len(bad), 4)
+        self.assertTrue(all(event.get('error') == 'malformed' for event in bad))
+        self.assertEqual(lines[-1]['event'], 'status')
+        self.assertEqual(session.items, {})
+        self.assertIsNone(session.active)
+
     def test_key_taps_once_and_text_is_pasted(self):
         page = FramePage()
         session = self.session(browser=page)

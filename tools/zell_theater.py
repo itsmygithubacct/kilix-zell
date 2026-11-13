@@ -692,6 +692,8 @@ class TheaterSession:
             self.begin_playback()
 
     def use_item(self, identity):
+        if not isinstance(identity, str) or not ID_RE.fullmatch(identity):
+            raise ProtocolError('bad id')
         if identity not in self.items:
             raise ProtocolError('unknown id')
         # The leaving page must actually pause before this id becomes audible.
@@ -762,6 +764,8 @@ class TheaterSession:
         return self.status(self.active, self._activity_state(self.active))
 
     def close_item(self, identity):
+        if not isinstance(identity, str) or not ID_RE.fullmatch(identity):
+            raise ProtocolError('bad id')
         if identity not in self.items:
             raise ProtocolError('unknown id')
         kind = self.items[identity].get('kind')
