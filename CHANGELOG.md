@@ -9,6 +9,7 @@ These changes are not in the 0.1.1 runtime archive that Plebian-OS 0.2.3 pins.
 - Name the Neuronte commit 0.1.1 was reviewed against, and say where the release carries Zell.
 - Take soft-raster out of the Neuronte programs. Their pixel buffer, frame clear, flat fill, RGBA packing and PPM writer are now in `src/canvas.c`, adapted from soft-raster with its notice, which gives the same bytes as soft-raster did. The raster build is unchanged.
 - Draw the stair marker and the floating window's close button from Neuronte characters in the Neuronte build. Both were drawn by soft-raster's triangle and line. The marker sits within a pixel of where it was. The cross is slightly bolder and can sit half a pixel off the button's middle, because its cell is placed on whole pixels.
+- Show the later staff the way the first six are shown: no name until Kilix stands beside one, then the glow and the name. The ten operating-system staff, and the Git Wizard, Pilot and Key Master downstairs, carried a name tag all the time. The three who stand in the cave also get the floor shadow the first six have.
 
 ## 0.1.1 — 2026-11-13
 

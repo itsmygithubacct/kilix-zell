@@ -7,6 +7,7 @@
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* Largest per-channel difference between two pixels. */
@@ -1484,6 +1485,84 @@ static void test_theater(void){
 #endif
     zell_theater_test_reset();
 }
+/* A character's name is shown only while Kilix stands by it. That holds for
+ * the cave's first six and for the later staff alike, upstairs and down:
+ * nobody carries a name tag about. */
+static int ink_count(const sr_canvas *c,zell_rect r,uint32_t rgb,int within){
+    int n=0;
+    for(int y=r.y<0?0:r.y;y<r.y+r.h&&y<c->h;y++)for(int x=r.x<0?0:r.x;x<r.x+r.w&&x<c->w;x++)
+        if(pixel_gap(c->px[(size_t)y*(size_t)c->w+(size_t)x]&0xffffffu,rgb)<=within)n++;
+    return n;
+}
+static void test_names_show_only_beside_kilix(void){
+    static const struct{int room,station;}who[]={
+        {0,0},{0,1},{0,2},{0,3},{0,4},{0,5},{0,32},{0,37},{0,38},
+        {1,29},{1,30},{1,31},{2,34},{2,35},{3,39},{3,40},{4,33},{4,36},{4,41}};
+    static const float beside[][2]={{-70,12},{70,12},{0,64},{-52,52},{52,52},{0,-64},{-80,0},{80,0}};
+    static const float away[][2]={{-320,0},{320,0},{0,-260},{0,260},{-260,-200},{260,200},{260,-200},{-260,200}};
+    /* The name beside Kilix is written in the first colour. The staff added
+     * later used to carry theirs about in the second. */
+    const uint32_t beside_ink=0xb9f8dbu,standing=0xe9d49fu;
+    /* The bitmap font gives every pixel of a letter the ink itself. The
+     * Neuronte letters have soft edges, so there a pixel counts when it is
+     * close to the ink, and the count is taken over what was there before
+     * the name. "DJ" is the shortest name. */
+#ifdef ZELL_RENDER_NEURONTE
+    const int within=48,need=12;
+#else
+    const int within=0,need=24;
+#endif
+    sr_canvas canvas;
+    assert(sr_canvas_init(&canvas,1600,1100));
+    for(size_t i=0;i<sizeof who/sizeof who[0];i++){
+        int id=who[i].station;
+        float wx=zell_stations[id].x*(float)ZELL_WORLD_W,wy=zell_stations[id].y*(float)ZELL_WORLD_H;
+        float sx,sy;
+        zell_scene s;
+        size_t k;
+        zell_scene_init(&s,1600,1100);zell_desktop_init(&s);
+        s.room=who[i].room;s.mode=ZELL_MODE_WALK;s.leave=false;s.mouse_valid=false;
+        assert(zell_desktop_station_visible(&s,id));
+        /* Somewhere in the room that is not beside this character. */
+        for(k=0;k<sizeof away/sizeof away[0];k++){
+            s.x=wx+away[k][0];s.y=wy+away[k][1];
+            if(s.x>120&&s.x<ZELL_WORLD_W-120&&s.y>160&&s.y<ZELL_WORLD_H-120&&zell_desktop_near(&s)!=id)break;
+        }
+        assert(k<sizeof away/sizeof away[0]);
+        zell_draw(&s,&canvas);
+        assert(s.room_view.scale==1.f);
+        zell_world_to_screen(&s,wx,wy,&sx,&sy);
+        /* The row a name is written on, under the feet. It stops short of
+         * the "Enter: ..." line that the rooms downstairs add below it. */
+        zell_rect under={(int)sx-90,(int)sy+4,180,32};
+        int ink_away=ink_count(&canvas,under,beside_ink,within);
+        int standing_away=ink_count(&canvas,under,standing,0);
+        /* The Key Master stands over a floor display whose title is written
+         * in the colour the standing names had, so that colour is not looked
+         * for under him. */
+        bool gold_floor=id==31;
+        if((!gold_floor&&standing_away)||ink_count(&canvas,under,beside_ink,0))
+            fprintf(stderr,"%s carries a name with Kilix away\n",zell_stations[id].name);
+        assert(gold_floor||standing_away==0);
+        assert(ink_count(&canvas,under,beside_ink,0)==0);
+        for(k=0;k<sizeof beside/sizeof beside[0];k++){
+            s.x=wx+beside[k][0];s.y=wy+beside[k][1];
+            if(zell_desktop_near(&s)==id)break;
+        }
+        assert(k<sizeof beside/sizeof beside[0]);
+        zell_draw(&s,&canvas);
+        zell_world_to_screen(&s,wx,wy,&sx,&sy);
+        under=(zell_rect){(int)sx-90,(int)sy+4,180,32};
+        int ink_beside=ink_count(&canvas,under,beside_ink,within)-ink_away;
+        if(getenv("ZELL_TEST_SHOW"))fprintf(stderr,"%-14s room %d: %d px of name ink beside (%d there before), %d standing\n",zell_stations[id].name,who[i].room,ink_beside,ink_away,ink_count(&canvas,under,standing,0));
+        if(ink_beside<need)fprintf(stderr,"%s shows no name with Kilix beside\n",zell_stations[id].name);
+        assert(ink_beside>=need);
+        /* Nothing in the old standing colour comes with it. */
+        assert(ink_count(&canvas,under,standing,0)<=standing_away);
+    }
+    sr_canvas_free(&canvas);
+}
+
 int main(void) {
     zell_scene s;
     zell_controls c={0};
@@ -1900,6 +1979,7 @@ int main(void) {
     test_obstacles();
     test_workshop_hop();
     test_theater();
+    test_names_show_only_beside_kilix();
     puts("desktop world, camera, alpha, idle/walk animation, launcher and voice: ok");
     return 0;
 }
