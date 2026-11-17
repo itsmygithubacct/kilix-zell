@@ -20,6 +20,10 @@ These changes are not in the 0.1.1 runtime archive that Plebian-OS 0.2.3 pins.
 - A mana value set by hand is retired for good by a good automatic reading taken after it. It used to come back once that reading went stale or a later reading failed, and the console and the MANA bar could disagree about it. `show-mana` applies the same rule.
 - Keep two writers of the hand values apart with a lock, read a damaged `mana-manual.json` as nothing set, take a value dated ahead of the clock as set now, and give the Command computer's scripts the state folder's full path.
 - The Command computer's terminal keeps its SHELL labels when it is minimised and restored from another station, and the Command Center's way out is no longer selected by Enter at one invisible point of the bottom edge.
+- A mana value set by hand remembers the automatic reading it was set over, so that reading can never retire it, whatever the clocks said. A clock that ran fast and was corrected could delete a value set after the reading.
+- The MANA bar and the Mana console agree when a provider snapshot publishes percentages: what the person set by hand comes first in both.
+- The automatic mana reading installs nothing even when the Claudex copy vanishes after it was seen. A look for Claudex gives Kilix five seconds, and output from Kilix that is not a command's path (not text, a folder, a path no file system holds) is refused instead of ending the room's monitor.
+- The console's snapshot and mana line go out in one write, and a damaged reading in Claudex's cache or a deeply nested `mana-manual.json` reads as nothing instead of raising.
 
 ## 0.1.1 — 2026-11-13
 

@@ -88,7 +88,7 @@ class ManaTests(unittest.TestCase):
     def test_background_refresh_reads_once_with_the_freshness_limit(self):
         calls = []
 
-        def fake(*words, timeout=150):
+        def fake(*words, timeout=150, install=True):
             calls.append(words)
             return SimpleNamespace(returncode=0, stdout='{}', stderr='')
         self.write(codex=ok(19))
@@ -108,7 +108,7 @@ class ManaTests(unittest.TestCase):
     def test_pages_open_through_claudex_in_a_pane_browser(self):
         calls = []
 
-        def fake(*words, timeout=150):
+        def fake(*words, timeout=150, install=True):
             calls.append(words)
             return SimpleNamespace(returncode=0, stdout='{}', stderr='')
         with patch.object(zell_mana, 'claudex', side_effect=fake):
@@ -127,7 +127,7 @@ class ManaTests(unittest.TestCase):
         calls = []
         with patch.object(zell_vitals, 'snapshot', return_value={'details': 'DETAILS'}), \
                 patch.object(zell_mana, 'claudex',
-                             side_effect=lambda *words, timeout=150: calls.append(words)):
+                             side_effect=lambda *words, timeout=150, install=True: calls.append(words)):
             zell_mana.hub(self.ui, 6)
             self.assertEqual(self.state[zell_mana.SETTING], {'enabled': False})
             self.assertIn('now off', self.pages[-1])

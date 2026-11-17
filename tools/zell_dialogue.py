@@ -13,11 +13,21 @@ class Dialogue:
         self.record=None
         self.send_lock=threading.Lock()
 
-    def send(self, kind, text=''):
+    @staticmethod
+    def frame(kind, text=''):
         # Keep terminal controls out of the renderer and bound every wire frame.
         text=''.join(c for c in str(text) if c.isprintable() or c in '\n\t')
+        return kind+text.encode('utf-8')[:3500].hex()+'\n'
+
+    def send(self, kind, text=''):
         with self.send_lock:
-            self.writer.write(kind+text.encode('utf-8')[:3500].hex()+'\n')
+            self.writer.write(self.frame(kind,text))
+            self.writer.flush()
+
+    def send_together(self, frames):
+        """Several frames in one write, for frames that only make sense as a set."""
+        with self.send_lock:
+            self.writer.write(''.join(self.frame(kind,text) for kind,text in frames))
             self.writer.flush()
 
     def reply(self):

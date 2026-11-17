@@ -96,6 +96,13 @@ def console_frames(directory, now=None):
     return frames + [('G', 'mana ' + ' '.join(str(value) for value in numbers))]
 
 
+def send_console(dialogue, directory, now=None):
+    """Send the console's frames in one write. Between the snapshot and the
+    mana line the console's numbers are the snapshot's alone, and a read
+    that fell between two writes could draw them."""
+    dialogue.send_together(console_frames(directory, now))
+
+
 def needs(now=None, directory=None):
     """What the person must do, one line per blocked provider."""
     now = time.time() if now is None else now
@@ -117,26 +124,26 @@ def needs(now=None, directory=None):
     return lines
 
 
-def claudex(*words, timeout=150):
+def claudex(*words, timeout=150, install=True):
     """Run Claudex. When no copy is found, Kilix is asked to install it
-    first: Claudex is installed on first use. The automatic reading does not
-    get here without a copy (see due), so only a task the person asked for
-    installs anything."""
-    script, reason = zell_vitals.claudex_ready()
+    first: Claudex is installed on first use. Only a task the person asked
+    for installs anything; the automatic reading passes install=False."""
+    script, reason = zell_vitals.claudex_ready(install=install)
     if script is None:
-        raise FileNotFoundError(f'Claudex is not installed and Kilix could not install it ({reason})')
+        raise FileNotFoundError(f'Claudex is not installed and Kilix could not install it ({reason})' if install
+                                else f'Claudex was not run: {reason}')
     # The home folder: a project folder makes a client stop at its trust question.
     return subprocess.run([sys.executable, str(script), '--config', str(zell_vitals.config_path()), *words],
                           capture_output=True, text=True, timeout=timeout, cwd=Path.home())
 
 
-def read(max_age):
+def read(max_age, install=True):
     """Read every provider whose last good reading is older than max_age seconds."""
     runtime = zell_vitals.config_path().parent / '.loop'
     runtime.mkdir(parents=True, exist_ok=True)
     with (runtime / 'zell-mana.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        return claudex('usage', 'read', *PROVIDERS, '--max-age', str(int(max_age)), '--json')
+        return claudex('usage', 'read', *PROVIDERS, '--max-age', str(int(max_age)), '--json', install=install)
 
 
 def automatic(ui):
@@ -163,7 +170,9 @@ def due(ui, now=None):
 
 
 def refresh_in_background(ui, now=None):
-    """Start one automatic reading when one is due. Never blocks the caller."""
+    """Start one automatic reading when one is due. The reading itself never
+    blocks the caller. Looking for Claudex can: at most one short question to
+    Kilix every few minutes while no copy exists (zell_vitals.LOOK_TIMEOUT)."""
     if not due(ui, now) or not _refresh.acquire(blocking=False):
         return False
 
@@ -171,7 +180,9 @@ def refresh_in_background(ui, now=None):
         try:
             # Recorded first, so a failing reader is retried at RETRY, not every tick.
             ui.state_write('mana-auto-last.json', {'at': time.time()})
-            read(MAX_AGE)
+            # The copy seen a moment ago may be gone by the time the lock is
+            # had. The automatic reading still installs nothing.
+            read(MAX_AGE, install=False)
         except (OSError, subprocess.SubprocessError):
             pass
         finally:

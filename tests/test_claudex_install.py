@@ -2,12 +2,16 @@
 """Claudex is installed on first use, by Kilix, and never by merely looking.
 
 Every test runs against a stand-in `kilix` command in a temporary folder. No
-test can reach the real one: PATH holds the stand-in and the system tools only.
+test can reach a real one, wherever it is installed: PATH holds only folders
+of this test's own, with the stand-in and links to the five tools it uses.
 """
 import json
 import os
+import shutil
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -59,9 +63,13 @@ class InstallTests(unittest.TestCase):
         self.kilix.chmod(0o755)
         self.clock = [2_000_000.0]
         self.said = []
-        env = {k: v for k, v in os.environ.items() if k not in ('KILIX_ZELL_CLAUDEX', 'KILIX_APP_AUTO_INSTALL')}
-        env.update(PATH=f'{self.base}/bin:/usr/bin:/bin', CLAUDEX_CONFIG=str(self.base / 'loop.json'),
-                   HOME=str(self.base), PYTHONDONTWRITEBYTECODE='1')
+        (self.base / 'tools').mkdir()
+        for tool in ('dirname', 'sleep', 'cat', 'mkdir', 'chmod'):
+            (self.base / 'tools' / tool).symlink_to(shutil.which(tool))
+        # Nothing of the machine's own: no PATH folder outside this test's,
+        # no Kilix or Claudex setting, a home of its own.
+        env = dict(PATH=f'{self.base}/bin:{self.base}/tools', CLAUDEX_CONFIG=str(self.base / 'loop.json'),
+                   HOME=str(self.base), PYTHONDONTWRITEBYTECODE='1', LANG='C.UTF-8')
         for context in (patch.dict(os.environ, env, clear=True),
                         # No Claudex checkout beside this Zell.
                         patch.object(vitals, '__file__', str(self.base / 'a/b/tools/zell_vitals.py')),
@@ -157,6 +165,11 @@ class InstallTests(unittest.TestCase):
 
     def test_without_kilix_nothing_is_tried_or_promised(self):
         self.kilix.unlink()
+        # No other kilix can be found from here, whatever the machine has.
+        for folder in os.environ['PATH'].split(':'):
+            self.assertEqual(Path(folder).parent, self.base)
+        self.assertIsNone(shutil.which('kilix'))
+        self.assertIsNone(shutil.which('claudex'))
         self.assertEqual(vitals.claudex_ready(self.said.append), (None, 'the kilix command was not found'))
         self.assertIsNone(vitals.claudex_script())
         self.assertEqual(self.said, [])
@@ -193,6 +206,58 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(vitals.claudex_catalog(), (self.reader, ''))
         (self.ctl / 'broken').write_text('')
         self.assertEqual(vitals.claudex_catalog(), (None, 'kilix app install kilix-claudex ended with status 3'))
+
+    def test_what_kilix_prints_is_never_an_error_here(self):
+        # The room's monitor looks, and nothing around it catches an error.
+        vitals.claudex_catalog(install=True)
+        (self.ctl / 'pane_loop.py').write_text('')     # beside the folder, not the command
+        state = {}
+        ui = SimpleNamespace(state_read=lambda name, default: state.get(name, default),
+                             state_write=lambda name, value: state.__setitem__(name, value))
+        for said in (b'\xff\xfe not text\n', b'/tmp/a\x00b/claudex\n', f'{self.ctl}/app\n'.encode(),
+                     f'{self.ctl}/app/\n'.encode(), b'/' + b'a' * 5000 + b'/claudex\n', b'\n\n'):
+            (self.ctl / 'says').write_bytes(said)
+            vitals._catalog.update(script=None, asked=None)
+            self.assertIsNone(vitals.claudex_script(), said[:20])
+            vitals._catalog.update(script=None, asked=None)
+            self.assertFalse(zell_mana.due(ui, self.clock[0]), said[:20])
+            script, reason = vitals.claudex_catalog()
+            self.assertIsNone(script, said[:20])
+            self.assertTrue(reason, said[:20])
+
+    def test_a_look_is_given_little_time(self):
+        self.assertLessEqual(vitals.LOOK_TIMEOUT, 10)
+        (self.ctl / 'slow').write_text('')
+        with patch.object(vitals, 'LOOK_TIMEOUT', 0.3), patch.object(vitals, 'INSTALL_TIMEOUT', 30):
+            started = time.monotonic()
+            self.assertIsNone(vitals.claudex_script())
+            script, reason = vitals.claudex_catalog()
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertIn('timed out', reason)
+
+    def test_an_automatic_reading_installs_nothing_even_when_the_copy_vanishes(self):
+        self.assertEqual(vitals.claudex_ready(self.said.append, install=False)[0], None)
+        with self.assertRaises(FileNotFoundError):
+            zell_mana.claudex('usage', 'read', '--json', install=False)
+        with self.assertRaises(FileNotFoundError):
+            zell_mana.read(60, install=False)
+        self.assertEqual((self.install_calls(), self.said), ([], []))
+        # The worker saw a copy when it was due and passes the refusal on.
+        state, asked, done = {}, [], threading.Event()
+        ui = SimpleNamespace(state_read=lambda name, default: state.get(name, default),
+                             state_write=lambda name, value: state.__setitem__(name, value))
+
+        def read(max_age, install=True):
+            asked.append((max_age, install))
+            done.set()
+        with patch.object(vitals, 'claudex_script', return_value=Path('/x/pane_loop.py')), \
+                patch.object(zell_mana, 'read', side_effect=read):
+            self.assertTrue(zell_mana.refresh_in_background(ui, self.clock[0]))
+            self.assertTrue(done.wait(10))
+        self.assertEqual(asked, [(zell_mana.MAX_AGE, False)])
+        deadline = time.monotonic() + 5
+        while zell_mana._refresh.locked() and time.monotonic() < deadline:
+            time.sleep(.01)
 
     def test_an_install_that_hangs_is_given_up(self):
         (self.ctl / 'slow').write_text('')

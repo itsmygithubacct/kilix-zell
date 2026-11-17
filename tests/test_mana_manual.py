@@ -30,12 +30,25 @@ def ok(left, checked):
             'windows': [{'remaining_percent': left, 'resets_at': NOW + 9000}]}
 
 
+def good(left, checked):
+    """A good reading taken at any time, with a window that resets after it."""
+    return {'status': 'ok', 'checked_at': checked, 'windows': [{'remaining_percent': left, 'resets_at': checked + 9000}]}
+
+
+AHEAD = 10 * 86400
+
+
 class StoreTests(unittest.TestCase):
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
         self.state = Path(self.folder.name) / 'state'
+        # Setting a value looks at Claudex's readings. Here there are none,
+        # whatever the machine running the test has.
+        self.environment = patch.dict(os.environ, {'CLAUDEX_CONFIG': str(Path(self.folder.name) / 'loop.json')})
+        self.environment.start()
 
     def tearDown(self):
+        self.environment.stop()
         self.folder.cleanup()
 
     def test_nothing_is_set_at_first(self):
@@ -97,6 +110,9 @@ class StoreTests(unittest.TestCase):
                      '{"providers": {"%s": {"percent": 40, "at": NaN}}}' % P2,
                      '{"providers": {"%s": {"percent": 40, "at": Infinity}}}' % P2,
                      json.dumps({'providers': {P2: {'percent': 40, 'at': True}}}),
+                     # Nested deeper than the reader will follow.
+                     '[' * 100000 + ']' * 100000,
+                     '{"providers": {"%s": %s}}' % (P2, '{"a":' * 100000 + '1' + '}' * 100000),
                      json.dumps({'providers': {P2: {'percent': 40}}}),
                      json.dumps({'providers': {'qwen': good}})):
             (self.state / manual.NAME).write_text(text)
@@ -124,7 +140,11 @@ class StoreTests(unittest.TestCase):
         # Good is judged when it was taken: its window has reset since.
         old = {'status': 'ok', 'checked_at': NOW - 500, 'windows': [{'remaining_percent': 80, 'resets_at': NOW - 100}]}
         self.assertEqual(manual.taken(old), NOW - 500)
+        # A reset time that is no number is no reset time; the reading is read.
+        self.assertEqual(manual.taken({'status': 'ok', 'checked_at': NOW, 'windows': [
+            {'remaining_percent': 50, 'resets_at': 10 ** 400}]}), NOW)
         for entry in (None, 'ok', {}, {'status': 'ok', 'windows': [{'remaining_percent': 5}]},
+                      {'status': 'ok', 'checked_at': NOW, 'windows': [{'remaining_percent': 10 ** 400}]},
                       {'status': 'input_required', 'checked_at': NOW, 'windows': []},
                       {'status': 'ok', 'checked_at': NOW, 'windows': []},
                       {'status': 'ok', 'checked_at': NOW, 'windows': [{'remaining_percent': 150}]},
@@ -178,6 +198,50 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(manual.load(self.state), {P1: (5, NOW), P2: (6, NOW)})
         self.assertEqual(manual.standing(self.state, {P1: ok(19, NOW + 30)}, NOW + 60), {P2: (6, NOW)})
 
+    def test_a_value_remembers_the_reading_it_was_set_over(self):
+        failed = {'status': 'error', 'checked_at': NOW - 7, 'windows': []}
+        manual.set_values(self.state, {P1: 12, P2: 13, P3: 14}, NOW, {P1: good(90, NOW - 50), P2: failed})
+        stored = json.loads((self.state / manual.NAME).read_text())['providers']
+        self.assertEqual({k: v.get('over', 'absent') for k, v in stored.items()}, {P1: NOW - 50, P2: NOW - 7, P3: None})
+        # Setting one again keeps what the others remember.
+        manual.set_values(self.state, {P3: 15}, NOW + 1, {P3: good(1, NOW - 3)})
+        stored = json.loads((self.state / manual.NAME).read_text())['providers']
+        self.assertEqual({k: v.get('over', 'absent') for k, v in stored.items()}, {P1: NOW - 50, P2: NOW - 7, P3: NOW - 3})
+        self.assertEqual(manual.load(self.state), {P1: (12, NOW), P2: (13, NOW), P3: (15, NOW + 1)})
+        # A good reading in place of the failed one it was set over retires it.
+        self.assertEqual(sorted(manual.standing(self.state, {P2: good(50, NOW + 9)}, NOW + 60)), [P1, P3])
+
+    def test_a_clock_that_ran_fast_cannot_delete_a_newer_value(self):
+        # The clock ran ten days fast for a reading and then for the value
+        # set after it. Corrected, the value is dated ahead and is taken as
+        # set now, which is before the reading's stamp. The reading is still
+        # the one the value was set over, and does not retire it.
+        fast = {P1: good(90, NOW + AHEAD - 3600)}
+        manual.set_values(self.state, {P1: 12}, NOW + AHEAD, fast)
+        for now in (NOW, NOW + 5, NOW + AHEAD + 5):
+            self.assertEqual(manual.standing(self.state, fast, now), {P1: (12, NOW)}, now)
+        self.assertEqual(manual.load(self.state), {P1: (12, NOW)})
+        # A reading taken after the correction is another reading, and does.
+        self.assertEqual(manual.standing(self.state, {P1: good(70, NOW + 3600)}, NOW + 4000), {})
+
+    def test_a_reading_stamped_ahead_cannot_delete_a_value_set_now(self):
+        # Only the reading was stamped by the fast clock: set-mana, then show-mana.
+        ahead = {P1: good(90, NOW + AHEAD)}
+        manual.set_values(self.state, {P1: 12}, NOW, ahead)
+        self.assertEqual(manual.standing(self.state, ahead, NOW + 5), {P1: (12, NOW)})
+        self.assertEqual(manual.load(self.state), {P1: (12, NOW)})
+
+    def test_a_file_that_does_not_say_what_a_value_was_set_over(self):
+        # Written by hand or by the first version: only the two times are
+        # compared, and a value dated ahead is left as it is.
+        self.state.mkdir()
+        text = json.dumps({'providers': {P1: {'percent': 12, 'at': NOW + AHEAD}, P2: {'percent': 13, 'at': NOW, 'over': 'noon'}}})
+        (self.state / manual.NAME).write_text(text)
+        older = {P1: good(90, NOW + AHEAD - 3600), P2: good(90, NOW - 5)}
+        self.assertEqual(manual.standing(self.state, older, NOW), {P1: (12, NOW + AHEAD), P2: (13, NOW)})
+        self.assertEqual((self.state / manual.NAME).read_text(), text)
+        self.assertEqual(manual.standing(self.state, {P1: good(90, NOW + AHEAD + 1), P2: good(90, NOW + 1)}, NOW + 2), {})
+
     def test_a_value_set_during_the_look_is_kept(self):
         # The look decides outside the lock, then reads again inside it: a
         # value set in between is newer than the reading and must survive.
@@ -186,7 +250,7 @@ class StoreTests(unittest.TestCase):
 
         class SetJustBefore:
             def __enter__(inner):
-                manual._save(self.state, {P1: (44, NOW + 100)})
+                manual._save(self.state, {P1: (44, NOW + 100, None)})
                 inner.held = real(self.state)
                 return inner.held.__enter__()
 
@@ -236,13 +300,22 @@ class StoreTests(unittest.TestCase):
     def test_the_state_folder_is_the_room_interface_s(self):
         import desktop
         home = Path(self.folder.name)
+        # What the room interface itself works out, in a process of its own.
+        ask = ('import sys; sys.path.insert(0, sys.argv[1]); import desktop, zell_mana_manual; '
+               'print(repr(str(desktop.BASE))); print(repr(str(zell_mana_manual.state_dir())))')
         for env in ({'KILIX_ZELL_STATE': str(home / 'a')}, {'GPU_TERMINAL_HOME': str(home / 'b')},
-                    {'KILIX_ZELL_STATE': str(home / 'a'), 'GPU_TERMINAL_HOME': str(home / 'b')}, {}):
+                    {'KILIX_ZELL_STATE': str(home / 'a'), 'GPU_TERMINAL_HOME': str(home / 'b')}, {},
+                    {'KILIX_ZELL_STATE': 'relative/state'}, {'KILIX_ZELL_STATE': ''},
+                    {'KILIX_ZELL_STATE': '', 'GPU_TERMINAL_HOME': str(home / 'b')}):
             clean = {k: v for k, v in os.environ.items() if k not in ('KILIX_ZELL_STATE', 'GPU_TERMINAL_HOME')}
             with patch.dict(os.environ, {**clean, **env}, clear=True):
                 expected = Path(os.environ.get('KILIX_ZELL_STATE', Path(os.environ.get(
                     'GPU_TERMINAL_HOME', Path.home() / '.local/gpu_terminal')) / 'kilix-zell/state'))
                 self.assertEqual(manual.state_dir(), expected, env)
+            done = subprocess.run([sys.executable, '-c', ask, str(ROOT / 'tools')], capture_output=True, text=True,
+                                  env={**clean, **env, 'PYTHONDONTWRITEBYTECODE': '1'}, cwd=home, timeout=60)
+            room, scripts = done.stdout.splitlines()
+            self.assertEqual(room, scripts, env)
         self.assertIs(manual.PROVIDERS, zell_vitals.PROVIDERS)
         self.assertEqual(len(set(manual.PROVIDERS)), 3)
         self.assertEqual(desktop.MANA_SCRIPTS, SCRIPTS)
@@ -314,9 +387,14 @@ class ShownTests(unittest.TestCase):
         self.assertIn(f'{P2}: 60% remaining (set by hand)', lines[1])
         self.assertIn(f'{P3}: 100% remaining (set by hand)', lines[2])
         self.assertIn('Missing/unknown providers: none', lines)
-        # A newer automatic reading wins here too.
-        manual.set_values(self.state, {P1: 90}, NOW - 600)
+        # A newer automatic reading wins here too: this value was set
+        # before the reading of a minute ago existed.
+        manual.set_values(self.state, {P1: 90}, NOW - 600, {})
         self.assertEqual(zell_vitals.mana(self.ui, NOW)[0], 60)
+        # Set over that reading, it stands.
+        manual.set_values(self.state, {P1: 90}, NOW - 600)
+        self.assertEqual(zell_vitals.mana(self.ui, NOW)[0], 83)
+        manual.clear(self.state, [P1])
         # And an interface with no state folder shows only automatic readings.
         # The provider state it reads is a folder of this test's own.
         apart = Path(self.folder.name) / 'no-hand-values'
@@ -341,6 +419,46 @@ class ShownTests(unittest.TestCase):
         self.write(**{P2: ok(70, NOW - 3600)})
         self.assertEqual(zell_vitals.mana(self.ui, NOW)[0], 70)
         self.assertEqual(manual.load(self.state), {})
+
+    def test_they_agree_when_a_provider_row_is_published(self):
+        # One verified source publishes 80% for the first provider. What the
+        # person set by hand comes before it on the console and in the bar.
+        import zell_providers
+        source = zell_providers._source(P1, 'vault', 'vault:' + 'a' * 32, 'none')
+        source.update(state='verified', percent=80, verified_at=int(NOW) - 60, reason='none')
+        state = zell_providers.blank_state()
+        state['sources'] = [source]
+        zell_providers.write_state(self.state, state)
+        zell_providers.forget(self.state)
+        self.assertEqual(zell_mana.console_frames(self.state, NOW)[-1], ('G', 'mana 80 -1 -1'))
+        self.assertEqual(zell_vitals.mana(self.ui, NOW)[0], 80)
+        manual.set_values(self.state, {P1: 10, P2: 50}, NOW - 30)
+        self.assertEqual(zell_mana.console_frames(self.state, NOW)[-1], ('G', 'mana 10 50 -1'))
+        value, _, lines = zell_vitals.mana(self.ui, NOW)
+        self.assertEqual(value, 30)        # mean of the two the person set
+        self.assertIn(f'{P1}: 10% remaining (set by hand)', lines[0])
+        manual.clear(self.state, [P1])
+        self.assertEqual(zell_mana.console_frames(self.state, NOW)[-1], ('G', 'mana 80 50 -1'))
+        self.assertEqual(zell_vitals.mana(self.ui, NOW)[0], 65)
+        manual.clear(self.state)
+        self.assertEqual(zell_vitals.mana(self.ui, NOW)[0], 80)
+
+    def test_the_console_frames_go_out_in_one_write(self):
+        from zell_dialogue import Dialogue
+        written = []
+        writer = SimpleNamespace(write=written.append, flush=lambda: written.append('flush'))
+        manual.set_values(self.state, {P2: 62}, NOW - 10)
+        zell_mana.send_console(Dialogue(reader=None, writer=writer), self.state, NOW)
+        self.assertEqual(len(written), 2)
+        self.assertEqual(written[1], 'flush')
+        lines = written[0].splitlines()
+        self.assertEqual([(line[0], bytes.fromhex(line[1:]).decode()) for line in lines],
+                         zell_mana.console_frames(self.state, NOW))
+        self.assertEqual(lines[-1], Dialogue.frame('G', 'mana -1 62 -1').rstrip('\n'))
+        # One frame alone is sent as it always was.
+        del written[:]
+        Dialogue(reader=None, writer=writer).send('V', 'a\x1bb')
+        self.assertEqual(written, ['V' + b'ab'.hex() + '\n', 'flush'])
 
     def test_what_the_monitor_sends_for_the_console(self):
         import zell_providers
@@ -497,7 +615,8 @@ class ScriptTests(unittest.TestCase):
     def test_the_monitor_sends_hand_values_to_the_console(self):
         # The room's monitor sends the console's frames for its own state folder.
         source = (ROOT / 'tools/desktop.py').read_text()
-        self.assertIn('for kind,payload in zell_mana.console_frames(BASE):', source)
+        self.assertIn('zell_mana.send_console(DIALOGUE,BASE)', source)
+        self.assertNotIn('zell_mana.console_frames(', source)
         self.assertNotIn('zell_mana.readings(', source)
         self.assertNotIn('zell_providers.monitor_frames(', source)
 
@@ -514,11 +633,23 @@ class ScriptTests(unittest.TestCase):
         self.assertIn(f'{P1}: not set by hand', shown.stdout)
         self.assertIn(f'{P2}: 62% left, set by hand', shown.stdout)
         self.assertEqual(sorted(manual.load(self.state)), [P2])
-        for at in ('9' * 400, '1e18', 'NaN'):
+        for at in ('9' * 400, '1e18', 'NaN', '[' * 100000 + ']' * 100000):
             (self.state / manual.NAME).write_text('{"providers": {"%s": {"percent": 40, "at": %s}}}' % (P2, at))
             shown = self.run_script('show-mana')
-            self.assertEqual((shown.returncode, shown.stderr), (0, ''), at)
+            self.assertEqual((shown.returncode, shown.stderr), (0, ''), at[:8])
             self.assertIn(f'{P2}: not set by hand', shown.stdout)
+            # set-mana repairs it.
+            self.assertEqual(self.run_script('set-mana', P2, '41').returncode, 0, at[:8])
+            self.assertEqual({k: v[0] for k, v in manual.load(self.state).items()}, {P2: 41})
+        # A damaged reading in Claudex's cache is no reading, not a traceback.
+        for window, left in (('{"remaining_percent": %s}' % ('9' * 400), True),
+                             ('{"remaining_percent": 19, "resets_at": %s}' % ('9' * 400), False)):
+            cache.write_text('{"providers": {"%s": {"status": "ok", "checked_at": %r, "windows": [%s]}}}' % (P2, time.time(), window))
+            shown = self.run_script('show-mana')
+            self.assertEqual((shown.returncode, shown.stderr), (0, ''), window[:30])
+            # No percentage is no reading. A reset time that is no number is
+            # no reset time, and that reading is good and newer.
+            self.assertEqual(f'{P2}: 41% left, set by hand' in shown.stdout, left, window[:30])
 
 
 if __name__ == '__main__':

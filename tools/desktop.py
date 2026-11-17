@@ -494,8 +494,7 @@ def desktop(station,action):
             DIALOGUE.send('J',str(status['restart_needed']))
             import zell_mana
             # L5 calls zell_provider_apply for the snapshot; the mana line follows it.
-            for kind,payload in zell_mana.console_frames(BASE):
-                DIALOGUE.send(kind,payload)
+            zell_mana.send_console(DIALOGUE,BASE)
             zell_mana.refresh_in_background(ui)
             from zell_schedule import aggregate
             notices=aggregate();DIALOGUE.send('N',str(notices['count'])+' '+notices['text'])

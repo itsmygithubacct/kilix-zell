@@ -32,14 +32,20 @@ _smoothed = None
 
 
 def number(value):
-    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        return float(value) if math.isfinite(value) else None
+    except OverflowError:
+        # An integer too large for a float: a damaged file, not a number.
+        return None
 
 
 def read_json(path):
     try:
         value = json.loads(path.read_text())
         return value if isinstance(value, dict) else {}
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return {}
 
 
@@ -206,9 +212,14 @@ def mana(ui, now, provider_directory=None):
         except (OSError, ValueError):
             hosted = None
         if hosted is not None:
-            adjusted = zell_providers.verified_mean(hosted['sources'], mode, now)
-            if adjusted is not None:
-                value = adjusted
+            # Published percentages take the place of Claudex's readings, as
+            # on the Mana console, and what the person set by hand comes
+            # before both there and here.
+            known = {row['id']: row['percent'] for row in
+                     zell_providers.published_rows(hosted['sources'], mode, now) if row['percent'] >= 0}
+            if known:
+                known.update({provider: hand[0] for provider, hand in manual.items()})
+                value = round(sum(known.values()) / len(known))
     return value, max(ages) if ages else -1, lines
 
 
@@ -239,6 +250,9 @@ CLAUDEX_APP = 'kilix-claudex'
 CATALOG_RECHECK = 300
 # A first-use install is a small clone; this is generous for a slow line.
 INSTALL_TIMEOUT = 600
+# A look only asks Kilix where its copy is. The room's monitor waits for the
+# answer, so it is given little time.
+LOOK_TIMEOUT = 5
 _catalog = {'script': None, 'asked': None}
 
 
@@ -258,17 +272,25 @@ def claudex_catalog(install=False):
         env['KILIX_APP_AUTO_INSTALL'] = '0'
     try:
         done = subprocess.run([kilix, 'app', 'install', CLAUDEX_APP], stdin=subprocess.DEVNULL, capture_output=True,
-                              text=True, timeout=INSTALL_TIMEOUT if install else 60, env=env, cwd=Path.home())
+                              text=True, errors='replace', timeout=INSTALL_TIMEOUT if install else LOOK_TIMEOUT,
+                              env=env, cwd=Path.home())
     except (OSError, subprocess.SubprocessError) as error:
         return None, str(error)
     printed = done.stdout.strip().splitlines()
     if done.returncode or not printed:
         said = done.stderr.strip().splitlines()
         return None, said[-1][:300] if said else f'kilix app install {CLAUDEX_APP} ended with status {done.returncode}'
-    command = Path(printed[-1].strip())
-    reader = command.resolve().with_name('pane_loop.py') if command.is_absolute() else None
-    if reader is None or not reader.is_file():
-        return None, f'Kilix named {printed[-1].strip()[:200]!r}, which has no usage reader beside it'
+    named = printed[-1].strip()
+    try:
+        # Kilix prints the command's full path. Anything else is not believed:
+        # a relative path, a folder, a path no file system can hold.
+        command = Path(named)
+        reader = command.resolve().with_name('pane_loop.py') if command.is_absolute() and command.is_file() else None
+        found = reader is not None and reader.is_file()
+    except (OSError, ValueError):
+        found = False
+    if not found:
+        return None, f'Kilix named {named[:200]!r}, which is not a Claudex command with its usage reader beside it'
     return reader, ''
 
 
@@ -298,13 +320,16 @@ def claudex_script():
     return _catalog['script']
 
 
-def claudex_ready(report=None):
+def claudex_ready(report=None, install=True):
     """The usage reader for a task the person asked for, as (reader or None,
     reason). When no copy is found, Kilix is asked to install the catalog's
-    pinned copy: Claudex is installed on first use, not with Zell."""
+    pinned copy: Claudex is installed on first use, not with Zell. With
+    install false (the automatic reading) nothing is ever installed."""
     script = claudex_script()
     if script is not None:
         return script, ''
+    if not install:
+        return None, 'it is not installed, and the automatic reading installs nothing'
     if report is None:
         # The station's page shows what its helper prints.
         def report(text):
