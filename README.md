@@ -1,8 +1,9 @@
 # Zell Neuronte 0.1.1
 
 A walkable Kilix desktop inside a terminal pane. Kilix is an orange firekitten
-in a green adventurer outfit. Six staff members help with questions, logs,
-settings, system health, media, and documents.
+in a green adventurer outfit. Six staff members in the cave help with
+questions, logs, settings, system health, media, and documents. More staff
+work in the rooms below it.
 
 The cave and the original downstairs rooms use a fixed **1536×1024 world**.
 Characters and furniture keep their size. The camera follows Kilix in those
@@ -27,10 +28,19 @@ Requires Kitty graphics, C11, zlib, libm and Python 3. The default Neuronte
 dependency is `~/projects/neuronte`, with its library already built and
 `weights/neuronte-split-v4.nrt` present. `NEURONTE` and `NEURONTE_WEIGHTS`
 override build paths. `ZELL_NEURONTE_WEIGHTS` overrides the runtime weight file.
-The build does not modify that dependency.
+The build does not modify that dependency. It records which checkout and
+weights file it used in `build/neuronte.ident`, and compiles the Neuronte
+objects again when either changes.
+
+Zell 0.1.1 was reviewed and packaged against Neuronte commit
+`4134bf909594cf5c774f49677405fd1e22c4e2e4`. A checkout that contains that
+commit matches the packaged desktop. An older one still builds, without the
+changes the packaged one has.
 
 `make` also builds the original `zell` scene. The new desktop is in
-`zell-neuronte`. This is a local RC9 candidate, not a Plebian-OS release pin.
+`zell-neuronte`. Plebian-OS 0.2.3 carries Zell 0.1.1 as an offline runtime
+archive pinned by its digest; see `make runtime` below. Changes made after
+that archive was built are listed under Unreleased in `CHANGELOG.md`.
 
 ## Controls
 
@@ -217,7 +227,7 @@ remains an explicit user action.
 `ZELL_NEURONTE_HOME` overrides the application path. `DESTDIR`,
 `ZELL_INSTALL_DIR` and `ZELL_BIN_DIR` support packaging/staging. `make runtime`
 creates a relocatable archive under `build/`, with an exact file manifest and
-dependency notices. The RC9 OS carrier pins its archive digest, verifies all
+dependency notices. Plebian-OS 0.2.3 pins that archive's digest, verifies all
 files before installation, and carries it through the offline installer.
 
 ### Running
@@ -323,8 +333,6 @@ fill levels. Enter shows capacity and a read-only file browser. The eighth bin
 opens overflow disks if needed. Disconnected or inaccessible disks are reported;
 no cleanup or deletion is performed by digging through a bin.
 
-New work is on RC9 branches. Frozen RC8 release refs are unchanged.
-
 ### Key Master
 
 The Command Center's locksmith manages `kilix-secrets`: initialize and unlock
@@ -420,7 +428,7 @@ Timekeeper uses persistent [systemd user timers](https://www.freedesktop.org/sof
 They run while the user service manager is available and catch up missed times
 at login. Scheduled command arguments are explicit; shell expansion is disabled.
 Herald retains 200 notices and verifies process identity before cancelling a job.
-The RC9 image includes the station tools; additional direct dependencies are
+The Plebian-OS 0.2.3 image includes the station tools; additional direct dependencies are
 `upower`, `bluez`, `scrot`, `brightnessctl`, `power-profiles-daemon`, `nftables`
 and `wtmpdb`. Existing audio uses PulseAudio-compatible device controls.
 

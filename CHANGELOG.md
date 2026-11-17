@@ -1,5 +1,71 @@
 # Changelog
 
+## Unreleased
+
+These changes are not in the 0.1.1 runtime archive that Plebian-OS 0.2.3 pins.
+
+- Keep the health tests independent of the machine they run on. The combined health test read the live restart check and failed wherever a newer kernel or driver was waiting. A second test covers the restart cap.
+- Compile the Neuronte objects again when a build names another Neuronte checkout or weights file. The earlier build kept the objects from the previous checkout.
+- Name the Neuronte commit 0.1.1 was reviewed against, and say where the release carries Zell.
+
+## 0.1.1 — 2026-11-13
+
+Rooms:
+
+- Add the Vault and the Workshop downstairs, beside the Command Center and the Laundry. The four cave hatches match in size and spacing.
+- Add a game room, a movie theater, a meditation room and a library through a second row of hatches. Each fits the pane between the top bar and the status line, and has a foreground layer Kilix walks behind.
+- Fit every room on smaller panes with one transform shared by drawing, collision and clicking.
+- Walk onto the stairs and behind standing things.
+- Replace the coded room placeholders with generated backgrounds, doors, stairs, monitor frames, drive bins and floor panels. Git Wizard, Pilot and Key Master have their own four-frame animations.
+
+Movie theater:
+
+- Open a video file, a folder of videos, or an http or https page on the theater screen.
+- Choose Chrome, Chromium or Firefox ESR for a page. A missing browser is installed in the floating terminal after a confirmation, and only the one chosen.
+- Play, pause and queue videos. Each queued video keeps its own position; one source plays at a time.
+- Show captions from a matching .srt or .vtt file in a separate caption bar. Embedded subtitle tracks are not read.
+- Toggle fullscreen with F11 and leave it with Escape.
+- Pop the active video out into the floating window and dock it back.
+
+Staff and tasks:
+
+- Add ten operating-system staff: Gatekeeper, Signalman, Porter, Laundress, Merchant, Herald, Timekeeper, Sentinel, Vault Keeper and Tinkerer. Their tasks run in private floating terminals and ask for a typed word before a change.
+- Add Key Master, backed by kilix-secrets: set up, unlock, recover and lock the vault, save keys and logins, copy a field to the clipboard for 20 seconds, and launch a coding client with a saved key.
+- Search every room's actions by name from the Tab launcher.
+- Add a task board and opt-in conversation history on the Noticeboard. Key Master and terminal contents are never saved.
+- Show each new notice on screen for eight seconds.
+- Add a Workshop computer that opens a shell in the floating window, with a stool Kilix hops onto.
+
+Command Center:
+
+- Enlarge the five screens and show bounded text previews of their coding sessions, taken only from verified panes.
+- Add the YOLO switch, which reads and saves Kilix's shared setting.
+- Add the agent-updates switch: choose installed clients and update them in the floating terminal.
+- Add the Mana console, which shows what each coding provider has left and reads again every 30 minutes unless that is turned off.
+- Save Pilot fleets with their launch settings and startup instructions sealed in the vault. The saved file keeps references only, and older plaintext files are refused.
+
+Cave:
+
+- Show illustrated weather on the wall map from the weather widget's cached reading.
+- Add three levers below the map for voice, dictation and music. DJ playback and the background track pause each other.
+- Mount the Neuronte shell lever on the east wall. The shell follows later pane resizes and ends when its program exits.
+- Give the DJ a text browser in the floating window for finding playlists and creators.
+- Add minimize and maximize buttons to the floating window, with a bottom-row button that reopens it.
+
+Fixes:
+
+- Keep menu choices intact when a Mana reading arrives. Both used the same message letter, so a reading could select the wrong action.
+- Keep the theater picture when folder browsing or a rejected file leaves the current video unchanged.
+- Route automatic local-model questions to model names that are installed and supported.
+- Make archive-only folders a per-machine setting. Nothing is reserved by default.
+
+Packaging and tools:
+
+- `make install` installs the Neuronte desktop, its helper scripts, font weights, terminal renderer, vault binaries, user service units and the `zell` command.
+- `make runtime` writes a relocatable archive with an exact file manifest and dependency notices.
+- Snapshots are written as PNG beside every PPM.
+- The generated art is compiled as one file per source sheet.
+
 ## 0.1.0 — 2026-11-11
 
 - Add Health/Mana/Fatigue bars, health-hover reasons, OS-age and opt-in dirty-file penalties, and resource-sensitive movement.
