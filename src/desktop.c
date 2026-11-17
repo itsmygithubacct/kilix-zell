@@ -162,6 +162,9 @@ int zell_desktop_near(const zell_scene *s) {
  int best=-1;float dist=96.0f;
  for(int i=0;i<ZELL_STATIONS;i++){
   if(!zell_desktop_station_visible(s,i))continue;
+  /* The Command Center's way out is its whole bottom edge and has nothing
+   * drawn at one point, so it is walked through, never selected. */
+  if(i==28&&s->room==1)continue;
   float dx=s->x-zell_stations[i].x*ZELL_WORLD_W;
   float dy=s->y-zell_stations[i].y*ZELL_WORLD_H;
   float d=sqrtf(dx*dx+dy*dy);
@@ -484,7 +487,9 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
      float ax=s->x-zell_stations[i].x*ZELL_WORLD_W,ay=s->y-zell_stations[i].y*ZELL_WORLD_H;
      if(ax*ax+ay*ay<26*26){s->x=oldx;s->y=oldy;blocked=true;break;}
     }
-    if(blocked)break;
+    /* The Command Center's open bottom is a way out on a blocked step too:
+     * sliding down a side wall leaves the room, never the world. */
+    if(blocked&&!(s->room==1&&zell_desktop_on_stairs(s)))break;
     if(s->room==0&&s->y/(float)ZELL_WORLD_H>.975f)s->leave=true;
     if(zell_desktop_on_stairs(s)){open_station(s,28);return 1;}
    }

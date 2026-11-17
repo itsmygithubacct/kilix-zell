@@ -161,7 +161,7 @@ def mana(ui, now, provider_directory=None):
     import zell_mana_manual
     # Values set by hand at the Command computer live in Zell's state folder.
     base = getattr(ui, 'BASE', None)
-    manual = zell_mana_manual.load(base if isinstance(base, (str, Path)) else None)
+    manual = zell_mana_manual.standing(base if isinstance(base, (str, Path)) else None, entries, now)
     for provider in PROVIDERS:
         entry = entries.get(provider, {})
         entry = entry if isinstance(entry, dict) else {}
@@ -172,7 +172,7 @@ def mana(ui, now, provider_directory=None):
         value = None if failed or not checked else provider_value(entry, now)
         stamp = max(checked or 0, number(attempt.get('at')) or 0)
         hand = manual.get(provider)
-        if zell_mana_manual.stands(hand, value, checked):
+        if hand is not None:
             values.append(hand[0])
             ages.append(max(0, int(now - hand[1])))
             lines.append(f'{provider}: {hand[0]}% remaining (set by hand)'

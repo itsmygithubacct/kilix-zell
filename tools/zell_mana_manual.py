@@ -3,10 +3,13 @@
 A person can tell Zell what a coding provider has left when no automatic
 reading can. The numbers live in Zell's own state folder. A value set by hand
 stands until it is cleared, set again, or a good automatic reading is taken
-after it.
+after it. Such a reading retires the value for good: it does not come back
+when that reading later goes stale or a later reading fails.
 """
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import math
 import os
@@ -19,10 +22,15 @@ import zell_vitals
 # The providers the Mana console shows, in its order.
 PROVIDERS = zell_vitals.PROVIDERS
 NAME = 'mana-manual.json'
+LOCK = 'mana-manual.lock'
+# No time a value was set lies beyond this (the year 3000). A damaged file
+# with a larger number is read as nothing set, not as an error.
+LATEST = 32503680000
 
 
 def state_dir():
-    """Zell's state folder: the same rule the room interface uses."""
+    """Zell's state folder: the rule the room interface uses. An empty
+    KILIX_ZELL_STATE counts as not set."""
     home = os.environ.get('GPU_TERMINAL_HOME') or Path.home() / '.local/gpu_terminal'
     return Path(os.environ.get('KILIX_ZELL_STATE') or Path(home) / 'kilix-zell/state')
 
@@ -34,7 +42,9 @@ def _entry(value):
     percent, at = value.get('percent'), value.get('at')
     if type(percent) is not int or not 0 <= percent <= 100:
         return None
-    if type(at) not in (int, float) or not math.isfinite(at) or at < 0:
+    # The range is checked first: it is exact for an integer of any size,
+    # and math.isfinite raises on one too large for a float.
+    if type(at) not in (int, float) or not 0 <= at <= LATEST or not math.isfinite(at):
         return None
     return percent, float(at)
 
@@ -56,6 +66,19 @@ def load(directory):
         if entry is not None:
             found[provider] = entry
     return found
+
+
+@contextlib.contextmanager
+def _locked(directory):
+    """One writer at a time: a change reads the file, alters it and saves it."""
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(directory / LOCK, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
 
 
 def _save(directory, values):
@@ -116,9 +139,10 @@ def set_values(directory, wanted, now=None):
         checked[provider] = (value, now)
     if not checked:
         raise ValueError('nothing to set')
-    values = load(directory)
-    values.update(checked)
-    _save(directory, values)
+    with _locked(directory):
+        values = load(directory)
+        values.update(checked)
+        _save(directory, values)
     return values
 
 
@@ -128,21 +152,74 @@ def clear(directory, providers=None):
     for provider in names:
         if provider not in PROVIDERS:
             raise ValueError(f'{provider!r} is not a provider; use ' + ', '.join(PROVIDERS))
-    values = load(directory)
-    removed = [provider for provider in names if values.pop(provider, None) is not None]
-    if removed or (Path(directory) / NAME).exists():
+    if not (Path(directory) / NAME).exists():
+        # Nothing was ever set here, and forgetting nothing makes no folder.
+        return []
+    with _locked(directory):
+        values = load(directory)
+        removed = [provider for provider in names if values.pop(provider, None) is not None]
         _save(directory, values)
     return removed
 
 
-def stands(manual, automatic, checked):
-    """Whether a value set by hand is the one to show.
+def automatic_entries():
+    """The automatic readings Claudex keeps, one entry per provider."""
+    cache = zell_vitals.read_json(zell_vitals.config_path().parent / '.loop/usage-pages.json')
+    entries = cache.get('providers', {}) if isinstance(cache, dict) else {}
+    return entries if isinstance(entries, dict) else {}
 
-    automatic is the automatic reading (below zero when there is none) and
-    checked is when it was taken. A good automatic reading taken after the
-    value was set replaces it.
+
+def taken(entry):
+    """When an automatic reading was taken, if it was a good one then; else None.
+
+    Good is judged at the time of the reading. A reading whose window has
+    since reset was still a real answer when it was taken.
     """
-    if manual is None:
-        return False
-    newer = type(checked) in (int, float) and checked > manual[1]
-    return not (automatic is not None and automatic >= 0 and newer)
+    if not isinstance(entry, dict):
+        return None
+    checked = entry.get('checked_at')
+    if type(checked) not in (int, float) or not 0 <= checked <= LATEST or not math.isfinite(checked):
+        return None
+    return float(checked) if zell_vitals.provider_value(entry, checked) is not None else None
+
+
+def _settle(values, entries, now):
+    """Apply the rules to loaded values. True when something changed."""
+    changed = False
+    for provider in list(values):
+        percent, at = values[provider]
+        if at > now:
+            # Set while the clock ran ahead. It was set no later than now.
+            values[provider] = (percent, at) = (percent, float(now))
+            changed = True
+        reading = taken(entries.get(provider)) if isinstance(entries, dict) else None
+        if reading is not None and reading > at:
+            del values[provider]
+            changed = True
+    return changed
+
+
+def standing(directory, entries=None, now=None):
+    """The values set by hand that stand now: {provider: (percent left, time set)}.
+
+    entries are the automatic readings (Claudex's own when not given). A good
+    automatic reading taken after a value was set retires that value, and the
+    retirement is written down, so the value cannot come back later. Where the
+    folder cannot be written the answer is still right for this moment.
+    """
+    if directory is None:
+        return {}
+    now = time.time() if now is None else float(now)
+    entries = automatic_entries() if entries is None else entries
+    values = load(directory)
+    if not values or not _settle(dict(values), entries, now):
+        return values
+    try:
+        with _locked(directory):
+            # Read again inside the lock: a value may just have been set.
+            values = load(directory)
+            if _settle(values, entries, now):
+                _save(directory, values)
+    except OSError:
+        _settle(values, entries, now)
+    return values

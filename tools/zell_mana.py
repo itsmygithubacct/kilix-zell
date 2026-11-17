@@ -45,23 +45,55 @@ def reading(entry, now):
 
 def by_hand(entries, now, directory):
     """The values set by hand that stand now: {provider: percent left}."""
-    standing = {}
-    for provider, manual in zell_mana_manual.load(directory).items():
-        entry = entries.get(provider)
-        checked = entry.get('checked_at') if isinstance(entry, dict) else None
-        if zell_mana_manual.stands(manual, reading(entry, now), checked):
-            standing[provider] = manual[0]
-    return standing
+    return {provider: percent for provider, (percent, _) in
+            zell_mana_manual.standing(directory, entries, now).items()}
 
 
-def readings(now=None, directory=None):
+def readings(now=None, directory=None, rows=None):
     """One number per provider. directory is Zell's state folder, where the
-    values set by hand at the Command computer are kept."""
+    values set by hand at the Command computer are kept. rows are the
+    percentages a provider snapshot publishes, {provider: percent}.
+
+    What the person said comes first, then a published percentage, then
+    Claudex's own reading."""
     now = time.time() if now is None else now
     entries = cache()
     standing = by_hand(entries, now, directory)
-    return [standing[provider] if provider in standing else reading(entries.get(provider), now)
+    rows = rows or {}
+    return [standing[provider] if provider in standing
+            else rows[provider] if type(rows.get(provider)) is int and 0 <= rows[provider] <= 100
+            else reading(entries.get(provider), now)
             for provider in PROVIDERS]
+
+
+def published(frames):
+    """The percentages in provider snapshot frames: {provider: percent}."""
+    rows = {}
+    for kind, payload in frames:
+        if kind != 'G':
+            continue
+        for line in str(payload).splitlines()[1:]:
+            words = line.split()
+            try:
+                rows[words[0]] = int(words[1])
+            except (IndexError, ValueError):
+                continue
+    return rows
+
+
+def console_frames(directory, now=None):
+    """What the room's monitor sends for the Mana console, in order.
+
+    The provider snapshot goes first. The interface sets the console's three
+    numbers from a snapshot's rows alone, so a snapshot with no row for a
+    provider blanks that number; the mana line goes last and has the final
+    word. It carries the word "mana": a snapshot with no rows is three bare
+    integers too.
+    """
+    import zell_providers
+    frames = list(zell_providers.monitor_frames(directory, now))
+    numbers = readings(now, directory, published(frames))
+    return frames + [('G', 'mana ' + ' '.join(str(value) for value in numbers))]
 
 
 def needs(now=None, directory=None):

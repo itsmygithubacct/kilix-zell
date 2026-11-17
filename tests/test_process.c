@@ -218,7 +218,7 @@ static void test_menu_and_mana(zell_scene *scene){
     assert(strcmp(scene->service_choices[2],"Filter (all)")==0);
     expect_mana(scene,1,1,1);
     scene->service_index=2;
-    frame_line(line,sizeof line,'G',"10 20 30");
+    frame_line(line,sizeof line,'G',"mana 10 20 30");
     peer_pump(&mon,&mon_svc,scene,line);
     expect_mana(scene,10,20,30);
     assert(scene->service_count==3&&scene->service_index==2);
@@ -267,9 +267,9 @@ static void test_menu_and_mana(zell_scene *scene){
     assert(mon_svc.length==0&&job_svc.length==0);
     peer_pump(&mon,&mon_svc,scene,"Gzz\n");
     peer_pump(&job,&job_svc,scene,"Mzz\n");
-    frame_line(line,sizeof line,'G',"10 20 no");
+    frame_line(line,sizeof line,'G',"mana 10 20 no");
     peer_pump(&mon,&mon_svc,scene,line);
-    frame_line(line,sizeof line,'G',"8 8 8");
+    frame_line(line,sizeof line,'G',"mana 8 8 8");
     peer_pump(&job,&job_svc,scene,line);
     scene->hp=42;scene->restart_needed=true;
     frame_line(line,sizeof line,'V',"9 9 9 9 9");
@@ -280,7 +280,7 @@ static void test_menu_and_mana(zell_scene *scene){
     expect_mana(scene,4,5,6);
     expect_numeric_menu(scene);
     {
-        const char *prefix="G3720382039"; /* "7 8 9", which must not apply */
+        const char *prefix="G6d616e61203720382039"; /* "mana 7 8 9", which must not apply */
         size_t prefix_len=strlen(prefix),total=9000;
         char *big=malloc(total+2);
         assert(big);
@@ -294,11 +294,11 @@ static void test_menu_and_mana(zell_scene *scene){
     }
     expect_mana(scene,4,5,6);
     expect_numeric_menu(scene);
-    frame_line(line,sizeof line,'G',"-2 -3 101");
+    frame_line(line,sizeof line,'G',"mana -2 -3 101");
     peer_pump(&mon,&mon_svc,scene,line);
     expect_mana(scene,-2,-1,-1);
     expect_numeric_menu(scene);
-    frame_line(line,sizeof line,'G',"3 3 3");
+    frame_line(line,sizeof line,'G',"mana 3 3 3");
     line[strlen(line)-1]=0; /* no newline: the frame is still partial */
     peer_pump(&mon,&mon_svc,scene,line);
     assert(mon_svc.length>0);
@@ -521,9 +521,27 @@ static void test_contract_frames(zell_scene *scene){
     assert(scene->provider_count==0&&scene->provider_generation==0);
     assert(scene->provider_check_generation==0&&scene->provider_check_running==0);
     assert(scene->fleet_count==0&&!scene->update_job_active);
-    send_text(&mon,&mon_svc,scene,'G',"10 20 30");
+    send_text(&mon,&mon_svc,scene,'G',"mana 10 20 30");
     expect_mana(scene,10,20,30);
     assert(scene->provider_count==0&&scene->provider_generation==0);
+    /* Three bare integers are never mana. They are a provider snapshot's
+     * header, and a snapshot with no rows is nothing but that header. */
+    send_text(&mon,&mon_svc,scene,'G',"19 62 5");
+    expect_mana(scene,10,20,30);
+    assert(scene->provider_count==0&&scene->provider_generation==0);
+    send_text(&mon,&mon_svc,scene,'G',"1 4 0");
+    assert(scene->provider_count==0&&scene->provider_generation==4);
+    expect_mana(scene,-1,-1,-1);
+    /* The mana line follows the snapshot and has the last word. */
+    send_text(&mon,&mon_svc,scene,'G',"mana 19 62 5");
+    expect_mana(scene,19,62,5);
+    assert(scene->provider_count==0&&scene->provider_generation==4);
+    send_text(&mon,&mon_svc,scene,'G',"mana7 8 9");
+    send_text(&mon,&mon_svc,scene,'G',"mana 1 2");
+    send_text(&mon,&mon_svc,scene,'G',"mana 1 2 3 4");
+    expect_mana(scene,19,62,5);
+    send_text(&mon,&mon_svc,scene,'G',"mana 10 20 30");
+    scene->provider_generation=0;
     expect_numeric_menu(scene);
     send_text(&mon,&mon_svc,scene,'G',versioned);
     expect_provider_snapshot(scene);
@@ -597,7 +615,7 @@ static void test_contract_frames(zell_scene *scene){
         assert(!strcmp(scene->provider_rows[5].id,"gemini")&&scene->provider_rows[5].percent==-1);
         assert(!strcmp(scene->provider_rows[6].id,"elevenlabs")&&scene->provider_rows[6].percent==0);
         expect_mana(scene,5,6,7);
-        /* A bare three-integer line is legacy mana. The extra row forces the versioned parser. */
+        /* More rows than the header allows: refused whole. */
         send_text(&mon,&mon_svc,scene,'G',"1 71 33\ncodex 1 verified api unknown");
         assert(scene->provider_count==7&&scene->provider_generation==70);
         expect_mana(scene,5,6,7);

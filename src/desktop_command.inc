@@ -19,7 +19,14 @@ static void zell_room_logical(const zell_scene *s,int *left,int *top,int *right,
   *left=0;*top=0;*right=ZELL_WORLD_W;*bottom=ZELL_WORLD_H;
   return;
  }
- /* Command Center and the older downstairs rooms: floor corridor x=.135W..865W,
+ /* The Command Center keeps the Command computer in its bottom left corner
+  * and the Key Master in its bottom right, both outside the floor corridor.
+  * A narrow pane must still show them, so the whole width is fitted. */
+ if(s->room==1){
+  *left=0;*right=ZELL_WORLD_W;*top=64;*bottom=ZELL_WORLD_H;
+  return;
+ }
+ /* The older downstairs rooms: floor corridor x=.135W..865W,
   * y=64 through the exit. The Workshop stool (opaque from y=291) and the
   * stair corridors are inside this rectangle. */
  *left=(int)(0.135f*(float)ZELL_WORLD_W);

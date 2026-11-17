@@ -657,12 +657,16 @@ static void desktop_service(const zell_scene *s,sr_canvas *c){
    sr_fill_rect(c,(float)l.frame.x,(float)l.frame.y,(float)l.frame.w,(float)l.frame.h,0x10232cu,1);
    sr_stroke_rect(c,(float)l.frame.x,(float)l.frame.y,(float)l.frame.w,(float)l.frame.h,2,0x74b8a9u,1);
    sr_canvas frame;sr_canvas_wrap(&frame,s->terminal_pixels,w,h);sr_blit_scaled(c,&frame,x,y,w,h,1);
-   char title[160];snprintf(title,sizeof title,"%s / %s",s->terminal_title[0]?s->terminal_title:"ZELL",s->station==ZELL_COMMAND_COMPUTER?"SHELL":s->terminal_private?"PRIVATE TERMINAL":"INTERACTIVE TERMINAL");
+   /* The Command computer's shell is known by the terminal's own title,
+    * which stays with it: Kilix may stand at another station by the time a
+    * minimised terminal is brought back. */
+   bool shell=!strcmp(s->terminal_title,zell_stations[ZELL_COMMAND_COMPUTER].name);
+   char title[160];snprintf(title,sizeof title,"%s / %s",s->terminal_title[0]?s->terminal_title:"ZELL",shell?"SHELL":s->terminal_private?"PRIVATE TERMINAL":"INTERACTIVE TERMINAL");
    desktop_text(c,x,y-23,title,0xe5cf98u,w-104);
    desktop_button(s,c,&l.minimize,0);
    desktop_button(s,c,&l.maximize,s->terminal_maximized?2:1);
    desktop_button(s,c,&l.close,3);
-   desktop_text(c,x,y+h+7,s->station==ZELL_COMMAND_COMPUTER?"Keyboard goes to the shell | type exit to leave":s->terminal_private?"Hidden secret input | Ctrl-C cancels":"Type here for sudo | Ctrl-C interrupts command",0xabc8c0u,w);
+   desktop_text(c,x,y+h+7,shell?"Keyboard goes to the shell | type exit to leave":s->terminal_private?"Hidden secret input | Ctrl-C cancels":"Type here for sudo | Ctrl-C interrupts command",0xabc8c0u,w);
   }else desktop_label(c,c->w/2,c->h/2,"Opening Neuronte terminal...",0xc9e4d5u);
   return;
  }

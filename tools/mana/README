@@ -12,5 +12,6 @@ the number itself. Give the percentage LEFT, from 0 to 100.
   clear-mana codex            forget only Codex's
 
 A value set by hand stands until you clear it, set it again, or Zell takes a
-good automatic reading after it. The Mana console and the MANA bar show the
+good automatic reading after it. Such a reading retires the value for good.
+If your shell does not find a script, start it with ./ as in ./set-mana. The Mana console and the MANA bar show the
 change within a few seconds.

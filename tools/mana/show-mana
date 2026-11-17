@@ -15,7 +15,8 @@ def main(words):
     if words:
         print(__doc__.strip())
         return 0 if words[0] in ('-h', '--help', 'help') else 2
-    values = manual.load(manual.state_dir())
+    # The values that stand: a good automatic reading taken later retires one.
+    values = manual.standing(manual.state_dir())
     for provider in manual.PROVIDERS:
         if provider in values:
             percent, at = values[provider]
@@ -23,7 +24,7 @@ def main(words):
             print(f'{provider}: {percent}% left, set by hand {when}')
         else:
             print(f'{provider}: not set by hand')
-    print('A good automatic reading taken after a value was set replaces it.')
+    print('A good automatic reading taken after a value was set replaces it for good.')
     return 0
 
 

@@ -323,7 +323,8 @@ clear-mana [provider ...]   forget the values, or only the ones named
 
 The number is the percentage left, from 0 to 100. A value set by hand is kept
 in Zell's state folder (`mana-manual.json`). It stands until it is cleared,
-set again, or a good automatic reading is taken after it, and the Mana console
+set again, or a good automatic reading is taken after it (which retires it
+for good), and the Mana console
 and the MANA bar show it within a few seconds. The scripts do not need
 Claudex. Type `exit` to leave the shell.
 

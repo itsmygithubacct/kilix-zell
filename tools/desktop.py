@@ -493,10 +493,8 @@ def desktop(station,action):
             DIALOGUE.send('V',' '.join(str(status[k]) for k in ('health','fatigue','mana','age_days','mana_age','os_health','dirty_files')))
             DIALOGUE.send('J',str(status['restart_needed']))
             import zell_mana
-            # L5 calls zell_provider_apply; this monitor G line stays three integers.
-            DIALOGUE.send('G',' '.join(str(value) for value in zell_mana.readings(directory=BASE)))
-            import zell_providers
-            for kind,payload in zell_providers.monitor_frames(BASE):
+            # L5 calls zell_provider_apply for the snapshot; the mana line follows it.
+            for kind,payload in zell_mana.console_frames(BASE):
                 DIALOGUE.send(kind,payload)
             zell_mana.refresh_in_background(ui)
             from zell_schedule import aggregate
@@ -571,8 +569,8 @@ def command_computer(shell=None):
     if not Path(shell).is_file() or not os.access(shell,os.X_OK):shell='/bin/sh'
     script=('cd -- "$1" || exit 1\nPATH="$1:$PATH"\nKILIX_ZELL_STATE="$2"\nexport PATH KILIX_ZELL_STATE\n'
             'printf \'%s\\n\' "Mana scripts are in this folder: set-mana, show-mana, clear-mana." '
-            '"Example: set-mana codex 62   (the percentage left)" ""\nexec "$3" -i')
-    return ['/bin/sh','-c',script,'command-computer',str(MANA_SCRIPTS),str(BASE),shell]
+            '"Example: set-mana codex 62   (the percentage left)" "If your shell does not find one, start it with ./ as in ./set-mana" ""\nexec "$3" -i')
+    return ['/bin/sh','-c',script,'command-computer',str(MANA_SCRIPTS),str(Path(BASE).resolve()),shell]
 
 _INSTALL_CHROME_DEB='google-chrome-stable_current_amd64.deb'
 

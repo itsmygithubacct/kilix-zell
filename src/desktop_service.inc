@@ -111,9 +111,10 @@ static void service_frame(zell_scene *s,char *frame,int origin,int slot,int gene
     if(origin==SERVICE_ORIGIN_MONITOR){
         /* L5 calls zell_provider_apply. */
         if(kind=='G'){
-            int a,b,c,used=0;
-            if(sscanf(decoded,"%d %d %d%n",&a,&b,&c,&used)==3&&!decoded[used]){service_mana(s,decoded);return;}
-            (void)a;(void)b;(void)c;
+            /* The console's three numbers carry the word "mana". A bare
+             * three-integer line is a provider snapshot with no rows
+             * ("1 generation 0"), and must reach the provider parser. */
+            if(!strncmp(decoded,"mana ",5)){service_mana(s,decoded+5);return;}
             zell_provider_apply(s,decoded);return;
         }
         /* L5 calls zell_provider_check_apply. */
