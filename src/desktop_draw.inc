@@ -280,9 +280,12 @@ static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
   if(i==28){if(s->room<3)desktop_hatch(c,s->room==1?ZELL_ART_COMMAND_STAIRS:ZELL_ART_LAUNDRY_STAIRS,x,y,false,"");continue;}
   if(i>=29){
    zell_actor_pose staff=i<32?zell_desktop_pose(s,i-23):(zell_actor_pose){zell_stations[i].art+(s->flame_tick/20+i)%4,0,0};
+   /* Staff are shown as the cave's first six are: a glow and a name only
+    * while Kilix stands by them. */
+   if(i==near)sr_fill_ellipse(c,(float)x,(float)y,128*.42f,6,0x80e5c4u,.65f);
    sr_fill_ellipse(c,(float)x,(float)y,24,7,0x071719u,.45f);
    desktop_art(c,staff.art,x+staff.offset_x,y+staff.offset_y,128);
-   desktop_label(c,x,y+15,zell_stations[i].name,0xe9d49fu);
+   if(i==near)desktop_label(c,x,y+15,zell_stations[i].name,0xb9f8dbu);
    if(i==near)desktop_label(c,x,y+40,i==29?"Enter: projects and Git":i==30?"Enter: coding fleets":i==31?"Enter: encrypted secret vault":"Enter: tasks",0xa8f3d5u);
    continue;
   }
@@ -367,7 +370,9 @@ static void desktop_cave(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
   /* A floor glow under a wall fitting would hang in the air; its label marks it. */
   if(i==near&&i!=12){sr_fill_ellipse(c,(float)x,(float)y, (float)h*.42f,6,0x80e5c4u,.65f);}
   if(i<6){zell_actor_pose pose=zell_desktop_pose(s,i);sr_fill_ellipse(c,(float)x,(float)y,23,7,0x071719u,.45f);desktop_art(c,pose.art,x+pose.offset_x,y+pose.offset_y,h);}
-  if(i>=32&&i<42){desktop_art(c,p->art+(s->flame_tick/20+i)%4,x,y,h);desktop_label(c,x,y+10,p->name,0xe9d49fu);continue;}
+  /* The later staff stand as the first six do: a shadow, and no name until
+   * Kilix is beside them, when the last line here gives it. */
+  if(i>=32&&i<42){sr_fill_ellipse(c,(float)x,(float)y,23,7,0x071719u,.45f);desktop_art(c,p->art+(s->flame_tick/20+i)%4,x,y,h);}
   if(i==13||i==14||i==42||i==43){desktop_hatch(c,p->art,x,y,i==near,i==13?"Command center":i==14?"Laundry room":i==42?"Vault":"Workshop");continue;}
   /* The lever hangs on the east wall beside the shell desk, mirrored to face
    * the room. Its interaction point stays on the reachable floor edge. */
