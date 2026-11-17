@@ -23,9 +23,15 @@
  *
  * Built by `make RENDER=neuronte`. The weight file is the one named at
  * build time by ZELL_NEURONTE_WEIGHTS, or by the environment variable of
- * the same name. */
+ * the same name.
+ *
+ * Text is also drawn from every neuronte-term-*.nrt bundle that lies
+ * beside that file: a character goes to the first bundle trained on it,
+ * and one that no bundle was trained on shows the library's untrained
+ * mark. A library without neuronte_untrained() cannot be linked here. */
 #include "draw_neuronte.h"
 
+#include <dirent.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,7 +46,12 @@
 
 enum { ZN_CELL_W = 8, ZN_CELL_H = 16 };
 
+enum { ZN_EXTRA_MAX = 16, ZN_NAME_MAX = 256 };
+
 static neuronte *zn_font;
+static neuronte *zn_mark;                 /* the same file, drawing the untrained mark */
+static neuronte *zn_extra[ZN_EXTRA_MAX];  /* the term bundles beside it, by name */
+static int zn_extras;
 static int zn_state; /* 0 not tried, 1 open, -1 failed */
 
 /* The characters used as whole shapes: the black circle, the black
@@ -59,12 +70,71 @@ const char *zell_neuronte_weights(void)
     return path != NULL && path[0] != '\0' ? path : ZELL_NEURONTE_WEIGHTS;
 }
 
+static int zn_name_order(const void *a, const void *b)
+{
+    return strcmp((const char *)a, (const char *)b);
+}
+
+/* Open the term bundles in the weight file's directory, in name order,
+ * and a second handle on the weight file for the untrained mark. A bundle
+ * that does not open is left out. */
+static void zn_open_extras(const char *weights)
+{
+    static char names[ZN_EXTRA_MAX][ZN_NAME_MAX];
+    char dir[1024];
+    char path[1024 + ZN_NAME_MAX + 2];
+    const char *slash = strrchr(weights, '/');
+    size_t dir_len = slash != NULL ? (size_t)(slash - weights) : 1;
+    struct dirent *entry;
+    DIR *list;
+    int count = 0;
+    int i;
+
+    if (neuronte_open_file(weights, &zn_mark) != 0 || neuronte_set_untrained(zn_mark, 1) != 0) {
+        neuronte_close(zn_mark);
+        zn_mark = NULL;
+    }
+    if (dir_len >= sizeof dir) {
+        return;
+    }
+    memcpy(dir, slash != NULL ? weights : ".", dir_len);
+    dir[dir_len] = '\0';
+    list = opendir(dir);
+    if (list == NULL) {
+        return;
+    }
+    while (count < ZN_EXTRA_MAX && (entry = readdir(list)) != NULL) {
+        size_t len = strlen(entry->d_name);
+
+        if (len > 18 && len < ZN_NAME_MAX && strncmp(entry->d_name, "neuronte-term-", 14) == 0 &&
+            strcmp(entry->d_name + len - 4, ".nrt") == 0) {
+            memcpy(names[count++], entry->d_name, len + 1);
+        }
+    }
+    closedir(list);
+    qsort(names, (size_t)count, sizeof names[0], zn_name_order);
+    for (i = 0; i < count; i++) {
+        int need = snprintf(path, sizeof path, "%s/%s", dir, names[i]);
+
+        if (need < 0 || (size_t)need >= sizeof path) {
+            continue;
+        }
+        if (neuronte_open_file(path, &zn_extra[zn_extras]) == 0) {
+            zn_extras++;
+        } else {
+            zn_extra[zn_extras] = NULL;
+        }
+    }
+}
+
 bool zell_neuronte_open(void)
 {
     if (zn_state == 0) {
         zn_state = neuronte_open_file(zell_neuronte_weights(), &zn_font) == 0 ? 1 : -1;
         if (zn_state < 0) {
             zn_font = NULL;
+        } else {
+            zn_open_extras(zell_neuronte_weights());
         }
     }
     return zn_state > 0;
@@ -72,10 +142,36 @@ bool zell_neuronte_open(void)
 
 void zell_neuronte_close(void)
 {
+    int i;
+
     neuronte_close(zn_font);
+    neuronte_close(zn_mark);
+    for (i = 0; i < zn_extras; i++) {
+        neuronte_close(zn_extra[i]);
+        zn_extra[i] = NULL;
+    }
     zn_font = NULL;
+    zn_mark = NULL;
+    zn_extras = 0;
     zn_state = 0;
     memset(zn_box_states, 0, sizeof zn_box_states);
+}
+
+/* The handle that draws this character as text: the weight file where it
+ * was trained on it, else the first term bundle that was, else the mark. */
+static neuronte *zn_text_font(uint32_t scalar)
+{
+    int i;
+
+    if (neuronte_untrained(zn_font, scalar) != 1) {
+        return zn_font;
+    }
+    for (i = 0; i < zn_extras; i++) {
+        if (neuronte_untrained(zn_extra[i], scalar) == 0) {
+            return zn_extra[i];
+        }
+    }
+    return zn_mark != NULL ? zn_mark : zn_font;
 }
 
 static int zn_scale(int scale)
@@ -111,14 +207,24 @@ static void zn_text(sr_canvas *c, float x, float y, const char *s,
                     uint32_t rgb, float alpha, int scale)
 {
     int k = zn_scale(scale);
+    size_t len;
+    size_t at = 0;
+    int pen;
 
     if (c == NULL || s == NULL || !zell_neuronte_open()) {
         return;
     }
-    neuronte_draw_utf8(zn_font, c->px, c->w, c->w, c->h,
-                       (int)(x + 0.5f), (int)(y + 0.5f),
-                       ZN_CELL_W * k, ZN_CELL_H * k, s, strlen(s),
-                       zn_color(rgb, alpha));
+    len = strlen(s);
+    pen = (int)(x + 0.5f);
+    while (at < len) {
+        uint32_t scalar;
+
+        at += neuronte_utf8_decode(s + at, len - at, &scalar);
+        neuronte_draw_scalar(zn_text_font(scalar), c->px, c->w, c->w, c->h,
+                             pen, (int)(y + 0.5f), ZN_CELL_W * k, ZN_CELL_H * k,
+                             scalar, zn_color(rgb, alpha));
+        pen += ZN_CELL_W * k;
+    }
 }
 
 /* A dark rim one scaled pixel wide, then the text. Eight more draws of
