@@ -300,11 +300,20 @@ static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
    if(i==near)sr_fill_ellipse(c,(float)x,(float)y,128*.42f,6,0x80e5c4u,.65f);
    sr_fill_ellipse(c,(float)x,(float)y,24,7,0x071719u,.45f);
    desktop_art(c,staff.art,x+staff.offset_x,y+staff.offset_y,128);
-   /* The Key Master stands at the bottom edge of his room, so his two
-    * lines go above his head, where the status bar cannot cover them. */
-   int name_y=i==31?y-ZELL_KEY_MASTER_LABEL_UP:y+15;
-   if(i==near)desktop_label(c,x,name_y,zell_stations[i].name,0xb9f8dbu);
-   if(i==near)desktop_label(c,x,name_y+25,i==29?"Enter: projects and Git":i==30?"Enter: coding fleets":i==31?"Enter: encrypted secret vault":"Enter: tasks",0xa8f3d5u);
+   /* The Key Master's lines go in the strip under the AGENTS panel, right
+    * aligned (see ZELL_KEY_MASTER_LABEL_RIGHT): above his head they would
+    * cover that panel, and under his feet the status bar. */
+   if(i==31){
+    if(i==near){
+     int right=ZELL_KEY_MASTER_LABEL_RIGHT-cx,top=ZELL_KEY_MASTER_LABEL_TOP-cy;
+     int name_w=sr_text_width_in(SR_FONT_FIXED_8X16,zell_stations[i].name,1),hint_w=sr_text_width_in(SR_FONT_FIXED_8X16,ZELL_KEY_MASTER_HINT,1);
+     desktop_label(c,right-6-name_w/2,top+3,zell_stations[i].name,0xb9f8dbu);
+     desktop_label(c,right-6-hint_w/2,top+28,ZELL_KEY_MASTER_HINT,0xa8f3d5u);
+    }
+    continue;
+   }
+   if(i==near)desktop_label(c,x,y+15,zell_stations[i].name,0xb9f8dbu);
+   if(i==near)desktop_label(c,x,y+40,i==29?"Enter: projects and Git":i==30?"Enter: coding fleets":"Enter: tasks",0xa8f3d5u);
    continue;
   }
   if(s->room==1){desktop_monitor(s,c,i-15,cx,cy,i==near);continue;}

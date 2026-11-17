@@ -1501,6 +1501,9 @@ static void test_theater(void){
 /* A character's name is shown only while Kilix stands by it. That holds for
  * the cave's first six and for the later staff alike, upstairs and down:
  * nobody carries a name tag about. */
+static bool rects_meet(zell_rect a,zell_rect b){
+    return a.x<b.x+b.w&&b.x<a.x+a.w&&a.y<b.y+b.h&&b.y<a.y+a.h;
+}
 /* Pixels that differ between two canvases inside a rectangle, in either renderer. */
 static int region_diffs(const sr_canvas *a,const sr_canvas *b,zell_rect r){
     int n=0;
@@ -1556,12 +1559,16 @@ static void test_names_show_only_beside_kilix(void){
         zell_world_to_screen(&s,wx,wy,&sx,&sy);
         /* The row a name is written on, under the feet. It stops short of
          * the "Enter: ..." line that the rooms downstairs add below it. */
-        /* The Key Master stands at the bottom edge of his room, so his name
-         * is written above his head. */
-        int row=id==31?-ZELL_KEY_MASTER_LABEL_UP-4:4,rows=id==31?24:32;
-        zell_rect under={(int)sx-90,(int)sy+row,180,rows};
+        /* The Key Master's name is written in the strip under the AGENTS
+         * panel, right aligned (ZELL_KEY_MASTER_LABEL_RIGHT). */
+        float lx,ly;
+        zell_world_to_screen(&s,(float)(ZELL_KEY_MASTER_LABEL_RIGHT-96),(float)ZELL_KEY_MASTER_LABEL_TOP,&lx,&ly);
+        zell_rect under=id==31?(zell_rect){(int)lx,(int)ly,96,22}:(zell_rect){(int)sx-90,(int)sy+4,180,32};
         int ink_away=ink_count(&canvas,under,beside_ink,within);
         int standing_away=ink_count(&canvas,under,standing,0);
+        /* Downstairs, the "Enter: ..." line goes under the name. */
+        const uint32_t hint_ink=0xa8f3d5u;
+        int hint_away=ink_count(&canvas,(zell_rect){(int)sx-130,(int)sy+37,260,22},hint_ink,within);
         bool gold_floor=false;
         if((!gold_floor&&standing_away)||ink_count(&canvas,under,beside_ink,0))
             fprintf(stderr,"%s carries a name with Kilix away\n",zell_stations[id].name);
@@ -1574,13 +1581,19 @@ static void test_names_show_only_beside_kilix(void){
         assert(k<sizeof beside/sizeof beside[0]);
         zell_draw(&s,&canvas);
         zell_world_to_screen(&s,wx,wy,&sx,&sy);
-        under=(zell_rect){(int)sx-90,(int)sy+row,180,rows};
+        zell_world_to_screen(&s,(float)(ZELL_KEY_MASTER_LABEL_RIGHT-96),(float)ZELL_KEY_MASTER_LABEL_TOP,&lx,&ly);
+        under=id==31?(zell_rect){(int)lx,(int)ly,96,22}:(zell_rect){(int)sx-90,(int)sy+4,180,32};
         int ink_beside=ink_count(&canvas,under,beside_ink,within)-ink_away;
         if(getenv("ZELL_TEST_SHOW"))fprintf(stderr,"%-14s room %d: %d px of name ink beside (%d there before), %d standing\n",zell_stations[id].name,who[i].room,ink_beside,ink_away,ink_count(&canvas,under,standing,0));
         if(ink_beside<need)fprintf(stderr,"%s shows no name with Kilix beside\n",zell_stations[id].name);
         assert(ink_beside>=need);
         /* Nothing in the old standing colour comes with it. */
         assert(ink_count(&canvas,under,standing,0)<=standing_away);
+        if(who[i].room>=1&&id!=31){
+            int hint_beside=ink_count(&canvas,(zell_rect){(int)sx-130,(int)sy+37,260,22},hint_ink,within)-hint_away;
+            if(hint_beside<need*2)fprintf(stderr,"%s shows no Enter line with Kilix beside\n",zell_stations[id].name);
+            assert(hint_beside>=need*2);
+        }
     }
     sr_canvas_free(&canvas);
 }
@@ -1746,6 +1759,100 @@ static void test_command_center(void){
         s.room=2;zell_room_view_identity(&s);
         assert(s.room_view.logical_x==(int)(0.135f*(float)ZELL_WORLD_W));
     }
+    /* The Key Master's two lines: in the strip under the AGENTS panel, clear
+     * of it, of the screens, of the exit arrows, of the Key Master and of
+     * Kilix wherever Kilix stands beside him. */
+    {
+        /* Both renderers advance 8 pixels per ASCII letter; a label box adds 6 a side. */
+        int name_w=(int)strlen(key->name)*8+12,hint_w=(int)strlen(ZELL_KEY_MASTER_HINT)*8+12;
+        zell_rect name={ZELL_KEY_MASTER_LABEL_RIGHT-name_w,ZELL_KEY_MASTER_LABEL_TOP,name_w,22};
+        zell_rect hint={ZELL_KEY_MASTER_LABEL_RIGHT-hint_w,ZELL_KEY_MASTER_LABEL_TOP+25,hint_w,22};
+        zell_rect agents,frame,display,keeper;
+        zell_command_switch_layout(1,&agents);
+        assert(!rects_meet(name,agents)&&!rects_meet(hint,agents));
+        assert(name.y>=agents.y+agents.h&&hint.y+hint.h<(int)((float)ZELL_WORLD_H*.93f));
+        for(int m=0;m<5;m++){zell_monitor_layout(m,&frame,&display);assert(!rects_meet(name,frame)&&!rects_meet(hint,frame));}
+        for(int k=0;k<ZELL_COMMAND_EXIT_ARROWS;k++){
+            zell_rect arrow={(int)zell_command_exit_arrow_x(k)-16,(int)((float)ZELL_WORLD_H*.93f),32,24};
+            assert(!rects_meet(name,arrow)&&!rects_meet(hint,arrow));
+        }
+        /* His figure is 128 high and about 70 wide. */
+        keeper=(zell_rect){(int)(key->x*(float)ZELL_WORLD_W)-40,(int)(key->y*(float)ZELL_WORLD_H)-128,80,128};
+        assert(!rects_meet(name,keeper)&&!rects_meet(hint,keeper));
+        /* Every place Kilix can stand and have the Key Master beside him. */
+        int places=0;
+        for(int wy=820;wy<(int)((float)ZELL_WORLD_H*.975f);wy+=2)for(int wx=1180;wx<=(int)((float)ZELL_WORLD_W*.865f);wx+=2){
+            place_room(&s,1,(float)wx,(float)wy);
+            if(zell_desktop_blocked(&s,(float)wx,(float)wy)||zell_desktop_near(&s)!=31)continue;
+            zell_rect kilix={wx-36,wy-128,72,128};
+            if(rects_meet(name,kilix)||rects_meet(hint,kilix))fprintf(stderr,"Kilix at %d,%d stands under the Key Master's lines\n",wx,wy);
+            assert(!rects_meet(name,kilix)&&!rects_meet(hint,kilix));
+            places++;
+        }
+        assert(places>200);
+        /* And they end right beside him: no further left than the nearest
+         * Kilix can stand, and short of it. */
+        {
+            int leftmost=ZELL_WORLD_W;
+            for(int wy=820;wy<(int)((float)ZELL_WORLD_H*.975f);wy+=2)for(int wx=1180;wx<=(int)((float)ZELL_WORLD_W*.865f);wx+=2){
+                place_room(&s,1,(float)wx,(float)wy);
+                if(!zell_desktop_blocked(&s,(float)wx,(float)wy)&&zell_desktop_near(&s)==31&&wx-36<leftmost)leftmost=wx-36;
+            }
+            assert(hint.x+hint.w<=leftmost&&hint.x+hint.w>=leftmost-8);
+            assert(name.x+name.w==hint.x+hint.w);
+        }
+        /* What is drawn: both lines there with Kilix beside him, in the
+         * label inks, and nothing of them above his head any more. */
+        {
+            sr_canvas canvas;
+            float sx,sy;
+            assert(sr_canvas_init(&canvas,1600,1100));
+            for(int beside=0;beside<2;beside++){
+                zell_scene_init(&s,1600,1100);zell_desktop_init(&s);
+                s.room=1;s.mode=ZELL_MODE_WALK;s.mouse_valid=false;
+                s.x=beside?(float)ZELL_WORLD_W*.865f:(float)ZELL_WORLD_W*.50f;s.y=beside?(float)ZELL_WORLD_H*.95f:(float)ZELL_WORLD_H*.60f;
+                assert((zell_desktop_near(&s)==31)==(bool)beside);
+                zell_draw(&s,&canvas);
+                assert(s.room_view.scale==1.f);
+                zell_world_to_screen(&s,(float)name.x,(float)name.y,&sx,&sy);
+                int name_ink=ink_count(&canvas,(zell_rect){(int)sx,(int)sy,name.w,name.h},0xb9f8dbu,48);
+                zell_world_to_screen(&s,(float)hint.x,(float)hint.y,&sx,&sy);
+                int hint_ink=ink_count(&canvas,(zell_rect){(int)sx,(int)sy,hint.w,hint.h},0xa8f3d5u,48);
+                zell_world_to_screen(&s,key->x*(float)ZELL_WORLD_W-130.f,key->y*(float)ZELL_WORLD_H-240.f,&sx,&sy);
+                int overhead=ink_count(&canvas,(zell_rect){(int)sx,(int)sy,260,110},0xa8f3d5u,0)+ink_count(&canvas,(zell_rect){(int)sx,(int)sy,260,110},0xb9f8dbu,0);
+                if(beside)assert(name_ink>=40&&hint_ink>=120);
+                else assert(name_ink==0&&hint_ink==0);
+                /* The name is the short top row, the hint the long one under
+                 * it: left of the name's box only the hint's row has ink. */
+                {
+                    float rx,ry;
+                    zell_world_to_screen(&s,(float)hint.x,(float)name.y,&rx,&ry);
+                    zell_rect name_row_left={(int)rx,(int)ry,name.x-hint.x,22},hint_row_left={(int)rx,(int)ry+25,name.x-hint.x,22};
+                    int top_left=ink_count(&canvas,name_row_left,0xb9f8dbu,48)+ink_count(&canvas,name_row_left,0xa8f3d5u,48);
+                    int under_left=ink_count(&canvas,hint_row_left,0xa8f3d5u,48);
+                    assert(top_left==0);
+                    if(beside)assert(under_left>=80);
+                }
+                /* No label ink anywhere else along the strip, from the middle
+                 * of the room to where Kilix stands. */
+                {
+                    float rx,ry,nx,ny,hx,hy;
+                    zell_world_to_screen(&s,600.f,(float)(ZELL_KEY_MASTER_LABEL_TOP-2),&rx,&ry);
+                    zell_world_to_screen(&s,(float)name.x,(float)name.y,&nx,&ny);
+                    zell_world_to_screen(&s,(float)hint.x,(float)hint.y,&hx,&hy);
+                    zell_rect strip={(int)rx,(int)ry,1290-600,51};
+                    zell_rect name_at={(int)nx,(int)ny,name.w,name.h},hint_at={(int)hx,(int)hy,hint.w,hint.h};
+                    int all=ink_count(&canvas,strip,0xb9f8dbu,48)+ink_count(&canvas,strip,0xa8f3d5u,48);
+                    int boxed=ink_count(&canvas,name_at,0xb9f8dbu,48)+ink_count(&canvas,name_at,0xa8f3d5u,48)
+                             +ink_count(&canvas,hint_at,0xb9f8dbu,48)+ink_count(&canvas,hint_at,0xa8f3d5u,48);
+                    if(all!=boxed)fprintf(stderr,"label ink outside the Key Master's boxes: %d of %d\n",all-boxed,all);
+                    assert(all==boxed);
+                }
+                assert(overhead==0);
+            }
+            sr_canvas_free(&canvas);
+        }
+    }
     /* From the middle of the room neither corner is beside him. */
     place_room(&s,1,(float)ZELL_WORLD_W*.50f,(float)ZELL_WORLD_H*.60f);
     assert(zell_desktop_near(&s)!=31&&zell_desktop_near(&s)!=ZELL_COMMAND_COMPUTER);
@@ -1800,11 +1907,11 @@ static void test_command_center(void){
             assert(!memcmp(canvas.px,other.px,(size_t)canvas.w*(size_t)canvas.h*4u));
             /* The same terminal with every other title is the private one. */
             zell_terminal_layout_for(&s,canvas.w,canvas.h,&l);
-            zell_rect above={l.image.x,l.image.y-26,l.image.w-104,24},below={l.image.x,l.image.y+l.image.h+4,l.image.w,24};
+            zell_rect title_row={l.image.x,l.image.y-26,l.image.w-104,24},footer_row={l.image.x,l.image.y+l.image.h+4,l.image.w,24};
             snprintf(s.terminal_title,sizeof s.terminal_title,"%s",computer->name);
             s.terminal_title[0]='c';
             zell_draw(&s,&other);
-            assert(region_diffs(&canvas,&other,above)>40&&region_diffs(&canvas,&other,below)>40);
+            assert(region_diffs(&canvas,&other,title_row)>40&&region_diffs(&canvas,&other,footer_row)>40);
             /* Only the first letter of the title changed above; below, the
              * whole line did. A private terminal's footer is what is there. */
             s.station=ZELL_COMMAND_COMPUTER;zell_draw(&s,&canvas);

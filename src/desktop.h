@@ -74,7 +74,14 @@ void zell_command_computer_layout(zell_rect *frame,zell_rect *display);
 /* The computer's case ends this far right of its station point. */
 #define ZELL_COMMAND_COMPUTER_REACH 20
 /* The Key Master's name is drawn this far above his feet. */
-#define ZELL_KEY_MASTER_LABEL_UP 196
+/* The Key Master's two lines, shown while Kilix is beside him. He stands in
+ * the bottom right corner, with the AGENTS panel above him and the wall to
+ * his right, so his lines go in the strip under that panel and above the
+ * exit arrows, ending left of where Kilix can stand beside him. World
+ * pixels: the right edge of both boxes and the top of the first. */
+#define ZELL_KEY_MASTER_LABEL_RIGHT 1256
+#define ZELL_KEY_MASTER_LABEL_TOP 903
+#define ZELL_KEY_MASTER_HINT "Enter: encrypted secret vault"
 /* Arrows along the Command Center's open bottom edge, in world pixels. */
 #define ZELL_COMMAND_EXIT_ARROWS 5
 float zell_command_exit_arrow_x(int index);
