@@ -17,9 +17,9 @@
  *
  * What stays plain code: clearing the frame, filling a rectangle with one
  * colour, choosing which source pixel a sub-cell shows, and mixing colours
- * by coverage. The clear and the fill are in canvas.c; soft-raster is not
- * linked, and only its header is read, for the canvas struct and the font
- * names draw.c passes.
+ * by coverage. The clear and the fill are neuronte-sdk's canvas, reached
+ * through canvas.c; soft-raster is not linked, and only its header is read,
+ * for the canvas struct and the font names draw.c passes.
  *
  * Built by `make RENDER=neuronte`. The weight file is the one named at
  * build time by ZELL_NEURONTE_WEIGHTS, or by the environment variable of

@@ -12,33 +12,39 @@
 
 #include "neuronte_sdk_canvas.h"
 
+/* The two structs are copied whole, each way. That is only right while
+ * they hold the same fields, so a change to either stops the build here: a
+ * field that moves or changes size fails an assertion, and the copies below
+ * give the fields in order with no names, with a missing one made an
+ * error, so a field added to either struct fails too, even where it fits
+ * in the padding. */
+#define SAME_FIELD(field) \
+    _Static_assert(offsetof(sr_canvas, field) == offsetof(nsdk_canvas, field) && \
+                   sizeof(((sr_canvas *)0)->field) == sizeof(((nsdk_canvas *)0)->field), \
+                   "sr_canvas and nsdk_canvas differ at " #field)
+_Static_assert(sizeof(sr_canvas) == sizeof(nsdk_canvas), "sr_canvas and nsdk_canvas differ in size");
+SAME_FIELD(px);
+SAME_FIELD(w);
+SAME_FIELD(h);
+SAME_FIELD(clip_x0);
+SAME_FIELD(clip_y0);
+SAME_FIELD(clip_x1);
+SAME_FIELD(clip_y1);
+SAME_FIELD(owns_px);
+#undef SAME_FIELD
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic error "-Wmissing-field-initializers"
 static nsdk_canvas to_sdk(const sr_canvas *c)
 {
-    return (nsdk_canvas){
-        .px = c->px,
-        .w = c->w,
-        .h = c->h,
-        .clip_x0 = c->clip_x0,
-        .clip_y0 = c->clip_y0,
-        .clip_x1 = c->clip_x1,
-        .clip_y1 = c->clip_y1,
-        .owns_px = c->owns_px,
-    };
+    return (nsdk_canvas){c->px, c->w, c->h, c->clip_x0, c->clip_y0, c->clip_x1, c->clip_y1, c->owns_px};
 }
 
 static void from_sdk(sr_canvas *c, const nsdk_canvas *n)
 {
-    *c = (sr_canvas){
-        .px = n->px,
-        .w = n->w,
-        .h = n->h,
-        .clip_x0 = n->clip_x0,
-        .clip_y0 = n->clip_y0,
-        .clip_x1 = n->clip_x1,
-        .clip_y1 = n->clip_y1,
-        .owns_px = n->owns_px,
-    };
+    *c = (sr_canvas){n->px, n->w, n->h, n->clip_x0, n->clip_y0, n->clip_x1, n->clip_y1, n->owns_px};
 }
+#pragma GCC diagnostic pop
 
 bool zell_canvas_init(sr_canvas *c, int w, int h)
 {

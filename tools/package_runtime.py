@@ -97,6 +97,8 @@ def main():
         dest = Path(temporary)/'zell'
         modules = args.modules.resolve()
         sdk = args.neuronte_sdk.resolve() if args.neuronte_sdk else modules/'neuronte-sdk'
+        if not (sdk/'src/neuronte_sdk_canvas.c').is_file():
+            parser.error(f'{sdk} has no canvas; name the neuronte-sdk checkout the build used with --neuronte-sdk')
         build(dest, modules, args.neuronte.resolve(), args.ghostty.resolve(), sdk)
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -1,6 +1,7 @@
 /* Zell's canvas beside soft-raster's. The Neuronte programs link canvas.c
- * where the raster programs link soft-raster, and a frame must be the same
- * bytes either way, so every call here is made on both and compared. A few
+ * and neuronte-sdk's canvas behind it where the raster programs link
+ * soft-raster, and a frame must be the same bytes either way, so every
+ * call here is made on both and compared. A few
  * results are also written out as numbers, so the pair cannot drift
  * together. */
 #include <errno.h>
@@ -135,9 +136,30 @@ static void test_buffer(void)
     expect(b.px == NULL && mem[0] == 0x12345678u, "free leaves wrapped memory alone");
     zell_canvas_free(NULL);
     zell_canvas_wrap(NULL, mem, 4, 3);
+    {
+        /* Round the largest pixel count, INT_MAX. Wrap reads no pixel. */
+        static const int edge[][2] = {{INT_MAX, 1}, {1, INT_MAX}, {32768, 65535}, {32768, 65536}, {46341, 46341}};
+
+        for (i = 0; i < sizeof edge / sizeof edge[0]; i++) {
+            sr_canvas_wrap(&a, mem, edge[i][0], edge[i][1]);
+            zell_canvas_wrap(&b, mem, edge[i][0], edge[i][1]);
+            expect(same_struct(&a, &b) && (b.px == mem) == (i < 3), "wrap agrees at the largest size");
+        }
+    }
 }
 
-#if defined(__GLIBC__) && __GLIBC_PREREQ(2, 33)
+/* The check below reads glibc's own count of what the program holds. A
+ * build with the address sanitizer has another allocator and its own leak
+ * report, and a libc without mallinfo2 has no count; both skip the check. */
+#if defined(__SANITIZE_ADDRESS__)
+#define UNDER_ASAN 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define UNDER_ASAN 1
+#endif
+#endif
+
+#if defined(__GLIBC__) && __GLIBC_PREREQ(2, 33) && !defined(UNDER_ASAN)
 #define CAN_COUNT_MEMORY 1
 /* Bytes the allocator holds for the program, mapped blocks included. */
 static size_t held(void)

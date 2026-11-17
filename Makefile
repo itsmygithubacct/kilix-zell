@@ -6,6 +6,8 @@ SR_DIR := $(MODULES)/soft-raster
 # neuronte-sdk, for its canvas. It must be a checkout that has
 # src/neuronte_sdk_canvas.c.
 NSDK_DIR ?= $(MODULES)/neuronte-sdk
+NSDK_CANVAS_C := $(NSDK_DIR)/src/neuronte_sdk_canvas.c
+NSDK_CANVAS_H := $(NSDK_DIR)/include/neuronte_sdk_canvas.h
 BUILD := $(ROOT)/build
 
 CC ?= cc
@@ -112,19 +114,39 @@ $(BUILD)/soft_raster.o: $(SR_DIR)/src/soft_raster.c | $(BUILD)
 # pixel buffer, the clear, the flat fill, the RGBA packing and the PPM
 # writer. The work is neuronte-sdk's canvas; canvas.o carries Zell's canvas
 # struct across to it. It reads the soft-raster header for that struct only.
-$(BUILD)/canvas.o: $(ROOT)/src/canvas.c $(ROOT)/src/canvas.h $(NSDK_DIR)/include/neuronte_sdk_canvas.h | $(BUILD)
+#
+# The two objects hold one neuronte-sdk checkout's code. NSDK_STAMP records
+# which checkout and a checksum of its two canvas files, and is rewritten
+# only when one of them changes, so a build against another checkout, or
+# the same one after an edit, compiles both again. The objects depend on
+# the stamp and not on the checkout's files, so a checkout that has since
+# been removed does not stop a build against another. Its recipe is also
+# where a checkout with no canvas is turned away.
+NSDK_STAMP := $(BUILD)/nsdk.ident
+
+$(NSDK_STAMP): FORCE | $(BUILD)
+	@test -f "$(NSDK_CANVAS_C)" && test -f "$(NSDK_CANVAS_H)" || { \
+		echo "zell: NSDK_DIR '$(NSDK_DIR)' has no canvas. Set NSDK_DIR to a neuronte-sdk checkout with src/neuronte_sdk_canvas.c." >&2; \
+		exit 2; }
+	@{ printf '%s\n' '$(abspath $(NSDK_DIR))'; cksum < "$(NSDK_CANVAS_C)"; cksum < "$(NSDK_CANVAS_H)"; } > $@.new
+	@if cmp -s $@.new $@; then rm -f $@.new; else mv $@.new $@; fi
+
+$(BUILD)/canvas.o: $(ROOT)/src/canvas.c $(ROOT)/src/canvas.h $(NSDK_STAMP) | $(BUILD)
 	$(CC) $(CPPFLAGS) -I$(NSDK_DIR)/include $(CFLAGS) -c $< -o $@
 
 # The work behind it: neuronte-sdk's canvas, one file that includes nothing
-# of Neuronte. CANVAS_OBJS is the pair every Neuronte program links.
-$(BUILD)/nsdk_canvas.o: $(NSDK_DIR)/src/neuronte_sdk_canvas.c $(NSDK_DIR)/include/neuronte_sdk_canvas.h | $(BUILD)
-	$(CC) $(CPPFLAGS) -I$(NSDK_DIR)/include $(CFLAGS) -c $< -o $@
-
-$(NSDK_DIR)/src/neuronte_sdk_canvas.c $(NSDK_DIR)/include/neuronte_sdk_canvas.h:
-	@echo "zell: $(NSDK_DIR) has no canvas. Set NSDK_DIR to a neuronte-sdk checkout with src/neuronte_sdk_canvas.c." >&2
-	@exit 2
+# of Neuronte. It is compiled with no dependency file: one would name the
+# checkout's source, and the stamp already covers it. CANVAS_OBJS is the
+# pair every Neuronte program links.
+$(BUILD)/nsdk_canvas.o: $(NSDK_STAMP) | $(BUILD)
+	$(CC) $(filter-out -MMD -MP,$(CPPFLAGS)) -I$(NSDK_DIR)/include $(CFLAGS) -c "$(NSDK_CANVAS_C)" -o $@
 
 CANVAS_OBJS := $(BUILD)/canvas.o $(BUILD)/nsdk_canvas.o
+
+.PHONY: test-nsdk-ident
+test: test-nsdk-ident
+test-nsdk-ident:
+	python3 $(ROOT)/tests/test_nsdk_ident.py "$(NSDK_DIR)" "$(MODULES)"
 
 # The canvas beside soft-raster, call for call: the two must give the same bytes.
 $(BUILD)/test_canvas.o: $(ROOT)/tests/test_canvas.c $(ROOT)/src/canvas.h | $(BUILD)
@@ -203,7 +225,7 @@ SNAP_COMMON := \
 	$(BUILD)/room.o \
 	$(BUILD)/soft_raster.o
 
-# Same link as LIB_OBJS, with Zell's canvas where that has soft-raster.
+# Same link as LIB_OBJS, with the canvas pair where that has soft-raster.
 N_LIB_OBJS := \
 	$(BUILD)/kitty_framebuffer.o \
 	$(BUILD)/kitty_keyboard.o \
@@ -338,7 +360,9 @@ test-desktop: $(BUILD)/test-desktop
 
 $(BUILD)/test_process.o $(BUILD)/test_desktop.o: $(ROOT)/src/scene.h $(ROOT)/src/desktop.h
 
--include $(wildcard $(BUILD)/*.d)
+# nsdk_canvas.d is left out: an earlier build wrote one that names its
+# checkout's source, and that checkout may be gone.
+-include $(filter-out $(BUILD)/nsdk_canvas.d,$(wildcard $(BUILD)/*.d))
 
 $(BUILD)/test_desktop_neuronte.o: $(ROOT)/tests/test_desktop.c | $(BUILD)
 	$(CC) $(N_CPPFLAGS) $(CFLAGS) -c $< -o $@

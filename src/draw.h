@@ -6,8 +6,9 @@
 
 #ifdef ZELL_RENDER_NEURONTE
 /* The Neuronte programs do not link soft-raster. The canvas calls the
- * shared sources make by its names go to Zell's own canvas. A call with no
- * line here has no body in that build, and the link says so. */
+ * shared sources make by its names go to canvas.c, which hands them to
+ * neuronte-sdk's canvas. A call with no line here has no body in that
+ * build, and the link says so. */
 #include "canvas.h"
 #define sr_canvas_init zell_canvas_init
 #define sr_canvas_wrap zell_canvas_wrap

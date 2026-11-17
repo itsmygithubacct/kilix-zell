@@ -12,7 +12,9 @@ must hold that canvas and nothing else of the SDK: its cell surface opens
 libneuronte for itself, which Zell does not use.
 
 This reads names. The SDK's canvas is adapted from soft-raster under other
-names, and tests/test_canvas.c is what holds it to the same results.
+names, and tests/test_canvas.c is what holds it to the same results. The
+last test reads the adapter's text for the plain ways of doing pixel work
+there; it cannot see every way.
 """
 from pathlib import Path
 import re
@@ -68,8 +70,10 @@ class NeuronteLinkTests(unittest.TestCase):
     def test_the_adapter_does_no_pixel_work(self):
         source = (Path(__file__).resolve().parents[1] / 'src' / 'canvas.c').read_text()
         code = re.sub(r'/\*.*?\*/', '', source, flags=re.S)
-        # It passes the buffer on. It never indexes it, allocates or opens a file.
-        for word in ('[', 'malloc', 'calloc', 'free(', 'fopen', 'fwrite', '>>', '<<', 'math.h', 'soft_raster.c'):
+        # It passes the buffer on. It never indexes or walks it, loops,
+        # allocates or opens a file.
+        for word in ('[', '++', '--', 'for (', 'while (', 'memset', 'memcpy', 'malloc', 'calloc', 'free(',
+                     'fopen', 'fwrite', '>>', '<<', 'math.h', 'soft_raster.c'):
             self.assertNotIn(word, code.replace('nsdk_canvas_free(', '').replace('zell_canvas_free(', ''), word)
         for name in SDK_CANVAS:
             self.assertEqual(code.count(name + '('), 1, name)
