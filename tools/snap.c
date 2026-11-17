@@ -207,6 +207,9 @@ int main(int argc, char **argv)
         scene.debug_blocks[0].enabled=false;
         /* Kilix behind a worker screen with only his head showing. */
         scene.room=1;scene.x=ZELL_WORLD_W*.25f;scene.y=ZELL_WORLD_H*.50f;failed+=shot(&scene,&canvas,argv[1],"command-behind");
+        /* The two bottom corners: Kilix beside the Key Master, then beside the computer. */
+        scene.x=ZELL_WORLD_W*.865f;scene.y=ZELL_WORLD_H*.94f;failed+=shot(&scene,&canvas,argv[1],"command-key-master");
+        scene.x=ZELL_WORLD_W*.16f;scene.y=ZELL_WORLD_H*.95f;failed+=shot(&scene,&canvas,argv[1],"command-computer");
         scene.x=ZELL_WORLD_W*.50f;scene.y=ZELL_WORLD_H*.55f;
         scene.room=0;scene.hp=57;scene.os_health=70;scene.dirty_files=13;scene.update_age_days=3;
         scene.mouse_valid=true;scene.mouse_x=32;scene.mouse_y=50;

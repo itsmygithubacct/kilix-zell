@@ -15,6 +15,7 @@ import threading
 import time
 from pathlib import Path
 
+import zell_mana_manual
 import zell_providers
 import zell_vitals
 
@@ -42,17 +43,35 @@ def reading(entry, now):
     return -1 if value is None else max(0, min(100, round(value)))
 
 
-def readings(now=None):
+def by_hand(entries, now, directory):
+    """The values set by hand that stand now: {provider: percent left}."""
+    standing = {}
+    for provider, manual in zell_mana_manual.load(directory).items():
+        entry = entries.get(provider)
+        checked = entry.get('checked_at') if isinstance(entry, dict) else None
+        if zell_mana_manual.stands(manual, reading(entry, now), checked):
+            standing[provider] = manual[0]
+    return standing
+
+
+def readings(now=None, directory=None):
+    """One number per provider. directory is Zell's state folder, where the
+    values set by hand at the Command computer are kept."""
     now = time.time() if now is None else now
     entries = cache()
-    return [reading(entries.get(provider), now) for provider in PROVIDERS]
+    standing = by_hand(entries, now, directory)
+    return [standing[provider] if provider in standing else reading(entries.get(provider), now)
+            for provider in PROVIDERS]
 
 
-def needs(now=None):
+def needs(now=None, directory=None):
     """What the person must do, one line per blocked provider."""
     now = time.time() if now is None else now
     entries, lines = cache(), []
+    standing = by_hand(entries, now, directory)
     for provider in PROVIDERS:
+        if provider in standing:
+            continue
         entry = entries.get(provider)
         entry = entry if isinstance(entry, dict) else {}
         status = entry.get('status')
@@ -61,7 +80,8 @@ def needs(now=None):
             lines.append(f'{provider}: {entry.get("reason") or "needs you"}\n    Do this: {fix}')
         elif reading(entry, now) == -1:
             reason = str(entry.get('reason') or 'no reading yet').splitlines()[0][:160]
-            lines.append(f'{provider}: no current reading ({reason}).\n    Try: Read mana now')
+            lines.append(f'{provider}: no current reading ({reason}).\n    Try: Read mana now'
+                         f'\n    Or set it by hand at the Command computer: set-mana {provider} 50')
     return lines
 
 
@@ -127,7 +147,7 @@ def summary(ui):
     lines = [zell_providers.mode_line(directory), zell_vitals.snapshot(ui, directory)['details'], '',
              'Automatic readings: ' + ('on' if automatic(ui) else 'off') +
              f' (every {MAX_AGE // 60} minutes while Zell runs; no tokens are spent).']
-    blocked = needs()
+    blocked = needs(directory=directory)
     lines += ['', 'Needs you:' if blocked else 'Nothing needs you.', *blocked]
     return '\n'.join(lines)
 
@@ -157,7 +177,7 @@ def hub(ui, action=0):
             return ui.page_text(f'Mana could not be read: {error}\n\n' + summary(ui))
         return ui.page_text(summary(ui))
     if action == 5:
-        blocked = needs()
+        blocked = needs(directory=getattr(ui, 'BASE', None))
         return ui.page_text('\n'.join(blocked) if blocked else 'Nothing needs you. Every provider has a current reading.')
     if action == 6:
         enabled = not automatic(ui)

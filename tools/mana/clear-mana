@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+"""Forget mana values set by hand.
+
+    clear-mana            all of them
+    clear-mana codex      only Codex's
+"""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import zell_mana_manual as manual  # noqa: E402
+
+
+def main(words):
+    if words and words[0] in ('-h', '--help', 'help'):
+        print(__doc__.strip())
+        return 0
+    try:
+        removed = manual.clear(manual.state_dir(), [word.strip().lower() for word in words])
+    except (ValueError, OSError) as error:
+        print(f'clear-mana: {error}', file=sys.stderr)
+        print('Nothing was changed.', file=sys.stderr)
+        return 2
+    print('Cleared: ' + ', '.join(removed) + '.' if removed else 'No value set by hand was there to clear.')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

@@ -494,7 +494,7 @@ def desktop(station,action):
             DIALOGUE.send('J',str(status['restart_needed']))
             import zell_mana
             # L5 calls zell_provider_apply; this monitor G line stays three integers.
-            DIALOGUE.send('G',' '.join(str(value) for value in zell_mana.readings()))
+            DIALOGUE.send('G',' '.join(str(value) for value in zell_mana.readings(directory=BASE)))
             import zell_providers
             for kind,payload in zell_providers.monitor_frames(BASE):
                 DIALOGUE.send(kind,payload)
@@ -533,6 +533,10 @@ def desktop(station,action):
         if not Path(shell).is_file() or not os.access(shell,os.X_OK):shell='/bin/sh'
         from zell_terminal import terminal_loop
         return terminal_loop(ui,[shell,'-i'],title='Workshop computer')
+    if station==56:
+        # The Command computer: a shell in the folder of scripts that set mana by hand.
+        from zell_terminal import terminal_loop
+        return terminal_loop(ui,command_computer(),title='Command computer')
     if station==12:return neuronte_shell()
     if station==1:return logs(action)
     if station==2:return admin(action)
@@ -557,6 +561,18 @@ def desktop(station,action):
         now=datetime.datetime.now()
         return page_text(now.strftime('%A %d %B %Y, %H:%M:%S')+'\n\n'+calendar.month(now.year,now.month))
     raise ValueError('Unknown station')
+
+MANA_SCRIPTS=Path(__file__).resolve().parent/'mana'
+
+def command_computer(shell=None):
+    """The Command computer's shell: started in the mana scripts' folder, with
+    that folder first on PATH and this Zell's state folder named for them."""
+    shell=shell or os.environ.get('SHELL') or '/bin/bash'
+    if not Path(shell).is_file() or not os.access(shell,os.X_OK):shell='/bin/sh'
+    script=('cd -- "$1" || exit 1\nPATH="$1:$PATH"\nKILIX_ZELL_STATE="$2"\nexport PATH KILIX_ZELL_STATE\n'
+            'printf \'%s\\n\' "Mana scripts are in this folder: set-mana, show-mana, clear-mana." '
+            '"Example: set-mana codex 62   (the percentage left)" ""\nexec "$3" -i')
+    return ['/bin/sh','-c',script,'command-computer',str(MANA_SCRIPTS),str(BASE),shell]
 
 _INSTALL_CHROME_DEB='google-chrome-stable_current_amd64.deb'
 

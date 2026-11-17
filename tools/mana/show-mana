@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""Show the mana values set by hand.
+
+    show-mana
+"""
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import zell_mana_manual as manual  # noqa: E402
+
+
+def main(words):
+    if words:
+        print(__doc__.strip())
+        return 0 if words[0] in ('-h', '--help', 'help') else 2
+    values = manual.load(manual.state_dir())
+    for provider in manual.PROVIDERS:
+        if provider in values:
+            percent, at = values[provider]
+            when = time.strftime('%Y-%m-%d %H:%M', time.localtime(at))
+            print(f'{provider}: {percent}% left, set by hand {when}')
+        else:
+            print(f'{provider}: not set by hand')
+    print('A good automatic reading taken after a value was set replaces it.')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

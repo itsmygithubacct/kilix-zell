@@ -6,6 +6,11 @@
 #include <time.h>
 #include "draw.h"
 #include "desktop_assets.h"
+/* The two bottom corners of the Command Center. */
+#define KM_X .905f
+#define KM_Y .965f
+#define PC_X .12f
+#define PC_Y .98f
 const zell_station zell_stations[ZELL_STATIONS]={
  {"Wizard","Ask, think, discover",.23f,.35f,5},
  {"Archivist","Logs and sessions",.50f,.35f,6},
@@ -35,10 +40,12 @@ const zell_station zell_stations[ZELL_STATIONS]={
  {"Drive bin 6","Capacity and files",.40f,.72f,-1},
  {"Drive bin 7","Capacity and files",.58f,.72f,-1},
  {"Drive bin 8","Capacity and files",.76f,.72f,-1},
- {"Stairs to the cave","Return upstairs",.50f,.91f,ZELL_ART_COMMAND_STAIRS},
+ /* The way out of a downstairs room. The Command Center draws no stairs. */
+ {"Way back to the cave","Return upstairs",.50f,.91f,ZELL_ART_COMMAND_STAIRS},
  {"Git Wizard","Projects, changes and health watches",.36f,.72f,ZELL_ART_GIT_IDLE},
  {"Pilot","Project fleets and session arrangements",.64f,.72f,ZELL_ART_PILOT_IDLE},
- {"Key Master","API keys, logins and encrypted secrets",.50f,.72f,ZELL_ART_KEY_MASTER_IDLE},
+ /* The Key Master keeps the bottom right corner of the Command Center. */
+ {"Key Master","API keys, logins and encrypted secrets",KM_X,KM_Y,ZELL_ART_KEY_MASTER_IDLE},
  {"Gatekeeper","Power, sessions and restart checks",.41f,.88f,ZELL_ART_CIVIC_IDLE},
  {"Signalman","Wi-Fi, connections and Bluetooth",.34f,.62f,ZELL_ART_CIVIC_IDLE+4},
  {"Porter","Files, trash and archives",.36f,.86f,ZELL_ART_CRAFT_IDLE},
@@ -65,7 +72,10 @@ const zell_station zell_stations[ZELL_STATIONS]={
  {"Game room hatch","Games downstairs",.30f,.52f,ZELL_ART_GAME_HATCH},
  {"Movie theater hatch","Screen downstairs",.46f,.52f,ZELL_ART_THEATER_HATCH},
  {"Meditation room hatch","Quiet room downstairs",.62f,.52f,ZELL_ART_MEDITATION_HATCH},
- {"Library hatch","Reading room downstairs",.78f,.52f,ZELL_ART_LIBRARY_HATCH}
+ {"Library hatch","Reading room downstairs",.78f,.52f,ZELL_ART_LIBRARY_HATCH},
+ /* Bottom left of the Command Center. Its shell opens in the folder of
+  * scripts that set mana by hand. */
+ {"Command computer","A shell beside the scripts that set mana by hand",PC_X,PC_Y,ZELL_ART_WORKER}
 };
 static const char *const actions[ZELL_STATIONS][17]={
  {"Ask the wizard","First-run tour of Zell",NULL},
@@ -95,7 +105,8 @@ static const char *const actions[ZELL_STATIONS][17]={
  [52]={"Go down to the game room",NULL},
  [53]={"Go down to the movie theater",NULL},
  [54]={"Go down to the meditation room",NULL},
- [55]={"Go down to the library",NULL}
+ [55]={"Go down to the library",NULL},
+ [56]={"Open a shell beside the mana scripts",NULL}
 };
 int zell_desktop_actions(int station){int n=0;
  if(station<0||station>=ZELL_STATIONS)return 0;
@@ -106,7 +117,7 @@ void zell_desktop_init(zell_scene *s){s->desktop=true;s->x=(float)ZELL_WORLD_W*.
 bool zell_desktop_station_visible(const zell_scene *s,int station){
  if(s->room==0)return station<ZELL_CAVE_STATIONS||station==32||station==37||station==38||(station>=42&&station<=45)||(station>=ZELL_GAME_HATCH&&station<=ZELL_LIBRARY_HATCH);
  if(station==28)return true;
- if(s->room==1)return (station>=15&&station<=19)||(station>=29&&station<=31)||(station>=46&&station<=48)||station==ZELL_FLOOR_PANEL;
+ if(s->room==1)return (station>=15&&station<=19)||(station>=29&&station<=31)||(station>=46&&station<=48)||station==ZELL_FLOOR_PANEL||station==ZELL_COMMAND_COMPUTER;
  if(s->room==2)return (station>=20&&station<20+s->disk_count)||station==34||station==35;
  /* The Sentinel keeps the Vault with its keeper; the Signalman and the
   * Merchant work in the Workshop. */
@@ -158,12 +169,15 @@ int zell_desktop_near(const zell_scene *s) {
  }
  return best;
 }
-/* The stairs at the bottom of a downstairs room are walked onto, not opened.
- * Rooms 1 and 2 leave through the corridor at the cave's .975 line. Rooms 3
- * and later keep the painted steps. */
+/* The way out of a downstairs room is walked onto, not opened. The Command
+ * Center has no stairs: its floor runs out of the bottom of the room, and
+ * Kilix leaves anywhere along it at the cave's .975 line. The Laundry leaves
+ * through the stair corridor at that line. Rooms 3 and later keep the
+ * painted steps. */
 bool zell_desktop_on_stairs(const zell_scene *s){
  if(s->room==0)return false;
  float nx=s->x/(float)ZELL_WORLD_W,ny=s->y/(float)ZELL_WORLD_H;
+ if(s->room==1)return ny>.975f;
  if(nx<ZELL_STAIRS_LEFT||nx>ZELL_STAIRS_RIGHT)return false;
  if(s->room>=3)return ny>ZELL_STAIRS_PAINTED_Y;
  return ny>.975f;
@@ -381,7 +395,7 @@ static void open_station(zell_scene *s,int n){
  if(n==10){s->voice_on=!s->voice_on;s->voice_changed=true;s->mode=ZELL_MODE_WALK;}
  else if(n==44){s->dictation_on=!s->dictation_on;s->dictation_changed=true;s->mode=ZELL_MODE_WALK;}
  else if(n==ZELL_FLOOR_PANEL){s->mode=ZELL_MODE_WALK;s->desktop_launch=false;}
- else {s->mode=ZELL_MODE_DESK;if(n==12||(n>=15&&n<=31)||(n>=45&&n<=47))s->desktop_launch=true;}}
+ else {s->mode=ZELL_MODE_DESK;if(n==12||(n>=15&&n<=31)||(n>=45&&n<=47)||n==ZELL_COMMAND_COMPUTER)s->desktop_launch=true;}}
 #include "desktop_collide.inc"
 int zell_desktop_tick(zell_scene *s,const zell_controls *c){
  if(!s->desktop)return 0;
@@ -455,7 +469,9 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
      float north=zell_desktop_north(s->room);
      if(s->y<north){s->y=north;blocked=true;}
     }
-    if(ny>.91f&&(nx<ZELL_STAIRS_LEFT||nx>ZELL_STAIRS_RIGHT)){s->y=(float)ZELL_WORLD_H*.91f;blocked=true;}
+    /* A south wall with a gap for the stairs, in every room but the Command
+     * Center, which is open along its bottom. */
+    if(s->room!=1&&ny>.91f&&(nx<ZELL_STAIRS_LEFT||nx>ZELL_STAIRS_RIGHT)){s->y=(float)ZELL_WORLD_H*.91f;blocked=true;}
     /* L1 calls zell_desktop_blocked. Slide one axis when the other is free. */
     {
      float try_x=s->x,try_y=s->y;
@@ -464,7 +480,7 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
      if(zell_desktop_blocked(s,s->x,s->y)){s->x=oldx;s->y=oldy;blocked=true;}
     }
     for(int i=0;i<ZELL_STATIONS;i++){
-     if(!zell_desktop_station_visible(s,i)||i==28||i==46||i==47||i==ZELL_WORKSHOP_COMPUTER||i==ZELL_FLOOR_PANEL||(s->room==0&&i>=6&&!(i>=32&&i<=41)))continue;
+     if(!zell_desktop_station_visible(s,i)||i==28||i==46||i==47||i==ZELL_WORKSHOP_COMPUTER||i==ZELL_COMMAND_COMPUTER||i==ZELL_FLOOR_PANEL||(s->room==0&&i>=6&&!(i>=32&&i<=41)))continue;
      float ax=s->x-zell_stations[i].x*ZELL_WORLD_W,ay=s->y-zell_stations[i].y*ZELL_WORLD_H;
      if(ax*ax+ay*ay<26*26){s->x=oldx;s->y=oldy;blocked=true;break;}
     }
@@ -616,6 +632,19 @@ void zell_mana_console_layout(zell_rect *frame,zell_rect *display){
  int w=176,h=129;
  *frame=(zell_rect){(int)(station->x*ZELL_WORLD_W)-w/2,(int)(station->y*ZELL_WORLD_H)-h,w,h};
  *display=(zell_rect){frame->x+w*11/100,frame->y+h*15/100,w*78/100,h*62/100};
+}
+void zell_command_computer_layout(zell_rect *frame,zell_rect *display){
+ const zell_station *station=&zell_stations[ZELL_COMMAND_COMPUTER];
+ /* The station point is the computer's near corner, where Kilix can stand:
+  * the case itself is against the left wall, outside the floor he walks. */
+ int w=132,h=97;
+ *frame=(zell_rect){(int)(station->x*ZELL_WORLD_W)+ZELL_COMMAND_COMPUTER_REACH-w,(int)(station->y*ZELL_WORLD_H)-h,w,h};
+ *display=(zell_rect){frame->x+w*11/100,frame->y+h*15/100,w*78/100,h*62/100};
+}
+float zell_command_exit_arrow_x(int index){
+ if(index<0)index=0;
+ if(index>=ZELL_COMMAND_EXIT_ARROWS)index=ZELL_COMMAND_EXIT_ARROWS-1;
+ return (.26f+.12f*(float)index)*(float)ZELL_WORLD_W;
 }
 void zell_command_switch_layout(int index,zell_rect *frame){
  if(index<0||index>1){*frame=(zell_rect){0};return;}

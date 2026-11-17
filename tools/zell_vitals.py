@@ -158,6 +158,10 @@ def mana(ui, now, provider_directory=None):
         entries = {}
     attempts = read_json(config_path().parent / '.loop/zell-mana-attempts.json')
     values, ages, lines, missing = [], [], [], []
+    import zell_mana_manual
+    # Values set by hand at the Command computer live in Zell's state folder.
+    base = getattr(ui, 'BASE', None)
+    manual = zell_mana_manual.load(base if isinstance(base, (str, Path)) else None)
     for provider in PROVIDERS:
         entry = entries.get(provider, {})
         entry = entry if isinstance(entry, dict) else {}
@@ -167,6 +171,13 @@ def mana(ui, now, provider_directory=None):
         failed = attempt.get('failed') and (number(attempt.get('at')) or 0) > (checked or 0)
         value = None if failed or not checked else provider_value(entry, now)
         stamp = max(checked or 0, number(attempt.get('at')) or 0)
+        hand = manual.get(provider)
+        if zell_mana_manual.stands(hand, value, checked):
+            values.append(hand[0])
+            ages.append(max(0, int(now - hand[1])))
+            lines.append(f'{provider}: {hand[0]}% remaining (set by hand)'
+                         f'; set {datetime.fromtimestamp(hand[1]).isoformat(timespec="seconds")}')
+            continue
         if value is None:
             missing.append(provider)
         else:

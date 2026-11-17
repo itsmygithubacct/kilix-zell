@@ -302,6 +302,26 @@ answer. While Zell runs, readings older than 30 minutes are read again
 automatically; this reads balances only and spends no tokens. *Automatic
 readings on / off* turns that off. The console needs Claudex.
 
+The **Command computer** stands in the bottom left corner of the Command
+Center. Enter beside it opens a shell in Zell's floating terminal, started in
+the folder `tools/mana`. The three scripts there tell Zell by hand how much a
+provider has left, for when no automatic reading can be taken:
+
+```
+set-mana codex 62           Codex has 62% left
+set-mana grok 40 codex 100  several at once
+set-mana all 50             all three
+set-mana                    be asked for each one
+show-mana                   what is set by hand now
+clear-mana [provider ...]   forget the values, or only the ones named
+```
+
+The number is the percentage left, from 0 to 100. A value set by hand is kept
+in Zell's state folder (`mana-manual.json`). It stands until it is cleared,
+set again, or a good automatic reading is taken after it, and the Mana console
+and the MANA bar show it within a few seconds. The scripts do not need
+Claudex. Type `exit` to leave the shell.
+
 Administrator > Update OS in floating terminal runs exactly
 `sudo apt update && sudo apt -y upgrade` after an in-game confirmation. A real
 PTY renders through Neuronte in a floating panel above the room, including sudo's
@@ -315,7 +335,10 @@ library; `KILIX_ZELL_NEURONTE_DISPLAY` and `ZELL_NEURONTE_LIBRARY` can select th
 
 Four floor hatches lead to the **Command Center**, **Laundry**, **Vault**, and
 **Workshop**. Enter interacts;
-the downstairs stair hatch returns to the cave. Tab lists the current room's
+the downstairs stair hatch returns to the cave. The Command Center has no
+stairs: Kilix leaves it by walking off the bottom of its floor, anywhere
+between the Command computer in the bottom left corner and the Key Master in
+the bottom right. Tab lists the current room's
 stations. Five command-center screens bind to real Kilix coding tabs, with exact
 broker identities saved after successful creation. Interacting opens/focuses the
 session. The larger screens show bounded text previews of their assigned Codex

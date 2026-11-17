@@ -230,6 +230,19 @@ static void desktop_mana_console(const zell_scene *s,sr_canvas *c,int cx,int cy,
  desktop_mana_rows(s,c,display.x+6,display.y+24,display.w-12,17,1);
  if(selected)desktop_label(c,frame.x+frame.w/2,frame.y+frame.h+8,"Enter: balances & usage pages",0xa8f3d5u);
 }
+/* The Command Center's computer: the room's own framed screen, small, in
+ * the bottom left corner. Its shell opens in the folder of mana scripts. */
+static void desktop_command_computer(sr_canvas *c,int cx,int cy,bool selected){
+ zell_rect frame,display;zell_command_computer_layout(&frame,&display);
+ frame.x-=cx;frame.y-=cy;display.x-=cx;display.y-=cy;
+ const zell_art *a=zell_art_get(ZELL_ART_WORKER);
+ if(a){sr_canvas src;sr_canvas_wrap(&src,a->pixels,a->width,a->height);sr_blit_scaled(c,&src,frame.x,frame.y,frame.w,frame.h,1);}
+ sr_fill_rect(c,(float)display.x,(float)display.y,(float)display.w,(float)display.h,0x07141au,1);
+ if(selected)sr_stroke_rect(c,(float)display.x,(float)display.y,(float)display.w,(float)display.h,2,0x96ead0u,1);
+ desktop_text(c,display.x+6,display.y+4,"SHELL",0xe9d49fu,display.w-12);
+ desktop_text(c,display.x+6,display.y+24,"$ mana",0x8fd9c4u,display.w-12);
+ if(selected)desktop_label(c,frame.x+frame.w/2,frame.y-22,"Enter: shell and mana scripts",0xa8f3d5u);
+}
 /* The console screen grows to fill the view before its browser tab opens. */
 static void desktop_zoom(const zell_scene *s,sr_canvas *c){
  zell_rect frame,display;zell_mana_console_layout(&frame,&display);
@@ -272,12 +285,14 @@ static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
  if(!front)desktop_floor_panels(s,c,cx,cy);
  for(int i=15;i<ZELL_STATIONS;i++){
   if(!zell_desktop_station_visible(s,i)||zell_desktop_station_in_front(s,i)!=front)continue;
+  if(i==ZELL_COMMAND_COMPUTER){if(!front)desktop_command_computer(c,cx,cy,i==near);continue;}
   if(i>=ZELL_WORKSHOP_COMPUTER)continue;
   int x=(int)(zell_stations[i].x*ZELL_WORLD_W)-cx,y=(int)(zell_stations[i].y*ZELL_WORLD_H)-cy;
   if(i==ZELL_MANA_CONSOLE){desktop_mana_console(s,c,cx,cy,i==near);continue;}
   if(i>=46)continue;
-  /* Floor panels replace the old lever boxes. Rooms 1 and 2 also paint stairs. */
-  if(i==28){if(s->room<3)desktop_hatch(c,s->room==1?ZELL_ART_COMMAND_STAIRS:ZELL_ART_LAUNDRY_STAIRS,x,y,false,"");continue;}
+  /* Floor panels replace the old lever boxes. */
+  /* The Laundry paints its stairs. The Command Center has none. */
+  if(i==28){if(s->room==2)desktop_hatch(c,ZELL_ART_LAUNDRY_STAIRS,x,y,false,"");continue;}
   if(i>=29){
    zell_actor_pose staff=i<32?zell_desktop_pose(s,i-23):(zell_actor_pose){zell_stations[i].art+(s->flame_tick/20+i)%4,0,0};
    /* Staff are shown as the cave's first six are: a glow and a name only
@@ -285,8 +300,11 @@ static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
    if(i==near)sr_fill_ellipse(c,(float)x,(float)y,128*.42f,6,0x80e5c4u,.65f);
    sr_fill_ellipse(c,(float)x,(float)y,24,7,0x071719u,.45f);
    desktop_art(c,staff.art,x+staff.offset_x,y+staff.offset_y,128);
-   if(i==near)desktop_label(c,x,y+15,zell_stations[i].name,0xb9f8dbu);
-   if(i==near)desktop_label(c,x,y+40,i==29?"Enter: projects and Git":i==30?"Enter: coding fleets":i==31?"Enter: encrypted secret vault":"Enter: tasks",0xa8f3d5u);
+   /* The Key Master stands at the bottom edge of his room, so his two
+    * lines go above his head, where the status bar cannot cover them. */
+   int name_y=i==31?y-ZELL_KEY_MASTER_LABEL_UP:y+15;
+   if(i==near)desktop_label(c,x,name_y,zell_stations[i].name,0xb9f8dbu);
+   if(i==near)desktop_label(c,x,name_y+25,i==29?"Enter: projects and Git":i==30?"Enter: coding fleets":i==31?"Enter: encrypted secret vault":"Enter: tasks",0xa8f3d5u);
    continue;
   }
   if(s->room==1){desktop_monitor(s,c,i-15,cx,cy,i==near);continue;}
@@ -304,12 +322,22 @@ static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
   if(i==near)desktop_label(c,x,y+40,"Enter: dig through drive",0xa8f3d5u);
  }
  if(!front&&s->room==2&&s->disk_count==0)desktop_label(c,ZELL_WORLD_W/2-cx,ZELL_WORLD_H/2-cy,s->disks_ready?"No eligible mounted disks found":"Reading mounted drives...",0xc9d8d2u);
- if(!front&&(s->room==1||s->room==2)){
+ if(!front&&s->room==2){
   float x0=ZELL_STAIRS_LEFT*(float)ZELL_WORLD_W-(float)cx;
   float x1=ZELL_STAIRS_RIGHT*(float)ZELL_WORLD_W-(float)cx;
   float y=0.93f*(float)ZELL_WORLD_H-(float)cy,mid=(x0+x1)*0.5f;
   sr_fill_rect(c,x0,y,x1-x0,16,0x14201cu,.88f);
   desktop_down_arrow(c,mid,14.f,y+2.f,y+22.f,0xd7b56au,.95f);
+ }
+ /* The Command Center is left by walking off the bottom of its floor,
+  * anywhere between the two corners. A row of arrows says so. */
+ if(!front&&s->room==1){
+  float y=0.93f*(float)ZELL_WORLD_H-(float)cy;
+  for(int k=0;k<ZELL_COMMAND_EXIT_ARROWS;k++){
+   float mid=zell_command_exit_arrow_x(k)-(float)cx;
+   sr_fill_rect(c,mid-24.f,y,48.f,16,0x14201cu,.88f);
+   desktop_down_arrow(c,mid,14.f,y+2.f,y+22.f,0xd7b56au,.95f);
+  }
  }
  if(front&&s->room==1)desktop_fleet_board(s,c,cx,cy);
 }
@@ -497,7 +525,7 @@ static void desktop_chrome(const zell_scene *s,sr_canvas *c,int cx,int cy){
  if(c->w>=500&&s->mode==ZELL_MODE_WALK&&s->room!=6){
   int mx=c->w-140,my=42;sr_fill_rect(c,(float)mx,(float)my,128,88,0x0c1921u,.9f);
   sr_stroke_rect(c,(float)mx,(float)my,128,88,1,0x4b7777u,1);
-  for(int i=0;i<ZELL_STATIONS;i++)if((i<ZELL_WORKSHOP_COMPUTER||(i>=ZELL_GAME_HATCH&&i<=ZELL_LIBRARY_HATCH))&&zell_desktop_station_visible(s,i))sr_fill_circle(c,(float)(mx+4)+zell_stations[i].x*120,(float)(my+4)+zell_stations[i].y*80,2,0xd9ba79u,1);
+  for(int i=0;i<ZELL_STATIONS;i++)if((i<ZELL_WORKSHOP_COMPUTER||(i>=ZELL_GAME_HATCH&&i<=ZELL_LIBRARY_HATCH)||i==ZELL_COMMAND_COMPUTER)&&zell_desktop_station_visible(s,i))sr_fill_circle(c,(float)(mx+4)+zell_stations[i].x*120,(float)(my+4)+zell_stations[i].y*80,2,0xd9ba79u,1);
   {
    float x0,y0,x1,y1;
    zell_screen_to_world(s,0.f,0.f,&x0,&y0);
@@ -629,12 +657,12 @@ static void desktop_service(const zell_scene *s,sr_canvas *c){
    sr_fill_rect(c,(float)l.frame.x,(float)l.frame.y,(float)l.frame.w,(float)l.frame.h,0x10232cu,1);
    sr_stroke_rect(c,(float)l.frame.x,(float)l.frame.y,(float)l.frame.w,(float)l.frame.h,2,0x74b8a9u,1);
    sr_canvas frame;sr_canvas_wrap(&frame,s->terminal_pixels,w,h);sr_blit_scaled(c,&frame,x,y,w,h,1);
-   char title[160];snprintf(title,sizeof title,"%s / %s",s->terminal_title[0]?s->terminal_title:"ZELL",s->terminal_private?"PRIVATE TERMINAL":"INTERACTIVE TERMINAL");
+   char title[160];snprintf(title,sizeof title,"%s / %s",s->terminal_title[0]?s->terminal_title:"ZELL",s->station==ZELL_COMMAND_COMPUTER?"SHELL":s->terminal_private?"PRIVATE TERMINAL":"INTERACTIVE TERMINAL");
    desktop_text(c,x,y-23,title,0xe5cf98u,w-104);
    desktop_button(s,c,&l.minimize,0);
    desktop_button(s,c,&l.maximize,s->terminal_maximized?2:1);
    desktop_button(s,c,&l.close,3);
-   desktop_text(c,x,y+h+7,s->terminal_private?"Hidden secret input | Ctrl-C cancels":"Type here for sudo | Ctrl-C interrupts command",0xabc8c0u,w);
+   desktop_text(c,x,y+h+7,s->station==ZELL_COMMAND_COMPUTER?"Keyboard goes to the shell | type exit to leave":s->terminal_private?"Hidden secret input | Ctrl-C cancels":"Type here for sudo | Ctrl-C interrupts command",0xabc8c0u,w);
   }else desktop_label(c,c->w/2,c->h/2,"Opening Neuronte terminal...",0xc9e4d5u);
   return;
  }

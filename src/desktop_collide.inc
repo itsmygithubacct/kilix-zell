@@ -62,6 +62,8 @@ static int spans_for(const zell_scene *s,zell_span *out,int cap){
   out[n].x1=(float)(frame.x+frame.w);out[n].y1=(float)(frame.y+frame.h);
   n++;
  }
+ /* The Command computer needs no span: its case is against the left wall,
+  * outside the floor Kilix can walk. */
  return n;
 }
 float zell_desktop_north(int room){

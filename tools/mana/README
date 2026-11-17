@@ -1,0 +1,16 @@
+Mana scripts
+
+These tell Zell how much each coding provider has left when it cannot read
+the number itself. Give the percentage LEFT, from 0 to 100.
+
+  set-mana codex 62           Codex has 62% left
+  set-mana grok 40 codex 100  several at once
+  set-mana all 50             all three
+  set-mana                    be asked for each one
+  show-mana                   what is set by hand now
+  clear-mana                  forget every value set by hand
+  clear-mana codex            forget only Codex's
+
+A value set by hand stands until you clear it, set it again, or Zell takes a
+good automatic reading after it. The Mana console and the MANA bar show the
+change within a few seconds.

@@ -29,6 +29,10 @@ def build(dest, modules, neuronte, ghostty, sdk):
     for script in sorted((ROOT/'tools').glob('*.py')):
         if script.name not in {'compile_desktop.py', 'package_runtime.py'}:
             copy(script, dest/'tools'/script.name)
+    # The Command computer's shell opens in this folder.
+    for name in ('set-mana', 'show-mana', 'clear-mana'):
+        copy(ROOT/'tools/mana'/name, dest/'tools/mana'/name, True)
+    copy(ROOT/'tools/mana/README', dest/'tools/mana/README')
     copy(neuronte/'weights/neuronte-split-v4.nrt', dest/'weights/neuronte-split-v4.nrt')
     copy(neuronte/'build/libneuronte.so', dest/'lib/libneuronte.so', True)
     copy(ghostty/'lib/libghostty-vt.so.0', dest/'lib/libghostty-vt.so.0', True)

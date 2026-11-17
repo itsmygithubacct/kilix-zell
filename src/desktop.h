@@ -10,7 +10,7 @@
 #define ZELL_ROOM_VITALS_H 38
 #define ZELL_ROOM_HUD_BOTTOM (ZELL_ROOM_VITALS_Y + ZELL_ROOM_VITALS_H)
 #define ZELL_ROOM_STATUS_STRIP 30
-#define ZELL_STATIONS 56
+#define ZELL_STATIONS 57
 /* The Command Center computer that zooms into a usage browser. */
 #define ZELL_MANA_CONSOLE 48
 #define ZELL_WORKSHOP_COMPUTER 49
@@ -21,6 +21,8 @@
 #define ZELL_THEATER_HATCH 53
 #define ZELL_MEDITATION_HATCH 54
 #define ZELL_LIBRARY_HATCH 55
+/* The Command Center's shell computer, in its bottom left corner. */
+#define ZELL_COMMAND_COMPUTER 56
 #define ZELL_ZOOM_TICKS 22
 #define ZELL_CAVE_STATIONS 15
 /* Where the Neuronte lever is drawn, relative to its floor interaction point. */
@@ -68,6 +70,14 @@ typedef struct { int x, y, w, h; } zell_rect;
 /* World-space monitor geometry shared by drawing, collision and picking. */
 void zell_monitor_layout(int screen,zell_rect *frame,zell_rect *display);
 void zell_mana_console_layout(zell_rect *frame,zell_rect *display);
+void zell_command_computer_layout(zell_rect *frame,zell_rect *display);
+/* The computer's case ends this far right of its station point. */
+#define ZELL_COMMAND_COMPUTER_REACH 20
+/* The Key Master's name is drawn this far above his feet. */
+#define ZELL_KEY_MASTER_LABEL_UP 196
+/* Arrows along the Command Center's open bottom edge, in world pixels. */
+#define ZELL_COMMAND_EXIT_ARROWS 5
+float zell_command_exit_arrow_x(int index);
 void zell_command_switch_layout(int index,zell_rect *frame);
 /* World frame and glass for floor panel 0 (YOLO), 1 (agents), or 2 (spare).
  * Panels 0 and 1 use the command-switch rectangles. glass may be NULL. */
