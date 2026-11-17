@@ -3,6 +3,9 @@ MODULES ?= $(abspath $(ROOT)/../../kilix-modules)
 FB_DIR := $(MODULES)/kitty-framebuffer
 KB_DIR := $(MODULES)/kitty-input/third_party/kitty_keyboard
 SR_DIR := $(MODULES)/soft-raster
+# neuronte-sdk, for its canvas. It must be a checkout that has
+# src/neuronte_sdk_canvas.c.
+NSDK_DIR ?= $(MODULES)/neuronte-sdk
 BUILD := $(ROOT)/build
 
 CC ?= cc
@@ -107,16 +110,27 @@ $(BUILD)/soft_raster.o: $(SR_DIR)/src/soft_raster.c | $(BUILD)
 
 # The canvas of the Neuronte programs, which do not link soft-raster: the
 # pixel buffer, the clear, the flat fill, the RGBA packing and the PPM
-# writer, adapted from soft-raster. It reads the soft-raster header for the
-# canvas struct only.
-$(BUILD)/canvas.o: $(ROOT)/src/canvas.c $(ROOT)/src/canvas.h | $(BUILD)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+# writer. The work is neuronte-sdk's canvas; canvas.o carries Zell's canvas
+# struct across to it. It reads the soft-raster header for that struct only.
+$(BUILD)/canvas.o: $(ROOT)/src/canvas.c $(ROOT)/src/canvas.h $(NSDK_DIR)/include/neuronte_sdk_canvas.h | $(BUILD)
+	$(CC) $(CPPFLAGS) -I$(NSDK_DIR)/include $(CFLAGS) -c $< -o $@
+
+# The work behind it: neuronte-sdk's canvas, one file that includes nothing
+# of Neuronte. CANVAS_OBJS is the pair every Neuronte program links.
+$(BUILD)/nsdk_canvas.o: $(NSDK_DIR)/src/neuronte_sdk_canvas.c $(NSDK_DIR)/include/neuronte_sdk_canvas.h | $(BUILD)
+	$(CC) $(CPPFLAGS) -I$(NSDK_DIR)/include $(CFLAGS) -c $< -o $@
+
+$(NSDK_DIR)/src/neuronte_sdk_canvas.c $(NSDK_DIR)/include/neuronte_sdk_canvas.h:
+	@echo "zell: $(NSDK_DIR) has no canvas. Set NSDK_DIR to a neuronte-sdk checkout with src/neuronte_sdk_canvas.c." >&2
+	@exit 2
+
+CANVAS_OBJS := $(BUILD)/canvas.o $(BUILD)/nsdk_canvas.o
 
 # The canvas beside soft-raster, call for call: the two must give the same bytes.
 $(BUILD)/test_canvas.o: $(ROOT)/tests/test_canvas.c $(ROOT)/src/canvas.h | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/test-canvas: $(BUILD)/test_canvas.o $(BUILD)/canvas.o $(BUILD)/soft_raster.o | $(BUILD)
+$(BUILD)/test-canvas: $(BUILD)/test_canvas.o $(CANVAS_OBJS) $(BUILD)/soft_raster.o | $(BUILD)
 	$(CC) $(CFLAGS) $^ -lm -o $@
 
 .PHONY: test-canvas
@@ -194,7 +208,7 @@ N_LIB_OBJS := \
 	$(BUILD)/kitty_framebuffer.o \
 	$(BUILD)/kitty_keyboard.o \
 	$(BUILD)/kitty_keyboard_posix.o \
-	$(BUILD)/canvas.o
+	$(CANVAS_OBJS)
 
 SNAP_NEURONTE := \
 	$(BUILD)/desktop.o \
@@ -206,7 +220,7 @@ SNAP_NEURONTE := \
 	$(BUILD)/history.o \
 	$(BUILD)/sprites.o \
 	$(BUILD)/room.o \
-	$(BUILD)/canvas.o
+	$(CANVAS_OBJS)
 
 .PHONY: neuronte test-neuronte snap
 
@@ -229,14 +243,14 @@ $(ROOT)/zell-neuronte: $(BUILD)/main_neuronte.o $(N_COMMON) $(N_LIB_OBJS) $(NEUR
 $(BUILD)/test_neuronte.o: $(ROOT)/tests/test_neuronte.c | $(BUILD)
 	$(CC) $(N_CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/test-neuronte: $(BUILD)/test_neuronte.o $(N_COMMON) $(BUILD)/canvas.o $(NEURONTE_LIB) | $(BUILD)
+$(BUILD)/test-neuronte: $(BUILD)/test_neuronte.o $(N_COMMON) $(CANVAS_OBJS) $(NEURONTE_LIB) | $(BUILD)
 	$(CC) $(CFLAGS) $^ -lz -lm -o $@
 
 # The scene tests again, with the Neuronte renderer in place of draw.o.
 $(BUILD)/test_scene_neuronte.o: $(ROOT)/tests/test_scene.c | $(BUILD)
 	$(CC) $(N_CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/test-scene-neuronte: $(BUILD)/test_scene_neuronte.o $(N_COMMON) $(BUILD)/canvas.o $(NEURONTE_LIB) | $(BUILD)
+$(BUILD)/test-scene-neuronte: $(BUILD)/test_scene_neuronte.o $(N_COMMON) $(CANVAS_OBJS) $(NEURONTE_LIB) | $(BUILD)
 	$(CC) $(CFLAGS) $^ -lz -lm -o $@
 
 test-neuronte: $(BUILD)/test-neuronte $(BUILD)/test-scene-neuronte
@@ -329,7 +343,7 @@ $(BUILD)/test_process.o $(BUILD)/test_desktop.o: $(ROOT)/src/scene.h $(ROOT)/src
 $(BUILD)/test_desktop_neuronte.o: $(ROOT)/tests/test_desktop.c | $(BUILD)
 	$(CC) $(N_CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/test-desktop-neuronte: $(BUILD)/test_desktop_neuronte.o $(N_COMMON) $(BUILD)/canvas.o $(NEURONTE_LIB)
+$(BUILD)/test-desktop-neuronte: $(BUILD)/test_desktop_neuronte.o $(N_COMMON) $(CANVAS_OBJS) $(NEURONTE_LIB)
 	$(CC) $(CFLAGS) $^ $(LDLIBS) -o $@
 
 .PHONY: test-desktop-neuronte
@@ -367,8 +381,8 @@ test-neuronte-link: $(N_PROGRAMS)
 
 .PHONY: install
 install: neuronte
-	python3 tools/package_runtime.py --modules "$(MODULES)" --neuronte "$(NEURONTE)" --install "$(DESTDIR)$(ZELL_INSTALL_DIR)" --bin-dir "$(DESTDIR)$(ZELL_BIN_DIR)" $(if $(DESTDIR),,--user-unit-dir "$(HOME)/.config/systemd/user")
+	python3 tools/package_runtime.py --modules "$(MODULES)" --neuronte "$(NEURONTE)" --neuronte-sdk "$(NSDK_DIR)" --install "$(DESTDIR)$(ZELL_INSTALL_DIR)" --bin-dir "$(DESTDIR)$(ZELL_BIN_DIR)" $(if $(DESTDIR),,--user-unit-dir "$(HOME)/.config/systemd/user")
 
 .PHONY: runtime
 runtime: neuronte
-	python3 tools/package_runtime.py --modules "$(MODULES)" --neuronte "$(NEURONTE)" --output "$(BUILD)/zell-$(shell cat VERSION)-$(shell uname -m).tar.xz"
+	python3 tools/package_runtime.py --modules "$(MODULES)" --neuronte "$(NEURONTE)" --neuronte-sdk "$(NSDK_DIR)" --output "$(BUILD)/zell-$(shell cat VERSION)-$(shell uname -m).tar.xz"

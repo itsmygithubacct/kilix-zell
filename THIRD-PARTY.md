@@ -67,14 +67,17 @@ repository. `MODULES` overrides the default `../../kilix-modules`.
 
 Each library keeps its own MIT notice.
 
-One file is the exception to "not copied". `src/canvas.c` is adapted from
-soft-raster: its pixel buffer, clear, flat fill, RGBA packing and PPM
-writer, kept to the same arithmetic. The file carries soft-raster's
-copyright lines and MIT notice in full, and the runtime archive carries the
-soft-raster licence as `licenses/soft-raster`.
+`zell-neuronte`, the optional build, links the canvas of `neuronte-sdk` in
+place of soft-raster: one source file of that module,
+`src/neuronte_sdk_canvas.c`, compiled into the program. It is MIT licensed
+and is not copied into this repository. That file is adapted from
+soft-raster (its pixel buffer, clear, flat fill, RGBA packing and PPM
+writer, kept to the same arithmetic) and carries soft-raster's copyright
+lines and MIT notice in full. The runtime archive carries both licences, as
+`licenses/neuronte-sdk` and `licenses/soft-raster`. `src/canvas.c` here is
+Zell's own code and holds none of either.
 
-`zell-neuronte`, the optional build, links `src/canvas.c` in place of
-soft-raster. It also links Neuronte (`libneuronte.a`)
+The build also links Neuronte (`libneuronte.a`)
 and loads its weight file at run time. Neuronte is MIT licensed, and its
 weights and shapes were made for that project. Neither is copied into
 this repository.

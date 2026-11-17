@@ -5,6 +5,9 @@
  * together. */
 #include <errno.h>
 #include <limits.h>
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -91,9 +94,14 @@ static void test_buffer(void)
     size_t i;
 
     for (i = 0; i < sizeof sizes / sizeof sizes[0]; i++) {
-        bool ra = sr_canvas_init(&a, sizes[i][0], sizes[i][1]);
-        bool rb = zell_canvas_init(&b, sizes[i][0], sizes[i][1]);
+        bool ra;
+        bool rb;
 
+        /* A refused init must still empty whatever the struct held. */
+        memset(&a, 0x5a, sizeof a);
+        memset(&b, 0x5a, sizeof b);
+        ra = sr_canvas_init(&a, sizes[i][0], sizes[i][1]);
+        rb = zell_canvas_init(&b, sizes[i][0], sizes[i][1]);
         expect(ra == rb && same_struct(&a, &b), "init agrees");
         if (ra && rb) {
             expect(same_pixels(&a, &b), "a new buffer is the same zeros");
@@ -127,6 +135,34 @@ static void test_buffer(void)
     expect(b.px == NULL && mem[0] == 0x12345678u, "free leaves wrapped memory alone");
     zell_canvas_free(NULL);
     zell_canvas_wrap(NULL, mem, 4, 3);
+}
+
+#if defined(__GLIBC__) && __GLIBC_PREREQ(2, 33)
+#define CAN_COUNT_MEMORY 1
+/* Bytes the allocator holds for the program, mapped blocks included. */
+static size_t held(void)
+{
+    struct mallinfo2 info = mallinfo2();
+
+    return info.uordblks + info.hblkhd;
+}
+#endif
+
+/* A canvas that init made gives its buffer back when it is freed. */
+static void test_free_gives_the_buffer_back(void)
+{
+#ifdef CAN_COUNT_MEMORY
+    enum { SIDE = 1024 };
+    size_t before = held();
+    size_t with;
+    sr_canvas c;
+
+    expect(zell_canvas_init(&c, SIDE, SIDE), "a canvas to free");
+    with = held();
+    expect(with >= before + (size_t)SIDE * SIDE * 4u, "the buffer is on the heap");
+    zell_canvas_free(&c);
+    expect(held() == before, "free gives the buffer back");
+#endif
 }
 
 static int clip_number(void)
@@ -559,6 +595,7 @@ static void test_fill_past_float_range(void)
 int main(void)
 {
     test_buffer();
+    test_free_gives_the_buffer_back();
     test_clip();
     test_clear();
     test_fill();

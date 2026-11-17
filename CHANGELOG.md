@@ -9,6 +9,7 @@ These changes are not in the 0.1.1 runtime archive that Plebian-OS 0.2.3 pins.
 - Name the Neuronte commit 0.1.1 was reviewed against, and say where the release carries Zell.
 - Take soft-raster out of the Neuronte programs. Their pixel buffer, frame clear, flat fill, RGBA packing and PPM writer are now in `src/canvas.c`, adapted from soft-raster with its notice, which gives the same bytes as soft-raster did. The raster build is unchanged.
 - Draw the stair marker and the floating window's close button from Neuronte characters in the Neuronte build. Both were drawn by soft-raster's triangle and line. The marker sits within a pixel of where it was. The cross is slightly bolder and can sit half a pixel off the button's middle, because its cell is placed on whole pixels.
+- Move the Neuronte programs' canvas into the `neuronte-sdk` module, for the 0.2.4 line. `src/canvas.c` now only carries Zell's canvas struct across to `nsdk_canvas_*`; the build compiles that module's one canvas source (`NSDK_DIR`), and the runtime gains `licenses/neuronte-sdk`. Frames are the same bytes as before. A release that pins Zell after this change must pin a `neuronte-sdk` that has the canvas and add the licence file to its package list.
 
 ## 0.1.1 — 2026-11-13
 

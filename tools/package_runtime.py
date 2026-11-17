@@ -20,7 +20,7 @@ def copy(source, target, executable=False):
     target.chmod(0o755 if executable else 0o644)
 
 
-def build(dest, modules, neuronte, ghostty):
+def build(dest, modules, neuronte, ghostty, sdk):
     display = modules/'neuronte-display'
     secrets = modules/'kilix-secrets'
     copy(ROOT/'zell-neuronte', dest/'zell-neuronte', True)
@@ -49,6 +49,7 @@ def build(dest, modules, neuronte, ghostty):
     for name, source in [('zell', ROOT), ('neuronte', neuronte), ('ghostty', ghostty),
         ('neuronte-display', display), ('kilix-secrets', secrets),
         ('kitty-framebuffer', modules/'kitty-framebuffer'), ('soft-raster', modules/'soft-raster'),
+        ('neuronte-sdk', sdk),
         ('kitty-keyboard', modules/'kitty-input/third_party/kitty_keyboard')]:
         copy(source/'LICENSE', dest/'licenses'/name)
     copy(secrets/'THIRD_PARTY_NOTICES.md', dest/'licenses/kilix-secrets-notices')
@@ -82,6 +83,8 @@ def main():
     parser.add_argument('--modules', type=Path, default=ROOT.parents[1]/'kilix-modules')
     parser.add_argument('--neuronte', type=Path, default=Path.home()/'projects/neuronte')
     parser.add_argument('--ghostty', type=Path, default=Path.home()/'projects/batty/build/ghostty')
+    parser.add_argument('--neuronte-sdk', type=Path, help='neuronte-sdk checkout the canvas was built from '
+                        '(default: neuronte-sdk under --modules)')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--install', type=Path)
     parser.add_argument('--bin-dir', type=Path)
@@ -92,7 +95,9 @@ def main():
     ROOT.joinpath('build').mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='runtime-', dir=ROOT/'build') as temporary:
         dest = Path(temporary)/'zell'
-        build(dest, args.modules.resolve(), args.neuronte.resolve(), args.ghostty.resolve())
+        modules = args.modules.resolve()
+        sdk = args.neuronte_sdk.resolve() if args.neuronte_sdk else modules/'neuronte-sdk'
+        build(dest, modules, args.neuronte.resolve(), args.ghostty.resolve(), sdk)
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             with tarfile.open(args.output, 'w:xz') as archive:

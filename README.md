@@ -151,16 +151,23 @@ sessions or copy, move and back up active files there. Nothing is reserved by de
 
 ## Tests and artwork
 
-Sibling libraries: `kitty-framebuffer`, `kitty-input`, `soft-raster`. Neuronte
+Sibling libraries: `kitty-framebuffer`, `kitty-input`, `soft-raster`, and
+`neuronte-sdk` for the Neuronte build. Neuronte
 provides text, shape and sprite rendering. The background is cached after its
 first Neuronte render.
 
 The Neuronte programs do not link soft-raster. Their pixel buffer, frame
-clear, flat fill, RGBA packing and PPM writer are in `src/canvas.c`, which is
-adapted from soft-raster and draws no other shape. They read soft-raster's
-header for the canvas struct, so the build still needs that checkout. `make test` runs the canvas beside
-soft-raster and compares the bytes; `make test-neuronte` checks that no
-Neuronte program holds a soft-raster symbol.
+clear, flat fill, RGBA packing and PPM writer are the canvas of
+`neuronte-sdk` (`neuronte_sdk_canvas.h`), which is adapted from soft-raster
+and draws no other shape. `src/canvas.c` only carries Zell's canvas struct
+across to it. The build compiles the SDK's one canvas source and nothing
+else of the SDK. `NSDK_DIR` names the checkout, by default
+`neuronte-sdk` under `MODULES`; it must be one that has
+`src/neuronte_sdk_canvas.c`. The programs read soft-raster's
+header for the canvas struct, so the build still needs that checkout too.
+`make test` runs the canvas beside soft-raster and compares the bytes;
+`make test-neuronte` checks that no Neuronte program holds a soft-raster
+symbol, and that each holds the SDK's canvas and no other part of the SDK.
 
 ```sh
 make all neuronte

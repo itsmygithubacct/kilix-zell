@@ -3,10 +3,12 @@
 
 /* The pixel canvas of the Neuronte build.
  *
- * The Neuronte programs link this file in place of soft-raster. It holds
- * what plain code may still do there: make and free the pixel buffer, set
- * the clip, clear the frame, fill a rectangle with one colour, and hand
- * the pixels on as RGBA bytes or a PPM file. It draws no other shape.
+ * The Neuronte programs link this and neuronte-sdk's canvas in place of
+ * soft-raster. Together they do what plain code may still do there: make
+ * and free the pixel buffer, set the clip, clear the frame, fill a
+ * rectangle with one colour, and hand the pixels on as RGBA bytes or a
+ * PPM file. They draw no other shape. The work is in neuronte-sdk
+ * (neuronte_sdk_canvas.h); canvas.c only carries the canvas across.
  *
  * The struct is soft-raster's sr_canvas, so the objects the two renderers
  * share see one type. Each function gives the same result as the
