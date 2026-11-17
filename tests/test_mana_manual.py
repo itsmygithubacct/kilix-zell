@@ -231,6 +231,35 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(manual.standing(self.state, ahead, NOW + 5), {P1: (12, NOW)})
         self.assertEqual(manual.load(self.state), {P1: (12, NOW)})
 
+    def test_a_reading_written_after_a_value_dated_ahead_retires_it_at_once(self):
+        # Set while the clock ran fast, over a reading taken before. After the
+        # correction a new reading is taken, before Zell next looks. Its stamp
+        # is older than the value's, but it is not the reading the value was
+        # set over, so it was written after the value: it retires it, and does
+        # not wait for the next one.
+        before = {P1: good(90, NOW - 600)}
+        manual.set_values(self.state, {P1: 12, P2: 13}, NOW + 3600, before)
+        after = {P1: good(40, NOW + 10)}
+        self.assertEqual(manual.standing(self.state, after, NOW + 20), {P2: (13, NOW + 20)})
+        self.assertEqual(manual.load(self.state), {P2: (13, NOW + 20)})
+        # Over no reading at all: any good reading there now came later.
+        manual.set_values(self.state, {P3: 14}, NOW + 3600, {})
+        self.assertEqual(manual.standing(self.state, {P3: good(40, NOW + 30)}, NOW + 40), {P2: (13, NOW + 20)})
+        # A failed reading in its place retires nothing.
+        manual.set_values(self.state, {P1: 15}, NOW + 3600, before)
+        failed = {'status': 'error', 'checked_at': NOW + 50, 'windows': []}
+        self.assertEqual(manual.standing(self.state, {P1: failed}, NOW + 60), {P1: (15, NOW + 60), P2: (13, NOW + 20)})
+
+    def test_what_a_value_was_set_over_is_unknown_when_damaged(self):
+        # A damaged "over" is as good as none said: the value dated ahead is
+        # left as it is, and an older reading does not retire it.
+        self.state.mkdir()
+        for over in ('noon', True, -5, [], {}, float('nan')):
+            text = json.dumps({'providers': {P1: {'percent': 12, 'at': NOW + AHEAD, 'over': over}}})
+            (self.state / manual.NAME).write_text(text)
+            self.assertEqual(manual.standing(self.state, {P1: good(90, NOW - 5)}, NOW), {P1: (12, NOW + AHEAD)}, over)
+            self.assertEqual((self.state / manual.NAME).read_text(), text, over)
+
     def test_a_file_that_does_not_say_what_a_value_was_set_over(self):
         # Written by hand or by the first version: only the two times are
         # compared, and a value dated ahead is left as it is.
@@ -469,18 +498,96 @@ class ShownTests(unittest.TestCase):
         frames = zell_mana.console_frames(self.state, NOW)
         self.assertEqual(frames, [('G', '1 1 0'), ('G', 'mana 19 62 5')])
         self.assertEqual(frames[:-1], zell_providers.monitor_frames(self.state, NOW))
-        # Rows a snapshot publishes come before Claudex's reading, and after
-        # what the person said. A row with no percentage blanks nothing.
+        # Rows a snapshot publishes replace Claudex's readings, and come after
+        # what the person said. A row with no percentage is not published.
         snapshot = [('G', f'1 7 3\n{P1} 44 verified api unknown\n{P2} 45 verified api unknown\n{P3} -1 stale api unknown'),
                     ('H', '1 2 0')]
         with patch.object(zell_providers, 'monitor_frames', return_value=snapshot):
             self.assertEqual(zell_mana.console_frames(self.state, NOW), snapshot + [('G', 'mana 44 62 5')])
             manual.clear(self.state)
             self.write(**{P1: ok(19, NOW - 60), P3: ok(33, NOW - 60)})
-            self.assertEqual(zell_mana.console_frames(self.state, NOW)[-1], ('G', 'mana 44 45 33'))
+            self.assertEqual(zell_mana.console_frames(self.state, NOW)[-1], ('G', 'mana 44 45 -1'))
         self.assertEqual(zell_mana.published(snapshot), {P1: 44, P2: 45, P3: -1})
         self.assertEqual(zell_mana.published([('G', '1 1 0'), ('G', 'junk\n\nword\nname x'), ('F', f'1 1 1\n{P1} 9')]), {})
         self.assertEqual(zell_mana.readings(NOW, None, {P1: 101, P2: True, P3: '50'}), [19, -1, 33])
+        self.assertEqual(zell_mana.readings(NOW, None, {P1: -1, P2: 70}), [-1, 70, -1])
+        # A snapshot whose rows all lack a percentage publishes nothing.
+        self.assertEqual(zell_mana.readings(NOW, None, {P3: -1}), [19, -1, 33])
+
+    def published(self, rows):
+        import zell_providers
+        state = zell_providers.blank_state()
+        for n, (provider, percent) in enumerate(rows.items()):
+            source = zell_providers._source(provider, 'vault', 'vault:' + chr(97 + n) * 32, 'none')
+            source.update(state='verified', percent=percent, verified_at=int(NOW) - 60, reason='none')
+            state['sources'].append(source)
+        zell_providers.write_state(self.state, state)
+        zell_providers.forget(self.state)
+
+    def console(self):
+        return [int(word) for word in zell_mana.console_frames(self.state, NOW)[-1][1].split()[1:]]
+
+    def test_the_bar_is_the_mean_of_what_the_console_shows(self):
+        # Claudex has readings for all three; snapshots publish some.
+        self.write(**{P1: ok(10, NOW - 60), P2: ok(20, NOW - 60), P3: ok(40, NOW - 60)})
+        for rows, hand, shown in (({}, {}, [10, 20, 40]),
+                                  ({P1: 80}, {}, [80, -1, -1]),
+                                  ({P1: 80}, {P3: 5}, [80, -1, 5]),
+                                  ({P1: -1, P2: 70}, {}, [-1, 70, -1]),
+                                  ({P1: -1}, {}, [10, 20, 40]),
+                                  ({P2: 70}, {}, [-1, 70, -1]),
+                                  ({P1: 30, P2: 70, P3: 90}, {P2: 0}, [30, 0, 90]),
+                                  ({}, {P1: 100}, [100, 20, 40])):
+            manual.clear(self.state)
+            self.published(rows)
+            if hand:
+                manual.set_values(self.state, hand, NOW - 30)
+            self.assertEqual(self.console(), shown, (rows, hand))
+            known = [value for value in shown if value >= 0]
+            self.assertEqual(zell_vitals.mana(self.ui, NOW)[0], round(sum(known) / len(known)), (rows, hand))
+
+    def test_the_bar_also_counts_published_providers_the_console_has_no_place_for(self):
+        # The console has places for three. The bar is the mean of every
+        # published percentage, as it was before there was a console.
+        import zell_providers
+        other = next(name for name in zell_providers.IDS if name not in manual.PROVIDERS)
+        self.write(**{P2: ok(20, NOW - 60)})
+        self.published({P1: 80, other: 10})
+        self.assertEqual(self.console(), [80, -1, -1])
+        value, _, lines = zell_vitals.mana(self.ui, NOW)
+        self.assertEqual(value, 45)
+        self.assertEqual(lines[:3], [f'{P1}: 80% remaining (published by a provider source)',
+                                     f'{P2}: not published by a provider source',
+                                     f'{P3}: not published by a provider source'])
+
+    def test_a_reading_followed_by_a_failed_check_is_shown_by_neither(self):
+        self.write(**{P1: ok(10, NOW - 60), P2: ok(20, NOW - 60)})
+        attempts = self.cache.with_name('zell-mana-attempts.json')
+        attempts.write_text(json.dumps({P1: {'at': NOW - 30, 'failed': True}, P2: {'at': NOW - 30, 'failed': False}}))
+        self.assertEqual(self.console(), [-1, 20, -1])
+        self.assertEqual(zell_vitals.mana(self.ui, NOW)[0], 20)
+        # A reading with no time it was taken, or one too large to be a time.
+        self.write(**{P1: {'status': 'ok', 'windows': [{'remaining_percent': 50}]},
+                      P2: {'status': 'ok', 'checked_at': 10 ** 400, 'windows': [{'remaining_percent': 50}]},
+                      P3: ok(30, NOW - 60)})
+        attempts.unlink()
+        self.assertEqual(self.console(), [-1, -1, 30])
+        self.assertEqual(zell_vitals.mana(self.ui, NOW)[0], 30)
+
+    def test_damaged_readings_are_no_error_for_the_monitor(self):
+        # The room's monitor asks whether a reading is due; nothing it reads may raise there.
+        ui = SimpleNamespace(state_read=lambda name, default: {'enabled': True} if name == zell_mana.SETTING else default)
+        with patch.object(zell_vitals, 'claudex_script', return_value=Path('/x/pane_loop.py')):
+            self.assertTrue(zell_mana.automatic(ui))
+            for entry in ({'status': 'ok', 'checked_at': 10 ** 400, 'windows': [{'remaining_percent': 50}]},
+                          {'status': 'ok', 'checked_at': -10 ** 400, 'windows': []},
+                          {'status': 'ok', 'checked_at': float('inf'), 'windows': []}):
+                self.write(**{P1: entry})
+                self.assertTrue(zell_mana.due(ui, NOW), entry)
+        nested = '[' * 100000 + ']' * 100000
+        self.cache.write_text('{"providers": {"%s": %s}}' % (P1, nested))
+        self.assertEqual(zell_vitals.mana(self.ui, NOW)[0], -1)
+        self.assertEqual(self.console(), [-1, -1, -1])
 
 
 class ScriptTests(unittest.TestCase):

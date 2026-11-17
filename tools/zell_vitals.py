@@ -157,7 +157,48 @@ def provider_value(entry, now):
     return min(values)
 
 
+ATTENTION = ('attention', 'login_required')
+
+
+def claudex_percent(entry, attempt, now):
+    """Claudex's reading for one provider, as the MANA bar and the Mana
+    console both take it: percent left 0-100, -1 when unknown, -2 when only
+    the person can unblock it. A reading followed by a failed check is not
+    shown, and neither is one with no time it was taken."""
+    entry = entry if isinstance(entry, dict) else {}
+    attempt = attempt if isinstance(attempt, dict) else {}
+    if entry.get('status') in ATTENTION:
+        return -2
+    checked = number(entry.get('checked_at'))
+    failed = attempt.get('failed') and (number(attempt.get('at')) or 0) > (checked or 0)
+    value = None if failed or not checked else provider_value(entry, now)
+    return -1 if value is None else max(0, min(100, round(value)))
+
+
+def published_percentages(directory, now):
+    """The percentages a provider snapshot publishes, {provider: percent},
+    and the account mode."""
+    import zell_providers
+    if directory is None:
+        directory = zell_providers.state_directory()
+    mode = zell_providers.account_mode(directory)
+    if mode == zell_providers.UNSET or directory is None:
+        return {}, mode
+    try:
+        hosted = zell_providers.load_state(directory, now)
+    except (OSError, ValueError):
+        return {}, mode
+    return {row['id']: row['percent'] for row in zell_providers.published_rows(hosted['sources'], mode, now)
+            if type(row['percent']) is int and 0 <= row['percent'] <= 100}, mode
+
+
 def mana(ui, now, provider_directory=None):
+    """The MANA bar: a mean of percentages left, unknown providers left out.
+
+    What the person set by hand comes first. Without published percentages
+    the rest are Claudex's readings. Once a provider snapshot publishes any,
+    they replace Claudex's readings altogether, for every provider they
+    name. The Mana console shows its three providers by the same rule."""
     cache = read_json(config_path().parent / '.loop/usage-pages.json')
     entries = cache.get('providers', {})
     if not isinstance(entries, dict):
@@ -167,15 +208,16 @@ def mana(ui, now, provider_directory=None):
     import zell_mana_manual
     # Values set by hand at the Command computer live in Zell's state folder.
     base = getattr(ui, 'BASE', None)
-    manual = zell_mana_manual.standing(base if isinstance(base, (str, Path)) else None, entries, now)
+    base = base if isinstance(base, (str, Path)) else None
+    manual = zell_mana_manual.standing(base, entries, now)
+    directory = provider_directory if isinstance(provider_directory, (str, Path)) else base
+    rows, mode = published_percentages(directory, now)
     for provider in PROVIDERS:
         entry = entries.get(provider, {})
         entry = entry if isinstance(entry, dict) else {}
         checked = number(entry.get('checked_at'))
         attempt = attempts.get(provider, {})
         attempt = attempt if isinstance(attempt, dict) else {}
-        failed = attempt.get('failed') and (number(attempt.get('at')) or 0) > (checked or 0)
-        value = None if failed or not checked else provider_value(entry, now)
         stamp = max(checked or 0, number(attempt.get('at')) or 0)
         hand = manual.get(provider)
         if hand is not None:
@@ -184,42 +226,27 @@ def mana(ui, now, provider_directory=None):
             lines.append(f'{provider}: {hand[0]}% remaining (set by hand)'
                          f'; set {datetime.fromtimestamp(hand[1]).isoformat(timespec="seconds")}')
             continue
-        if value is None:
+        if rows:
+            shown = rows.get(provider)
+            lines.append(f'{provider}: ' + ('not published by a provider source' if shown is None else
+                                            f'{shown}% remaining (published by a provider source)'))
+            continue
+        value = claudex_percent(entry, attempt, now)
+        if value < 0:
             missing.append(provider)
         else:
             values.append(value)
-            if checked:
-                ages.append(max(0, int(now - checked)))
-        waiting = value is None and entry.get('status') in ('attention', 'login_required')
-        lines.append(f'{provider}: ' + ('needs you (see the Mana console)' if waiting else 'unknown' if value is None else f'{value:g}% remaining') +
+            ages.append(max(0, int(now - checked)))
+        lines.append(f'{provider}: ' + ('needs you (see the Mana console)' if value == -2 else 'unknown' if value < 0 else f'{value}% remaining') +
                      (f'; checked {datetime.fromtimestamp(stamp).isoformat(timespec="seconds")}' if stamp else '; never checked'))
     lines.append('Mana: mean of known provider minima; unknown providers excluded.')
     lines.append('Missing/unknown providers: ' + (', '.join(missing) or 'none'))
-    value = round(sum(values) / len(values)) if values else -1
-    import zell_providers
-    directory = provider_directory if isinstance(provider_directory, (str, Path)) else None
-    if directory is None:
-        base = getattr(ui, "BASE", None)
-        if isinstance(base, (str, Path)):
-            directory = base
-    if directory is None:
-        directory = zell_providers.state_directory()
-    mode = zell_providers.account_mode(directory)
     lines.append('Account mode: ' + mode)
-    if mode != zell_providers.UNSET and directory is not None:
-        try:
-            hosted = zell_providers.load_state(directory, now)
-        except (OSError, ValueError):
-            hosted = None
-        if hosted is not None:
-            # Published percentages take the place of Claudex's readings, as
-            # on the Mana console, and what the person set by hand comes
-            # before both there and here.
-            known = {row['id']: row['percent'] for row in
-                     zell_providers.published_rows(hosted['sources'], mode, now) if row['percent'] >= 0}
-            if known:
-                known.update({provider: hand[0] for provider, hand in manual.items()})
-                value = round(sum(known.values()) / len(known))
+    if rows:
+        known = dict(rows)
+        known.update({provider: hand[0] for provider, hand in manual.items()})
+        values = list(known.values())
+    value = round(sum(values) / len(values)) if values else -1
     return value, max(ages) if ages else -1, lines
 
 
@@ -250,10 +277,12 @@ CLAUDEX_APP = 'kilix-claudex'
 CATALOG_RECHECK = 300
 # A first-use install is a small clone; this is generous for a slow line.
 INSTALL_TIMEOUT = 600
-# A look only asks Kilix where its copy is. The room's monitor waits for the
-# answer, so it is given little time.
-LOOK_TIMEOUT = 5
+# A look only asks Kilix where its copy is, but Kilix checks that copy's
+# git checkout first, which takes a while on a cold disk. The room's monitor
+# never waits for it (claudex_script(wait=False)).
+LOOK_TIMEOUT = 30
 _catalog = {'script': None, 'asked': None}
+_looking = threading.Lock()
 
 
 def claudex_catalog(install=False):
@@ -294,9 +323,13 @@ def claudex_catalog(install=False):
     return reader, ''
 
 
-def claudex_script():
+def claudex_script(wait=True):
     """Claudex's usage reader: beside a source checkout, behind the command,
-    or the copy Kilix installed. Looking never installs anything."""
+    or the copy Kilix installed. Looking never installs anything.
+
+    Asking Kilix about its copy can take a while. Without wait (the room's
+    monitor) Kilix is asked beside the caller, which gets None now and the
+    answer on a later look."""
     candidates = []
     if os.environ.get('KILIX_ZELL_CLAUDEX'):
         candidates.append(Path(os.environ['KILIX_ZELL_CLAUDEX']).expanduser())
@@ -314,6 +347,16 @@ def claudex_script():
         return known
     now = time.time()
     if _catalog['asked'] is not None and 0 <= now - _catalog['asked'] < CATALOG_RECHECK:
+        return None
+    if not wait:
+        if _looking.acquire(blocking=False):
+            def look():
+                try:
+                    _catalog['script'] = claudex_catalog()[0]
+                finally:
+                    _catalog['asked'] = time.time()
+                    _looking.release()
+            threading.Thread(target=look, name='zell-claudex-look', daemon=True).start()
         return None
     _catalog['asked'] = now
     _catalog['script'] = claudex_catalog()[0]

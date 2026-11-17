@@ -225,15 +225,45 @@ class InstallTests(unittest.TestCase):
             self.assertIsNone(script, said[:20])
             self.assertTrue(reason, said[:20])
 
-    def test_a_look_is_given_little_time(self):
-        self.assertLessEqual(vitals.LOOK_TIMEOUT, 10)
-        (self.ctl / 'slow').write_text('')
-        with patch.object(vitals, 'LOOK_TIMEOUT', 0.3), patch.object(vitals, 'INSTALL_TIMEOUT', 30):
-            started = time.monotonic()
-            self.assertIsNone(vitals.claudex_script())
+    def test_the_room_s_monitor_never_waits_for_kilix(self):
+        self.assertEqual(vitals.LOOK_TIMEOUT, 30)
+        vitals.claudex_catalog(install=True)
+        (self.ctl / 'calls').unlink()
+        (self.ctl / 'slow').write_text('')        # Kilix takes five seconds to answer
+        vitals._catalog.update(script=None, asked=None)
+        state = {}
+        ui = SimpleNamespace(state_read=lambda name, default: state.get(name, default),
+                             state_write=lambda name, value: state.__setitem__(name, value))
+        started = time.monotonic()
+        for _ in range(20):
+            self.assertFalse(zell_mana.due(ui, self.clock[0]))
+        self.assertLess(time.monotonic() - started, 2)
+        # Asked once, beside the monitor, and the answer is there next time.
+        self.assertTrue(self.wait_for_the_look())
+        self.assertEqual(self.calls(), [f'app install kilix-claudex|auto=0|cwd={self.base}'])
+        self.assertEqual(vitals.claudex_script(wait=False), self.reader)
+        self.assertTrue(zell_mana.due(ui, self.clock[0]))
+        # A look that runs out of time is a "no" for a while, and ends no one.
+        (self.ctl / 'app/claudex').unlink()
+        vitals._catalog.update(script=None, asked=None)
+        with patch.object(vitals, 'LOOK_TIMEOUT', 0.3):
+            self.assertIsNone(vitals.claudex_script(wait=False))
+            self.assertTrue(self.wait_for_the_look())
+        self.assertIsNone(vitals.claudex_script(wait=False))
+        self.assertIsNotNone(vitals._catalog['asked'])
+        with patch.object(vitals, 'LOOK_TIMEOUT', 0.3):
             script, reason = vitals.claudex_catalog()
-        self.assertLess(time.monotonic() - started, 3)
-        self.assertIn('timed out', reason)
+        self.assertEqual((script, 'timed out' in reason), (None, True))
+
+    def wait_for_the_look(self):
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            if vitals._looking.acquire(blocking=False):
+                vitals._looking.release()
+                if vitals._catalog['asked'] is not None:
+                    return True
+            time.sleep(.02)
+        return False
 
     def test_an_automatic_reading_installs_nothing_even_when_the_copy_vanishes(self):
         self.assertEqual(vitals.claudex_ready(self.said.append, install=False)[0], None)

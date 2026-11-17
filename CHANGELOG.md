@@ -22,9 +22,10 @@ These changes are not in the 0.1.1 runtime archive that Plebian-OS 0.2.3 pins.
 - The Command computer's terminal keeps its SHELL labels when it is minimised and restored from another station, and the Command Center's way out is no longer selected by Enter at one invisible point of the bottom edge.
 - Move the Key Master's two lines to the strip under the AGENTS panel, right aligned beside him. Above his head they covered the right end of that panel.
 - A mana value set by hand remembers the automatic reading it was set over, so that reading can never retire it, whatever the clocks said. A clock that ran fast and was corrected could delete a value set after the reading.
-- The MANA bar and the Mana console agree when a provider snapshot publishes percentages: what the person set by hand comes first in both.
-- The automatic mana reading installs nothing even when the Claudex copy vanishes after it was seen. A look for Claudex gives Kilix five seconds, and output from Kilix that is not a command's path (not text, a folder, a path no file system holds) is refused instead of ending the room's monitor.
+- The MANA bar and the Mana console take their numbers by one rule. What the person set by hand comes first; once a provider snapshot publishes any percentage, published percentages replace Claudex's readings for every provider, as the bar has done since provider snapshots were added; until then Claudex's readings are used, and a reading followed by a failed check is shown by neither. The bar also counts published providers the console has no place for.
+- The automatic mana reading installs nothing even when the Claudex copy vanishes after it was seen. The room's monitor no longer waits while Kilix is asked about its copy: Kilix is asked beside it (with 30 seconds to answer, since it checks that copy's git checkout first), and the answer is used on the next look. Output from Kilix that is not a command's path (not text, a folder, a path no file system holds) is refused instead of ending the room's monitor.
 - The console's snapshot and mana line go out in one write, and a damaged reading in Claudex's cache or a deeply nested `mana-manual.json` reads as nothing instead of raising.
+- A value set by hand while the clock ran ahead is retired at once by a good reading written after it, rather than at the reading after that. A reading time too large for a number no longer stops the room's monitor, and the vitals tests no longer rewrite the provider state named by `KILIX_ZELL_STATE`.
 
 ## 0.1.1 — 2026-11-13
 

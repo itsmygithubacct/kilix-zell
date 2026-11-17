@@ -328,6 +328,13 @@ for good; the reading that was there when the value was set never does), and the
 and the MANA bar show it within a few seconds. The scripts do not need
 Claudex. Type `exit` to leave the shell.
 
+The MANA bar is the mean of the percentages known. For each provider, a value
+set by hand comes first. Once a provider snapshot publishes any percentage,
+published percentages take the place of Claudex's readings for every provider;
+until then Claudex's readings are used. The Mana console shows its three
+providers by the same rule, and the bar also counts published providers the
+console has no place for.
+
 Administrator > Update OS in floating terminal runs exactly
 `sudo apt update && sudo apt -y upgrade` after an in-game confirmation. A real
 PTY renders through Neuronte in a floating panel above the room, including sudo's

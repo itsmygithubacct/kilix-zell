@@ -224,14 +224,20 @@ def _settle(values, entries, now):
     changed = False
     for provider in list(values):
         percent, at, over = values[provider]
+        reading = taken(entries.get(provider)) if isinstance(entries, dict) else None
         if over != UNKNOWN and at > now:
-            # Set while the clock ran ahead. It was set no later than now, and
-            # the reading it was set over is known, so nothing older can
+            # Set while the clock ran ahead. The cache held the reading it was
+            # set over then, so a different good reading there now was
+            # written after it, whatever the two stamps say.
+            if reading is not None and reading != over:
+                del values[provider]
+                changed = True
+                continue
+            # Otherwise it was set no later than now, and nothing older can
             # retire it for this.
             at = float(now)
             values[provider] = (percent, at, over)
             changed = True
-        reading = taken(entries.get(provider)) if isinstance(entries, dict) else None
         if reading is None or (over != UNKNOWN and reading == over):
             # No good reading, or the very one the value was set over.
             continue

@@ -35,12 +35,10 @@ def cache():
     return entries if isinstance(entries, dict) else {}
 
 
-def reading(entry, now):
-    """Percent left, -1 when unknown, -2 when only the person can unblock it."""
-    if isinstance(entry, dict) and entry.get('status') in ATTENTION:
-        return -2
-    value = zell_vitals.provider_value(entry, now)
-    return -1 if value is None else max(0, min(100, round(value)))
+def reading(entry, now, attempt=None):
+    """Percent left, -1 when unknown, -2 when only the person can unblock it.
+    The MANA bar takes Claudex's readings by the same rule."""
+    return zell_vitals.claudex_percent(entry, attempt, now)
 
 
 def by_hand(entries, now, directory):
@@ -54,15 +52,18 @@ def readings(now=None, directory=None, rows=None):
     values set by hand at the Command computer are kept. rows are the
     percentages a provider snapshot publishes, {provider: percent}.
 
-    What the person said comes first, then a published percentage, then
-    Claudex's own reading."""
+    What the person said comes first. Once a snapshot publishes any
+    percentage, published percentages replace Claudex's readings for every
+    provider, as on the MANA bar; until then Claudex's readings are used."""
     now = time.time() if now is None else now
     entries = cache()
+    attempts = zell_vitals.read_json(zell_vitals.config_path().parent / '.loop/zell-mana-attempts.json')
     standing = by_hand(entries, now, directory)
-    rows = rows or {}
+    rows = {provider: percent for provider, percent in (rows or {}).items()
+            if type(percent) is int and 0 <= percent <= 100}
     return [standing[provider] if provider in standing
-            else rows[provider] if type(rows.get(provider)) is int and 0 <= rows[provider] <= 100
-            else reading(entries.get(provider), now)
+            else rows.get(provider, -1) if rows
+            else reading(entries.get(provider), now, attempts.get(provider))
             for provider in PROVIDERS]
 
 
@@ -155,7 +156,8 @@ def due(ui, now=None):
     looking for it installs nothing, so the automatic reading cannot be what
     installs it."""
     now = time.time() if now is None else now
-    if not automatic(ui) or zell_vitals.claudex_script() is None:
+    # The room's monitor calls this: it does not wait for Kilix to answer.
+    if not automatic(ui) or zell_vitals.claudex_script(wait=False) is None:
         return False
     last = ui.state_read('mana-auto-last.json', {}).get('at')
     if isinstance(last, (int, float)) and 0 <= now - last < RETRY:
@@ -163,8 +165,8 @@ def due(ui, now=None):
     entries = cache()
     for provider in PROVIDERS:
         entry = entries.get(provider)
-        checked = entry.get('checked_at') if isinstance(entry, dict) else None
-        if reading(entry, now) < 0 or not isinstance(checked, (int, float)) or now - checked > MAX_AGE:
+        checked = zell_vitals.number(entry.get('checked_at')) if isinstance(entry, dict) else None
+        if reading(entry, now) < 0 or checked is None or now - checked > MAX_AGE:
             return True
     return False
 

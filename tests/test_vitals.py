@@ -21,6 +21,13 @@ class VitalsTests(unittest.TestCase):
         self.ui = Mock()
         self.ui.state_read.return_value = {}
         self.now = 2000000000
+        # The ui here names no state folder, so the provider state is looked
+        # for where KILIX_ZELL_STATE says, and is rewritten there. The
+        # Command computer's shell exports the real one.
+        environment = patch.dict(os.environ, {'KILIX_ZELL_STATE': str(self.base / 'state'),
+                                              'GPU_TERMINAL_HOME': str(self.base / 'gpu_terminal')})
+        environment.start()
+        self.addCleanup(environment.stop)
         # A Claudex is taken as found, so no test depends on the machine having
         # one and none can reach the real `kilix` to look for or install one.
         self.real_claudex_script = vitals.claudex_script
@@ -34,6 +41,12 @@ class VitalsTests(unittest.TestCase):
             context.start()
             self.addCleanup(context.stop)
         vitals._previous_cpu = vitals._smoothed = None
+
+    def test_the_provider_state_these_tests_reach_is_their_own(self):
+        import zell_providers
+        self.assertEqual(Path(zell_providers.state_directory()), self.base / 'state')
+        vitals.mana(self.ui, self.now)
+        self.assertEqual([path.name for path in self.base.iterdir() if path.name not in ('.loop', 'state')], [])
 
     def cache(self, providers):
         (self.runtime / 'usage-pages.json').write_text(json.dumps({'providers': providers}))
