@@ -106,8 +106,9 @@ $(BUILD)/soft_raster.o: $(SR_DIR)/src/soft_raster.c | $(BUILD)
 	$(CC) $(CPPFLAGS) -I$(SR_DIR)/src $(CFLAGS) -c $< -o $@
 
 # The canvas of the Neuronte programs, which do not link soft-raster: the
-# pixel buffer, the clear, the flat fill and the PPM writer. It reads the
-# soft-raster header for the canvas struct only.
+# pixel buffer, the clear, the flat fill, the RGBA packing and the PPM
+# writer, adapted from soft-raster. It reads the soft-raster header for the
+# canvas struct only.
 $(BUILD)/canvas.o: $(ROOT)/src/canvas.c $(ROOT)/src/canvas.h | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 

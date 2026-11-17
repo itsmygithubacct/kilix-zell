@@ -464,6 +464,35 @@ static void test_ppm(void)
            "P6 header, then red, green, blue from the first pixel to the last");
     errno = 0;
     expect(!zell_canvas_write_ppm(&b, missing) && errno == ENOENT, "a missing directory fails with its reason");
+    {
+        /* A device with no room. The big frame fails while its blocks are
+         * written; the 1 x 1 frame fits the stream's buffer, so only the
+         * close can report it. */
+        FILE *full = fopen("/dev/full", "wb");
+        sr_canvas dot_a;
+        sr_canvas dot_b;
+
+        if (full != NULL) {
+            int want;
+
+            fclose(full);
+            errno = 0;
+            expect(!sr_write_ppm(&a, "/dev/full"), "soft-raster fails on a full device");
+            want = errno;
+            errno = 0;
+            expect(!zell_canvas_write_ppm(&b, "/dev/full") && errno == want && want == ENOSPC,
+                   "a full device fails the write with no space");
+            expect(sr_canvas_init(&dot_a, 1, 1) && zell_canvas_init(&dot_b, 1, 1), "dot canvases");
+            errno = 0;
+            expect(!sr_write_ppm(&dot_a, "/dev/full"), "soft-raster fails a small file on a full device");
+            want = errno;
+            errno = 0;
+            expect(!zell_canvas_write_ppm(&dot_b, "/dev/full") && errno == want && want == ENOSPC,
+                   "a full device fails the close of a small file");
+            sr_canvas_free(&dot_a);
+            zell_canvas_free(&dot_b);
+        }
+    }
     errno = 0;
     expect(!zell_canvas_write_ppm(&b, NULL) && errno == EINVAL, "no path is refused");
     errno = 0;
@@ -475,6 +504,58 @@ static void test_ppm(void)
     zell_canvas_free(&b);
 }
 
+/* Past 2^24 a float no longer holds every pixel coordinate, and the fill
+ * stops its whole-pixel run there. Zell makes no canvas that long; the two
+ * must still agree on one, along a row and down a column. */
+static void test_fill_past_float_range(void)
+{
+    enum { PAST = 8, LONG = (1 << 24) + PAST, FROM = (1 << 24) - 4 };
+    uint32_t *mem_a = calloc((size_t)LONG, sizeof(uint32_t));
+    uint32_t *mem_b = calloc((size_t)LONG, sizeof(uint32_t));
+    int turn;
+
+    if (mem_a == NULL || mem_b == NULL) {
+        /* No room for two 64 MB buffers is not a fault of the canvas. */
+        free(mem_a);
+        free(mem_b);
+        return;
+    }
+    for (turn = 0; turn < 2; turn++) {
+        sr_canvas a;
+        sr_canvas b;
+        int painted = 0;
+        int i;
+
+        memset(&a, 0, sizeof a);
+        memset(&b, 0, sizeof b);
+        memset(mem_a, 0, (size_t)LONG * sizeof(uint32_t));
+        memset(mem_b, 0, (size_t)LONG * sizeof(uint32_t));
+        sr_canvas_wrap(&a, mem_a, turn == 0 ? LONG : 1, turn == 0 ? 1 : LONG);
+        zell_canvas_wrap(&b, mem_b, turn == 0 ? LONG : 1, turn == 0 ? 1 : LONG);
+        expect(a.px == mem_a && b.px == mem_b, "a canvas past 2^24 is wrapped");
+        /* Opaque, then a half-covering colour over it from a fractional edge. */
+        if (turn == 0) {
+            sr_fill_rect(&a, (float)FROM, 0.0f, 12.0f, 1.0f, 0xffffffu, 1.0f);
+            zell_canvas_fill_rect(&b, (float)FROM, 0.0f, 12.0f, 1.0f, 0xffffffu, 1.0f);
+            sr_fill_rect(&a, (float)FROM - 2.5f, 0.0f, 14.5f, 1.0f, 0x336699u, 0.5f);
+            zell_canvas_fill_rect(&b, (float)FROM - 2.5f, 0.0f, 14.5f, 1.0f, 0x336699u, 0.5f);
+        } else {
+            sr_fill_rect(&a, 0.0f, (float)FROM, 1.0f, 12.0f, 0xffffffu, 1.0f);
+            zell_canvas_fill_rect(&b, 0.0f, (float)FROM, 1.0f, 12.0f, 0xffffffu, 1.0f);
+            sr_fill_rect(&a, 0.0f, (float)FROM - 2.5f, 1.0f, 14.5f, 0x336699u, 0.5f);
+            zell_canvas_fill_rect(&b, 0.0f, (float)FROM - 2.5f, 1.0f, 14.5f, 0x336699u, 0.5f);
+        }
+        expect(memcmp(mem_a, mem_b, (size_t)LONG * sizeof(uint32_t)) == 0,
+               turn == 0 ? "a fill along a row past 2^24 is the same" : "a fill down a column past 2^24 is the same");
+        for (i = FROM; i < LONG; i++) {
+            painted += mem_b[i] != 0u;
+        }
+        expect(painted >= 4, "the fill reached 2^24");
+    }
+    free(mem_a);
+    free(mem_b);
+}
+
 int main(void)
 {
     test_buffer();
@@ -482,6 +563,7 @@ int main(void)
     test_clear();
     test_fill();
     test_fill_numbers();
+    test_fill_past_float_range();
     test_pack();
     test_ppm();
     if (failures) {

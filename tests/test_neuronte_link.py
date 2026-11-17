@@ -2,10 +2,13 @@
 
 usage: test_neuronte_link.py PROGRAM...
 
-Every symbol of soft-raster starts with sr_, and a linked object brings all
-of its symbols, so one sr_ name in a program means the library is back in
-its link. Each program must also show Zell's own canvas, which proves that
-its symbols can be read at all.
+Every function soft-raster exports starts with sr_ and its font tables with
+font, and a linked object brings all of its symbols, so one such name in a
+program means the library is back in its link. Each program must also show
+Zell's own canvas, which proves that its symbols can be read at all.
+
+This reads names. src/canvas.c is adapted from soft-raster under other
+names, and tests/test_canvas.c is what holds it to the same results.
 """
 from pathlib import Path
 import re

@@ -43,6 +43,15 @@ enum { ZN_CELL_W = 8, ZN_CELL_H = 16 };
 static neuronte *zn_font;
 static int zn_state; /* 0 not tried, 1 open, -1 failed */
 
+/* The characters used as whole shapes: the black circle, the black
+ * down-pointing triangle and the multiplication sign. Where each one's ink
+ * sits in its cell is measured once from the open weights, and forgotten
+ * when they are closed, since another file may be opened next. */
+enum { ZN_DISC, ZN_DOWN, ZN_CROSS, ZN_SHAPES };
+static const uint32_t zn_shape[ZN_SHAPES] = {0x25cfu, 0x25bcu, 0x00d7u};
+static float zn_boxes[ZN_SHAPES][4];
+static int zn_box_states[ZN_SHAPES]; /* 0 not tried, 1 measured, -1 failed */
+
 const char *zell_neuronte_weights(void)
 {
     const char *path = getenv("ZELL_NEURONTE_WEIGHTS");
@@ -66,6 +75,7 @@ void zell_neuronte_close(void)
     neuronte_close(zn_font);
     zn_font = NULL;
     zn_state = 0;
+    memset(zn_box_states, 0, sizeof zn_box_states);
 }
 
 static int zn_scale(int scale)
@@ -188,20 +198,13 @@ static void zn_stroke_rect(sr_canvas *c, float x, float y, float w, float h,
     zn_glyph(c, 0x2595u, x0 + iw - 8 * t, y0 + t, 8 * t, ih - 2 * t, rgb, alpha);
 }
 
-/* The characters used as whole shapes: the black circle, the black
- * down-pointing triangle and the multiplication sign. */
-enum { ZN_DISC, ZN_DOWN, ZN_CROSS, ZN_SHAPES };
-static const uint32_t zn_shape[ZN_SHAPES] = {0x25cfu, 0x25bcu, 0x00d7u};
-
 /* Where a shape's ink sits in its cell, as fractions of the cell, measured
- * once from the net's own coverage. */
+ * from the net's own coverage. */
 static bool zn_ink_box(int shape, float *fx0, float *fy0, float *fx1, float *fy1)
 {
     enum { W = 48, H = 96 };
-    static float boxes[ZN_SHAPES][4];
-    static int states[ZN_SHAPES];
-    float *box = boxes[shape];
-    int state = states[shape];
+    float *box = zn_boxes[shape];
+    int state = zn_box_states[shape];
 
     if (state == 0) {
         static float cov[W * H];
@@ -233,7 +236,7 @@ static bool zn_ink_box(int shape, float *fx0, float *fy0, float *fx1, float *fy1
                 state = 1;
             }
         }
-        states[shape] = state;
+        zn_box_states[shape] = state;
     }
     if (state < 0) {
         return false;
@@ -272,6 +275,12 @@ static void zn_fill_ellipse(sr_canvas *c, float cx, float cy, float rx, float ry
                             uint32_t rgb, float alpha)
 {
     zn_fit(c, ZN_DISC, cx - rx, cy - ry, 2.0f * rx, 2.0f * ry, rgb, alpha);
+}
+
+void zell_neuronte_ellipse(sr_canvas *canvas, float cx, float cy, float rx, float ry,
+                           uint32_t rgb, float alpha)
+{
+    zn_fill_ellipse(canvas, cx, cy, rx, ry, rgb, alpha);
 }
 
 static void zn_fill_circle(sr_canvas *c, float cx, float cy, float r,

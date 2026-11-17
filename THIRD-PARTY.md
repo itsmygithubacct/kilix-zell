@@ -67,9 +67,10 @@ repository. `MODULES` overrides the default `../../kilix-modules`.
 
 Each library keeps its own MIT notice.
 
-`src/canvas.c` is adapted from soft-raster: its pixel buffer, clear, flat
-fill and PPM writer, kept to the same arithmetic. The file names the
-soft-raster copyright holders, and the runtime archive carries the
+One file is the exception to "not copied". `src/canvas.c` is adapted from
+soft-raster: its pixel buffer, clear, flat fill, RGBA packing and PPM
+writer, kept to the same arithmetic. The file carries soft-raster's
+copyright lines and MIT notice in full, and the runtime archive carries the
 soft-raster licence as `licenses/soft-raster`.
 
 `zell-neuronte`, the optional build, links `src/canvas.c` in place of
