@@ -25,7 +25,7 @@
  * build time by ZELL_NEURONTE_WEIGHTS, or by the environment variable of
  * the same name.
  *
- * Text is also drawn from every neuronte-term-*.nrt bundle that lies
+ * Text is also drawn from every neuronte-term-*.nrt and neuronte-kilix-*.nrt bundle that lies
  * beside that file: a character goes to the first bundle trained on it,
  * and one that no bundle was trained on shows the library's untrained
  * mark. A library without neuronte_untrained() cannot be linked here. */
@@ -106,7 +106,8 @@ static void zn_open_extras(const char *weights)
     while (count < ZN_EXTRA_MAX && (entry = readdir(list)) != NULL) {
         size_t len = strlen(entry->d_name);
 
-        if (len > 18 && len < ZN_NAME_MAX && strncmp(entry->d_name, "neuronte-term-", 14) == 0 &&
+        if (len > 18 && len < ZN_NAME_MAX &&
+            (strncmp(entry->d_name, "neuronte-term-", 14) == 0 || strncmp(entry->d_name, "neuronte-kilix-", 15) == 0) &&
             strcmp(entry->d_name + len - 4, ".nrt") == 0) {
             memcpy(names[count++], entry->d_name, len + 1);
         }
