@@ -7,6 +7,8 @@ These changes are not in the 0.1.1 runtime archive that Plebian-OS 0.2.3 pins.
 - Keep the health tests independent of the machine they run on. The combined health test read the live restart check and failed wherever a newer kernel or driver was waiting. A second test covers the restart cap.
 - Compile the Neuronte objects again when a build names another Neuronte checkout or weights file. The earlier build kept the objects from the previous checkout.
 - Name the Neuronte commit 0.1.1 was reviewed against, and say where the release carries Zell.
+- Take soft-raster out of the Neuronte programs. Their pixel buffer, frame clear, flat fill and PPM writer are now in `src/canvas.c`, which gives the same bytes as soft-raster did. The raster build is unchanged.
+- Draw the stair marker and the floating window's close button from Neuronte characters in the Neuronte build. Both were drawn by soft-raster's triangle and line. The marker sits within a pixel of where it was; the cross is slightly bolder.
 
 ## 0.1.1 — 2026-11-13
 

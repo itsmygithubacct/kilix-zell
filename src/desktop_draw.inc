@@ -4,6 +4,19 @@
 #include <time.h>
 #include <stdlib.h>
 #include <math.h>
+/* Two shapes the raster build draws with soft-raster's triangle and line.
+ * The Neuronte build names its own bodies for them before it includes this. */
+#ifndef desktop_down_arrow
+static void desktop_down_arrow(sr_canvas *c,float mid,float half,float top,float tip,uint32_t rgb,float alpha){
+ sr_fill_triangle(c,mid-half,top,mid+half,top,mid,tip,rgb,alpha);
+}
+#endif
+#ifndef desktop_cross
+static void desktop_cross(sr_canvas *c,int cx,int cy,int reach,uint32_t rgb){
+ sr_line(c,(float)(cx-reach),(float)(cy-reach),(float)(cx+reach),(float)(cy+reach),2,rgb,1,0,0);
+ sr_line(c,(float)(cx-reach),(float)(cy+reach),(float)(cx+reach),(float)(cy-reach),2,rgb,1,0,0);
+}
+#endif
 static void desktop_art(sr_canvas *c,int id,int x,int foot,int height){
  const zell_art *a=zell_art_get(id);if(!a)return;sr_canvas src;sr_canvas_wrap(&src,a->pixels,a->width,a->height);
  int width=height*a->width/a->height;sr_blit_scaled(c,&src,x-width/2,foot-height,width,height,1.0f);
@@ -293,7 +306,7 @@ static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
   float x1=ZELL_STAIRS_RIGHT*(float)ZELL_WORLD_W-(float)cx;
   float y=0.93f*(float)ZELL_WORLD_H-(float)cy,mid=(x0+x1)*0.5f;
   sr_fill_rect(c,x0,y,x1-x0,16,0x14201cu,.88f);
-  sr_fill_triangle(c,mid-14.f,y+2.f,mid+14.f,y+2.f,mid,y+22.f,0xd7b56au,.95f);
+  desktop_down_arrow(c,mid,14.f,y+2.f,y+22.f,0xd7b56au,.95f);
  }
  if(front&&s->room==1)desktop_fleet_board(s,c,cx,cy);
 }
@@ -577,7 +590,7 @@ static void desktop_dialogue(const zell_scene *s,sr_canvas *c) {
 }
 
 /* Window buttons: 0 minimize (bar at the foot), 1 maximize (one frame),
- * 2 restore (two overlapped frames). Drawn shapes, so no font glyph is needed. */
+ * 2 restore (two overlapped frames), 3 close (a cross). */
 static void desktop_button(const zell_scene *s,sr_canvas *c,const zell_rect *r,int kind){
  bool hover=s->mouse_valid&&s->mouse_x>=r->x&&s->mouse_x<r->x+r->w&&s->mouse_y>=r->y&&s->mouse_y<r->y+r->h;
  uint32_t ink=hover?0xf4ffe9u:0xabc8c0u;
@@ -586,7 +599,7 @@ static void desktop_button(const zell_scene *s,sr_canvas *c,const zell_rect *r,i
  int cx=r->x+r->w/2,cy=r->y+r->h/2;
  if(kind==0)sr_fill_rect(c,(float)(cx-6),(float)(cy+4),12,2,ink,1);
  else if(kind==1)sr_stroke_rect(c,(float)(cx-6),(float)(cy-5),12,10,2,ink,1);
- else if(kind==3){sr_line(c,(float)(cx-5),(float)(cy-5),(float)(cx+5),(float)(cy+5),2,ink,1,0,0);sr_line(c,(float)(cx-5),(float)(cy+5),(float)(cx+5),(float)(cy-5),2,ink,1,0,0);}
+ else if(kind==3)desktop_cross(c,cx,cy,5,ink);
  else {sr_stroke_rect(c,(float)(cx-3),(float)(cy-6),10,8,1,ink,1);sr_fill_rect(c,(float)(cx-7),(float)(cy-2),10,8,hover?0x2f5f63u:0x1b3a42u,1);sr_stroke_rect(c,(float)(cx-7),(float)(cy-2),10,8,1,ink,1);}
 }
 /* The minimized terminal: a button on the bottom bar, in every mode. */

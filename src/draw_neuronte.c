@@ -8,6 +8,8 @@
  *   outlines        eighth blocks, placed so their ink is the outline
  *   thin bars       a full block stretched to the bar (cursor, lever)
  *   disc, ellipse   the black circle, fitted to the shape's box
+ *   stair marker    the down-pointing triangle, fitted the same way
+ *   close button    the multiplication sign, fitted the same way
  *   sprites, tiles  every pixel through 2 x 4 octant cells: the cell's
  *                   eight source pixels are its eight colours, and three
  *                   masks from the pixel net say which colour each pixel
@@ -15,7 +17,9 @@
  *
  * What stays plain code: clearing the frame, filling a rectangle with one
  * colour, choosing which source pixel a sub-cell shows, and mixing colours
- * by coverage.
+ * by coverage. The clear and the fill are in canvas.c; soft-raster is not
+ * linked, and only its header is read, for the canvas struct and the font
+ * names draw.c passes.
  *
  * Built by `make RENDER=neuronte`. The weight file is the one named at
  * build time by ZELL_NEURONTE_WEIGHTS, or by the environment variable of
@@ -156,7 +160,7 @@ static void zn_fill_rect(sr_canvas *c, float x, float y, float w, float h,
         zn_glyph(c, 0x2588u, zn_round(x), zn_round(y), iw, ih, rgb, alpha);
         return;
     }
-    sr_fill_rect(c, x, y, w, h, rgb, alpha);
+    zell_canvas_fill_rect(c, x, y, w, h, rgb, alpha);
 }
 
 /* An eighth block's ink is one eighth of its cell. A side t pixels thick
@@ -184,13 +188,20 @@ static void zn_stroke_rect(sr_canvas *c, float x, float y, float w, float h,
     zn_glyph(c, 0x2595u, x0 + iw - 8 * t, y0 + t, 8 * t, ih - 2 * t, rgb, alpha);
 }
 
-/* Where the black circle's ink sits in its cell, as fractions of the
- * cell, measured once from the net's own coverage. */
-static bool zn_disc_box(float *fx0, float *fy0, float *fx1, float *fy1)
+/* The characters used as whole shapes: the black circle, the black
+ * down-pointing triangle and the multiplication sign. */
+enum { ZN_DISC, ZN_DOWN, ZN_CROSS, ZN_SHAPES };
+static const uint32_t zn_shape[ZN_SHAPES] = {0x25cfu, 0x25bcu, 0x00d7u};
+
+/* Where a shape's ink sits in its cell, as fractions of the cell, measured
+ * once from the net's own coverage. */
+static bool zn_ink_box(int shape, float *fx0, float *fy0, float *fx1, float *fy1)
 {
     enum { W = 48, H = 96 };
-    static float box[4];
-    static int state;
+    static float boxes[ZN_SHAPES][4];
+    static int states[ZN_SHAPES];
+    float *box = boxes[shape];
+    int state = states[shape];
 
     if (state == 0) {
         static float cov[W * H];
@@ -203,7 +214,7 @@ static bool zn_disc_box(float *fx0, float *fy0, float *fx1, float *fy1)
 
         state = -1;
         if (zell_neuronte_open() &&
-            neuronte_coverage(zn_font, 0x25cfu, W, H, 0, cov) == 0) {
+            neuronte_coverage(zn_font, zn_shape[shape], W, H, 0, cov) == 0) {
             for (y = 0; y < H; y++) {
                 for (x = 0; x < W; x++) {
                     if (cov[y * W + x] > 0.5f) {
@@ -222,6 +233,7 @@ static bool zn_disc_box(float *fx0, float *fy0, float *fx1, float *fy1)
                 state = 1;
             }
         }
+        states[shape] = state;
     }
     if (state < 0) {
         return false;
@@ -233,9 +245,9 @@ static bool zn_disc_box(float *fx0, float *fy0, float *fx1, float *fy1)
     return true;
 }
 
-/* The circle character in a cell sized so its ink fills the ellipse's box. */
-static void zn_fill_ellipse(sr_canvas *c, float cx, float cy, float rx, float ry,
-                            uint32_t rgb, float alpha)
+/* A shape's character in a cell sized so its ink fills the box. */
+static void zn_fit(sr_canvas *c, int shape, float x, float y, float w, float h,
+                   uint32_t rgb, float alpha)
 {
     float fx0;
     float fy0;
@@ -244,22 +256,44 @@ static void zn_fill_ellipse(sr_canvas *c, float cx, float cy, float rx, float ry
     int cell_w;
     int cell_h;
 
-    if (rx <= 0.0f || ry <= 0.0f || !zn_disc_box(&fx0, &fy0, &fx1, &fy1)) {
+    if (w <= 0.0f || h <= 0.0f || !zn_ink_box(shape, &fx0, &fy0, &fx1, &fy1)) {
         return;
     }
-    cell_w = zn_round(2.0f * rx / (fx1 - fx0));
-    cell_h = zn_round(2.0f * ry / (fy1 - fy0));
+    cell_w = zn_round(w / (fx1 - fx0));
+    cell_h = zn_round(h / (fy1 - fy0));
     if (cell_w < 1 || cell_h < 1 || cell_w > 2048 || cell_h > 2048) {
         return;
     }
-    zn_glyph(c, 0x25cfu, zn_round(cx - rx - fx0 * (float)cell_w),
-             zn_round(cy - ry - fy0 * (float)cell_h), cell_w, cell_h, rgb, alpha);
+    zn_glyph(c, zn_shape[shape], zn_round(x - fx0 * (float)cell_w),
+             zn_round(y - fy0 * (float)cell_h), cell_w, cell_h, rgb, alpha);
+}
+
+static void zn_fill_ellipse(sr_canvas *c, float cx, float cy, float rx, float ry,
+                            uint32_t rgb, float alpha)
+{
+    zn_fit(c, ZN_DISC, cx - rx, cy - ry, 2.0f * rx, 2.0f * ry, rgb, alpha);
 }
 
 static void zn_fill_circle(sr_canvas *c, float cx, float cy, float r,
                            uint32_t rgb, float alpha)
 {
     zn_fill_ellipse(c, cx, cy, r, r, rgb, alpha);
+}
+
+/* The stair marker: a triangle with a level top from mid - half to
+ * mid + half, coming to a point at tip. */
+static void zn_down_arrow(sr_canvas *c, float mid, float half, float top, float tip,
+                          uint32_t rgb, float alpha)
+{
+    zn_fit(c, ZN_DOWN, mid - half, top, 2.0f * half, tip - top, rgb, alpha);
+}
+
+/* The close cross, in the square whose corners the raster build's two
+ * strokes join: cx - reach to cx + reach, and the same down. */
+static void zn_cross(sr_canvas *c, int cx, int cy, int reach, uint32_t rgb)
+{
+    zn_fit(c, ZN_CROSS, (float)(cx - reach), (float)(cy - reach),
+           (float)(2 * reach), (float)(2 * reach), rgb, 1.0f);
 }
 
 /* ---- pictures ---- */
@@ -414,5 +448,7 @@ static void zn_blit_scaled(sr_canvas *dst, const sr_canvas *src, int x, int y,
 #define sr_text_outlined zn_text_outlined
 #define sr_text_width_in(font, s, scale) zn_text_width((s), (scale))
 #define sr_font_height(font) ((void)(font), (int)ZN_CELL_H)
+#define desktop_down_arrow zn_down_arrow
+#define desktop_cross zn_cross
 
 #include "draw.c"

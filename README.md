@@ -155,6 +155,13 @@ Sibling libraries: `kitty-framebuffer`, `kitty-input`, `soft-raster`. Neuronte
 provides text, shape and sprite rendering. The background is cached after its
 first Neuronte render.
 
+The Neuronte programs do not link soft-raster. Their pixel buffer, frame
+clear, flat fill and PPM writer are in `src/canvas.c`, and every other shape
+comes from a net. They read soft-raster's header for the canvas struct, so
+the build still needs that checkout. `make test` runs the canvas beside
+soft-raster and compares the bytes; `make test-neuronte` checks that no
+Neuronte program holds a soft-raster symbol.
+
 ```sh
 make all neuronte
 make test test-neuronte

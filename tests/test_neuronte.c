@@ -2,8 +2,10 @@
  * skipped, with a message and a zero exit, when it cannot be loaded. */
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
+#include "desktop.h"
 #include "draw_neuronte.h"
 #include "room.h"
 #include "scene.h"
@@ -208,6 +210,181 @@ static void test_screens_repeat(void)
     sr_canvas_free(&b);
 }
 
+static int like(uint32_t p, uint32_t rgb)
+{
+    int dr = (int)((p >> 16) & 255u) - (int)((rgb >> 16) & 255u);
+    int dg = (int)((p >> 8) & 255u) - (int)((rgb >> 8) & 255u);
+    int db = (int)(p & 255u) - (int)(rgb & 255u);
+
+    return abs(dr) + abs(dg) + abs(db);
+}
+
+/* The stair marker downstairs is the net's down-pointing triangle, fitted
+ * to the box the raster build's triangle has: 28 wide at a level top two
+ * pixels under the band's top edge, 20 high, coming to a point below the
+ * middle of the stairs. At the world's own size the room is not moved. */
+static void test_stair_marker_is_a_triangle(void)
+{
+    enum { W = ZELL_WORLD_W, H = ZELL_WORLD_H, ROWS = 32, REACH = 24 };
+    const uint32_t gold = 0xd7b56au;
+    const int top = (int)(0.93f * (float)H) + 2;
+    const int mid = (int)((ZELL_STAIRS_LEFT + ZELL_STAIRS_RIGHT) * 0.5f * (float)W);
+    int left[ROWS];
+    int right[ROWS];
+    zell_scene scene;
+    sr_canvas c;
+    int room;
+
+    expect(sr_canvas_init(&c, W, H), "marker canvas allocates");
+    expect(mid == 768 && top == 954, "the stairs are in the middle, the band near the foot");
+    for (room = 1; room <= 2; room++) {
+        int first = -1;
+        int last = -1;
+        int total = 0;
+        int grows = 0;
+        int off_centre = 0;
+        int row;
+        int x;
+
+        zell_scene_init(&scene, W, H);
+        zell_desktop_init(&scene);
+        scene.room = room;
+        scene.disk_count = 3;
+        scene.disks_ready = true;
+        scene.x = (float)W * 0.25f;
+        scene.y = (float)H * 0.50f;
+        zell_draw(&scene, &c);
+        for (row = 0; row < ROWS; row++) {
+            int y = top - 6 + row;
+
+            left[row] = -1;
+            right[row] = -2;
+            for (x = mid - REACH; x < mid + REACH; x++) {
+                if (like(c.px[y * W + x], gold) < 30) {
+                    left[row] = left[row] < 0 ? x : left[row];
+                    right[row] = x;
+                    total++;
+                }
+            }
+            if (left[row] >= 0) {
+                first = first < 0 ? row : first;
+                last = row;
+            }
+        }
+        expect(first >= 0, "the marker is drawn");
+        if (first < 0) {
+            continue;
+        }
+        for (row = first; row <= last; row++) {
+            int width = right[row] - left[row] + 1;
+
+            if (row > first && width > right[row - 1] - left[row - 1] + 1) {
+                grows++;
+            }
+            /* Ink from left to right is the same distance either side of mid. */
+            if (width < 1 || abs(left[row] + right[row] + 1 - 2 * mid) > 2) {
+                off_centre++;
+            }
+        }
+        expect(abs(top - 6 + first - top) <= 1, "its top is two pixels under the band's edge");
+        expect(last - first + 1 >= 18 && last - first + 1 <= 21, "it is 20 rows high, less a faint one");
+        expect(right[first] - left[first] + 1 >= 24 && right[first] - left[first] + 1 <= 28,
+               "its top row is the widest, 28 less the soft ends");
+        expect(right[last] - left[last] + 1 <= 3, "it comes to a point at the foot");
+        expect(grows == 0, "no row is wider than the one above");
+        expect(off_centre == 0, "every row is centred on the stairs");
+        expect(total >= 230 && total <= 290, "its area is half its box");
+    }
+    sr_canvas_free(&c);
+}
+
+/* The floating window's close button is the net's multiplication sign in
+ * the square whose corners the raster build's two strokes join, five
+ * pixels out from the button's middle: ink along both diagonals and
+ * through the middle, none at the middle of a side, nothing past the
+ * square but a soft edge. */
+static void test_close_button_is_a_cross(void)
+{
+    enum { REACH = 5 };
+    const uint32_t ink = 0xabc8c0u;
+    const uint32_t ground = 0x1b3a42u;
+    zell_scene scene;
+    zell_terminal_layout layout;
+    sr_canvas c;
+    int cols;
+    int rows;
+    int cx;
+    int cy;
+    int dx;
+    int dy;
+    int i;
+    int inked = 0;
+    int on_diagonals = 0;
+    int at_sides = 0;
+    int outside = 0;
+    int quarter[4] = {0, 0, 0, 0};
+
+    expect(sr_canvas_init(&c, 1000, 700), "button canvas allocates");
+    zell_scene_init(&scene, 1000, 700);
+    zell_desktop_init(&scene);
+    zell_terminal_cells(&scene, &cols, &rows);
+    scene.terminal_width = cols * 8;
+    scene.terminal_height = rows * 16;
+    scene.terminal_pixels = calloc((size_t)scene.terminal_width * (size_t)scene.terminal_height,
+                                   sizeof(uint32_t));
+    expect(scene.terminal_pixels != NULL, "window pixels allocate");
+    if (scene.terminal_pixels == NULL) {
+        sr_canvas_free(&c);
+        return;
+    }
+    for (i = 0; i < scene.terminal_width * scene.terminal_height; i++) {
+        scene.terminal_pixels[i] = 0xff0b1418u;
+    }
+    scene.mode = ZELL_MODE_SERVICE;
+    scene.service_phase = 5;
+    zell_draw(&scene, &c);
+    zell_terminal_layout_for(&scene, c.w, c.h, &layout);
+    cx = layout.close.x + layout.close.w / 2;
+    cy = layout.close.y + layout.close.h / 2;
+    expect(layout.close.w >= 2 * REACH + 6 && layout.close.h >= 2 * REACH + 6, "the button holds the cross");
+    /* Pixel cx + d covers d to d + 1 from the middle, so the square is d = -REACH .. REACH - 1. */
+    for (dy = -REACH - 3; dy <= REACH + 3; dy++) {
+        for (dx = -REACH - 3; dx <= REACH + 3; dx++) {
+            uint32_t p = c.px[(cy + dy) * c.w + cx + dx];
+            int in_square = dx >= -REACH && dx < REACH && dy >= -REACH && dy < REACH;
+            int near_square = dx >= -REACH - 1 && dx <= REACH + 1 && dy >= -REACH - 1 && dy <= REACH + 1;
+
+            if (in_square && like(p, ink) < like(p, ground)) {
+                inked++;
+                quarter[(dy >= 0) * 2 + (dx >= 0)]++;
+            }
+            if (!near_square && like(p, ground) > 12) {
+                outside++;
+            }
+        }
+    }
+    for (i = 1; i <= REACH - 1; i++) {
+        on_diagonals += like(c.px[(cy - i) * c.w + cx - i], ink) < 60;
+        on_diagonals += like(c.px[(cy - i) * c.w + cx + i - 1], ink) < 60;
+        on_diagonals += like(c.px[(cy + i - 1) * c.w + cx - i], ink) < 60;
+        on_diagonals += like(c.px[(cy + i - 1) * c.w + cx + i - 1], ink) < 60;
+    }
+    for (i = -1; i <= 0; i++) {
+        at_sides += like(c.px[(cy - REACH) * c.w + cx + i], ground) > 40;
+        at_sides += like(c.px[(cy + REACH - 1) * c.w + cx + i], ground) > 40;
+        at_sides += like(c.px[(cy + i) * c.w + cx - REACH], ground) > 40;
+        at_sides += like(c.px[(cy + i) * c.w + cx + REACH - 1], ground) > 40;
+    }
+    expect(on_diagonals == 4 * (REACH - 1), "ink runs along both diagonals from the middle");
+    expect(at_sides == 0, "the middle of each side is clear");
+    expect(inked >= 60 && inked <= 88, "the strokes are about three pixels thick");
+    expect(abs(quarter[0] - quarter[1]) <= 4 && abs(quarter[2] - quarter[3]) <= 4 &&
+           abs(quarter[0] - quarter[2]) <= 4 && quarter[0] >= 8, "the four arms are alike");
+    expect(outside == 0, "past its square the cross has a soft edge of one pixel at most");
+    free(scene.terminal_pixels);
+    sr_canvas_free(&c);
+}
+
 int main(void)
 {
     if (!zell_neuronte_open()) {
@@ -219,6 +396,8 @@ int main(void)
     test_sign_reads_voice();
     test_tiles_are_pixel_exact();
     test_framerate_is_shown();
+    test_stair_marker_is_a_triangle();
+    test_close_button_is_a_cross();
     test_screens_repeat();
     zell_neuronte_close();
     if (failures) {
