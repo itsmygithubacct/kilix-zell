@@ -125,6 +125,33 @@ NEURONTE_LIB := $(NEURONTE)/build/libneuronte.a
 N_CPPFLAGS := $(CPPFLAGS) -I$(NEURONTE)/include -DZELL_RENDER_NEURONTE \
 	-DZELL_NEURONTE_WEIGHTS='"$(NEURONTE_WEIGHTS)"'
 
+# Objects compiled with N_CPPFLAGS hold that checkout's headers and the
+# weights path. This file records both, and is rewritten only when either
+# changes, so a build against another checkout compiles those objects again.
+N_IDENT := $(abspath $(NEURONTE)) $(NEURONTE_WEIGHTS)
+N_STAMP := $(BUILD)/neuronte.ident
+N_OBJS := \
+	$(BUILD)/draw_neuronte.o \
+	$(BUILD)/main_neuronte.o \
+	$(BUILD)/snap_neuronte.o \
+	$(BUILD)/test_neuronte.o \
+	$(BUILD)/test_scene_neuronte.o \
+	$(BUILD)/test_process_neuronte.o \
+	$(BUILD)/test_desktop_neuronte.o
+
+.PHONY: FORCE
+FORCE:
+
+$(N_STAMP): FORCE | $(BUILD)
+	@printf '%s\n' '$(N_IDENT)' | cmp -s - $@ || printf '%s\n' '$(N_IDENT)' > $@
+
+$(N_OBJS): $(N_STAMP)
+
+.PHONY: test-neuronte-ident
+test-neuronte: test-neuronte-ident
+test-neuronte-ident:
+	python3 $(ROOT)/tests/test_neuronte_ident.py "$(NEURONTE)"
+
 N_COMMON := \
 	$(BUILD)/desktop.o \
 	$(ART_OBJS) \
