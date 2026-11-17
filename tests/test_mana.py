@@ -31,6 +31,10 @@ class ManaTests(unittest.TestCase):
         self.cache = root / '.loop/usage-pages.json'
         self.environment = patch.dict(os.environ, {'CLAUDEX_CONFIG': str(root / 'loop.json')})
         self.environment.start()
+        # No test here may reach the real `kilix` to look for or install Claudex.
+        catalog = patch.object(zell_vitals, 'claudex_catalog', return_value=(None, 'no catalog in this test'))
+        catalog.start()
+        self.addCleanup(catalog.stop)
         self.state = {}
         self.pages = []
         self.ui = SimpleNamespace(

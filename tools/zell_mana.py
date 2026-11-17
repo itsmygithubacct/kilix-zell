@@ -86,9 +86,13 @@ def needs(now=None, directory=None):
 
 
 def claudex(*words, timeout=150):
-    script = zell_vitals.claudex_script()
+    """Run Claudex. When no copy is found, Kilix is asked to install it
+    first: Claudex is installed on first use. The automatic reading does not
+    get here without a copy (see due), so only a task the person asked for
+    installs anything."""
+    script, reason = zell_vitals.claudex_ready()
     if script is None:
-        raise FileNotFoundError('Claudex is not installed')
+        raise FileNotFoundError(f'Claudex is not installed and Kilix could not install it ({reason})')
     # The home folder: a project folder makes a client stop at its trust question.
     return subprocess.run([sys.executable, str(script), '--config', str(zell_vitals.config_path()), *words],
                           capture_output=True, text=True, timeout=timeout, cwd=Path.home())
@@ -108,7 +112,9 @@ def automatic(ui):
 
 
 def due(ui, now=None):
-    """Whether the automatic refresh should run now."""
+    """Whether the automatic refresh should run now. Never without Claudex:
+    looking for it installs nothing, so the automatic reading cannot be what
+    installs it."""
     now = time.time() if now is None else now
     if not automatic(ui) or zell_vitals.claudex_script() is None:
         return False

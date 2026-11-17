@@ -300,7 +300,12 @@ me* lists any provider that is waiting on the person, with the command to
 run. A provider shown as `ASK` is waiting on a sign-in or a folder-trust
 answer. While Zell runs, readings older than 30 minutes are read again
 automatically; this reads balances only and spends no tokens. *Automatic
-readings on / off* turns that off. The console needs Claudex.
+readings on / off* turns that off. The console needs Claudex, which is
+installed on first use: when *Read mana now*, a usage page or the wall clock's
+*Check coding-token mana* finds no copy, Zell asks Kilix for the catalog's
+pinned one (`kilix app install kilix-claudex`) and carries on. Looking at
+readings and the automatic reading never install anything, and
+`KILIX_APP_AUTO_INSTALL=0` refuses the install.
 
 The **Command computer** stands in the bottom left corner of the Command
 Center. Enter beside it opens a shell in Zell's floating terminal, started in

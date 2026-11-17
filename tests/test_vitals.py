@@ -21,7 +21,13 @@ class VitalsTests(unittest.TestCase):
         self.ui = Mock()
         self.ui.state_read.return_value = {}
         self.now = 2000000000
-        for context in (patch.object(vitals, 'config_path', return_value=self.base / 'loop.json'),
+        # A Claudex is taken as found, so no test depends on the machine having
+        # one and none can reach the real `kilix` to look for or install one.
+        self.real_claudex_script = vitals.claudex_script
+        for context in (patch.object(vitals, 'claudex_script', return_value=Path('/x/pane_loop.py')),
+                        patch.object(vitals, 'config_path', return_value=self.base / 'loop.json'),
+                        patch.object(vitals, 'claudex_catalog', return_value=(None, 'no catalog in this test')),
+                        patch.dict(vitals._catalog, {'script': None, 'asked': None}),
                         patch.object(vitals, 'APT_HISTORY', self.base / 'apt'),
                         patch.object(vitals, 'UPGRADE_STAMPS', ()),
                         patch.object(vitals.time, 'time', return_value=self.now)):
@@ -72,10 +78,11 @@ class VitalsTests(unittest.TestCase):
     def test_missing_claudex_reports_without_throttling(self):
         self.cache({})
         with patch.object(vitals, 'claudex_script', return_value=None), patch.object(vitals, 'fatigue', return_value=50), \
-                patch.object(vitals.subprocess, 'run') as run:
+                patch.object(vitals.subprocess, 'run') as run, patch('builtins.print'):
             vitals.request_mana(self.ui)
         run.assert_not_called()
         self.assertIn('Claudex usage reader was not found', self.ui.page_text.call_args.args[0])
+        self.assertIn('no catalog in this test', self.ui.page_text.call_args.args[0])
         self.assertFalse((self.runtime / 'zell-mana-attempts.json').exists())
 
     def test_claudex_found_behind_the_installed_command(self):
@@ -90,9 +97,9 @@ class VitalsTests(unittest.TestCase):
         (link / 'claudex').symlink_to(folder / 'claudex')
         with patch.object(vitals, '__file__', str(Path(self.temp.name) / 'a/b/tools/zell_vitals.py')), \
                 patch.dict(os.environ, {'PATH': str(link)}):
-            self.assertEqual(vitals.claudex_script(), folder / 'pane_loop.py')
+            self.assertEqual(self.real_claudex_script(), folder / 'pane_loop.py')
             with patch.dict(os.environ, {'PATH': str(folder / 'nowhere')}):
-                self.assertIsNone(vitals.claudex_script())
+                self.assertIsNone(self.real_claudex_script())
 
     def test_headroom_and_smoothing(self):
         with patch.object(vitals, 'cpu_memory', side_effect=[((100, 90), 90), ((200, 180), 80), ((300, 180), 90)]):

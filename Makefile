@@ -347,6 +347,7 @@ test-desktop: $(BUILD)/test-desktop
 	python3 $(ROOT)/tests/test_vitals.py
 	python3 $(ROOT)/tests/test_mana.py
 	python3 $(ROOT)/tests/test_mana_manual.py
+	python3 $(ROOT)/tests/test_claudex_install.py
 	python3 $(ROOT)/tests/test_providers.py
 	python3 $(ROOT)/tests/test_rooms.py
 	python3 $(ROOT)/tests/test_fleets.py

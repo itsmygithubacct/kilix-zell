@@ -233,8 +233,48 @@ def monitor(ui):
         time.sleep(5)
 
 
+# Claudex in the Kilix catalog. Kilix installs the pinned copy on first use.
+CLAUDEX_APP = 'kilix-claudex'
+# How long a "not installed" answer from Kilix is believed before asking again.
+CATALOG_RECHECK = 300
+# A first-use install is a small clone; this is generous for a slow line.
+INSTALL_TIMEOUT = 600
+_catalog = {'script': None, 'asked': None}
+
+
+def claudex_catalog(install=False):
+    """The Kilix catalog's copy of Claudex, as (usage reader or None, reason).
+
+    Kilix checks the copy it installed and prints where its command is.
+    With install, Kilix first fetches the pinned copy when there is none:
+    that is the first-use install, and it honours KILIX_APP_AUTO_INSTALL=0.
+    Without install nothing is ever fetched.
+    """
+    kilix = shutil.which('kilix')
+    if not kilix:
+        return None, 'the kilix command was not found'
+    env = dict(os.environ)
+    if not install:
+        env['KILIX_APP_AUTO_INSTALL'] = '0'
+    try:
+        done = subprocess.run([kilix, 'app', 'install', CLAUDEX_APP], stdin=subprocess.DEVNULL, capture_output=True,
+                              text=True, timeout=INSTALL_TIMEOUT if install else 60, env=env, cwd=Path.home())
+    except (OSError, subprocess.SubprocessError) as error:
+        return None, str(error)
+    printed = done.stdout.strip().splitlines()
+    if done.returncode or not printed:
+        said = done.stderr.strip().splitlines()
+        return None, said[-1][:300] if said else f'kilix app install {CLAUDEX_APP} ended with status {done.returncode}'
+    command = Path(printed[-1].strip())
+    reader = command.resolve().with_name('pane_loop.py') if command.is_absolute() else None
+    if reader is None or not reader.is_file():
+        return None, f'Kilix named {printed[-1].strip()[:200]!r}, which has no usage reader beside it'
+    return reader, ''
+
+
 def claudex_script():
-    """Claudex's usage reader: beside a source checkout, or behind the command."""
+    """Claudex's usage reader: beside a source checkout, behind the command,
+    or the copy Kilix installed. Looking never installs anything."""
     candidates = []
     if os.environ.get('KILIX_ZELL_CLAUDEX'):
         candidates.append(Path(os.environ['KILIX_ZELL_CLAUDEX']).expanduser())
@@ -242,7 +282,40 @@ def claudex_script():
     launcher = shutil.which('claudex')
     if launcher:
         candidates.append(Path(launcher).resolve().with_name('pane_loop.py'))
-    return next((path for path in candidates if path.is_file()), None)
+    found = next((path for path in candidates if path.is_file()), None)
+    if found is not None:
+        return found
+    # The catalog copy. Asking Kilix starts a process, and the room's monitor
+    # looks every few seconds, so a "no" is kept for a while.
+    known = _catalog['script']
+    if known is not None and known.is_file():
+        return known
+    now = time.time()
+    if _catalog['asked'] is not None and 0 <= now - _catalog['asked'] < CATALOG_RECHECK:
+        return None
+    _catalog['asked'] = now
+    _catalog['script'] = claudex_catalog()[0]
+    return _catalog['script']
+
+
+def claudex_ready(report=None):
+    """The usage reader for a task the person asked for, as (reader or None,
+    reason). When no copy is found, Kilix is asked to install the catalog's
+    pinned copy: Claudex is installed on first use, not with Zell."""
+    script = claudex_script()
+    if script is not None:
+        return script, ''
+    if report is None:
+        # The station's page shows what its helper prints.
+        def report(text):
+            print(text, flush=True)
+    if shutil.which('kilix'):
+        report('Claudex is not installed yet. Asking Kilix to install it; this happens once.')
+    script, reason = claudex_catalog(install=True)
+    _catalog['script'], _catalog['asked'] = script, time.time()
+    if script is not None:
+        report('Claudex is installed.')
+    return script, reason
 
 
 def check_provider(provider):
@@ -268,11 +341,13 @@ def write_json(path, value):
 
 def request_mana(ui):
     runtime = config_path().parent / '.loop'
-    if claudex_script() is None:
+    # This is a task the person asked for, so a missing Claudex is installed now.
+    script, reason = claudex_ready()
+    if script is None:
         # Nothing was asked of any provider, so nothing is recorded or throttled.
-        ui.page_text('Mana refresh unavailable: the Claudex usage reader was not found. Install Claudex '
-                     '(the `claudex` command) or set KILIX_ZELL_CLAUDEX to its pane_loop.py.\n\n'
-                     + snapshot(ui)['details'])
+        ui.page_text('Mana refresh unavailable: the Claudex usage reader was not found and Kilix could not '
+                     f'install it ({reason}). Run `kilix app install {CLAUDEX_APP}`, or set KILIX_ZELL_CLAUDEX '
+                     'to its pane_loop.py.\n\n' + snapshot(ui)['details'])
         return
     try:
         runtime.mkdir(parents=True, exist_ok=True)
