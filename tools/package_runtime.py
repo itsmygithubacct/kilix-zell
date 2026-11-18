@@ -20,8 +20,9 @@ def copy(source, target, executable=False):
     target.chmod(0o755 if executable else 0o644)
 
 
-def build(dest, modules, neuronte, ghostty, sdk):
-    display = modules/'neuronte-display'
+def build(dest, modules, neuronte, ghostty, sdk, display=None, framebuffer=None):
+    display = display or modules/'neuronte-display'
+    framebuffer = framebuffer or modules/'kitty-framebuffer'
     secrets = modules/'kilix-secrets'
     copy(ROOT/'zell-neuronte', dest/'zell-neuronte', True)
     copy(ROOT/'bin/zell', dest/'bin/zell', True)
@@ -42,8 +43,8 @@ def build(dest, modules, neuronte, ghostty, sdk):
     # The presenter links the same sources with an install-relative RUNPATH.
     subprocess.run([os.environ.get('CC', 'cc'), '-O2', '-std=c11', '-shared', '-fPIC', '-pthread',
         '-D_POSIX_C_SOURCE=200809L', '-D_DEFAULT_SOURCE', str(display/'native.c'),
-        str(modules/'kitty-framebuffer/src/kitty_framebuffer.c'),
-        '-I'+str(modules/'kitty-framebuffer/include'), '-I'+str(ghostty/'include'),
+        str(framebuffer/'src/kitty_framebuffer.c'),
+        '-I'+str(framebuffer/'include'), '-I'+str(ghostty/'include'),
         '-L'+str(ghostty/'lib'), '-Wl,-rpath,$ORIGIN/../../../lib', '-lghostty-vt', '-lz', '-o', str(native)], check=True)
     native.chmod(0o755)
     for name in ('kilix-secrets', 'kilix-secretsd'):
@@ -52,7 +53,7 @@ def build(dest, modules, neuronte, ghostty, sdk):
         copy(secrets/'service'/name, dest/'service'/name)
     for name, source in [('zell', ROOT), ('neuronte', neuronte), ('ghostty', ghostty),
         ('neuronte-display', display), ('kilix-secrets', secrets),
-        ('kitty-framebuffer', modules/'kitty-framebuffer'), ('soft-raster', modules/'soft-raster'),
+        ('kitty-framebuffer', framebuffer), ('soft-raster', modules/'soft-raster'),
         ('neuronte-sdk', sdk),
         ('kitty-keyboard', modules/'kitty-input/third_party/kitty_keyboard')]:
         copy(source/'LICENSE', dest/'licenses'/name)
@@ -89,6 +90,10 @@ def main():
     parser.add_argument('--ghostty', type=Path, default=Path.home()/'projects/batty/build/ghostty')
     parser.add_argument('--neuronte-sdk', type=Path, help='neuronte-sdk checkout the canvas was built from '
                         '(default: neuronte-sdk under --modules)')
+    parser.add_argument('--neuronte-display', type=Path, help='neuronte-display checkout with nd_scroll '
+                        '(default: neuronte-display under --modules)')
+    parser.add_argument('--framebuffer', type=Path, help='kitty-framebuffer checkout with kittyfb_write_control '
+                        '(default: kitty-framebuffer under --modules)')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--install', type=Path)
     parser.add_argument('--bin-dir', type=Path)
@@ -103,7 +108,14 @@ def main():
         sdk = args.neuronte_sdk.resolve() if args.neuronte_sdk else modules/'neuronte-sdk'
         if not (sdk/'src/neuronte_sdk_canvas.c').is_file():
             parser.error(f'{sdk} has no canvas; name the neuronte-sdk checkout the build used with --neuronte-sdk')
-        build(dest, modules, args.neuronte.resolve(), args.ghostty.resolve(), sdk)
+        display = args.neuronte_display.resolve() if args.neuronte_display else modules/'neuronte-display'
+        framebuffer = args.framebuffer.resolve() if args.framebuffer else modules/'kitty-framebuffer'
+        # The panes scroll, report the mouse and paste through these.
+        if 'nd_scroll' not in (display/'native.c').read_text(errors='replace'):
+            parser.error(f'{display} has no nd_scroll; name a neuronte-display checkout from 0.2.4 with --neuronte-display')
+        if 'kittyfb_write_control' not in (framebuffer/'include/kitty_framebuffer.h').read_text(errors='replace'):
+            parser.error(f'{framebuffer} has no kittyfb_write_control; name a kitty-framebuffer checkout from 0.2.4 with --framebuffer')
+        build(dest, modules, args.neuronte.resolve(), args.ghostty.resolve(), sdk, display, framebuffer)
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             with tarfile.open(args.output, 'w:xz') as archive:

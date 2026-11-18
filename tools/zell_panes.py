@@ -16,16 +16,31 @@ Lines on stdin (INDEX is a pane of the shown room, from 0):
   A INDEX AGENT     type AGENT's command into that pane's idle shell
   X INDEX           end that pane's shell and start a new one
   K<hex>            bytes for the focused pane of the shown room
+  M INDEX ACTION BUTTON MODS X Y
+                    a pointer event over a pane's cells: ACTION 0 press,
+                    1 release, 2 motion; BUTTON 1 left, 2 right, 3 middle,
+                    4 to 7 the wheel, 0 none; MODS 1 Shift, 2 Ctrl, 4 Alt;
+                    X and Y pixels from the pane's top left. It goes to the
+                    pane's program when that asked for the mouse (Shift
+                    keeps it here); else the left button selects text,
+                    which is copied when it goes up, and the wheel scrolls
+  W INDEX HOW       scroll a pane: up or down a page, top, bottom
+  V INDEX ROW       scroll a pane so ROW (as B counts) is its first shown
+  P ROOM INDEX HEX  part of a paste for that pane; P ROOM INDEX . ends it
   Q                 close every pane and stop
 On stdout: "R" once ready, then "G AGENT LABEL" for each coding agent found
 on PATH; "T ROOM INDEX NAME" when what runs in front in a pane changes;
-"N ROOM INDEX TEXT" when a pane cannot do what was asked; "E <text>" when
-something failed.
+"N ROOM INDEX TEXT" when a pane cannot do what was asked or text was copied;
+"B ROOM INDEX KEPT FIRST SHOWN FLAGS" when a shown pane's scrollback
+changes (rows kept, the first shown, how many; FLAGS 1 if its program wants
+the mouse, 2 if it wants motion with no button too); "Y BASE64" pieces of
+copied text, then "Y ." ; "E <text>" when something failed.
 
 The map (its fd is in ZELL_PANES_FD) starts with 64 bytes of little-endian
 words: b"ZPNE", version 1, width, height, sequence (odd while a frame is
 being written), room. Then the pixels, as native ARGB.
 """
+import base64
 import mmap
 import os
 from pathlib import Path
@@ -55,6 +70,20 @@ BUSY = 'is busy. Finish what runs there, then press again.'
 # Ctrl-E then Ctrl-U: the agent's command replaces the whole half-typed
 # line, wherever the cursor was in it.
 CLEAR_LINE = b'\x05\x15'
+# Rows the wheel moves, and the time within which presses on one cell are a
+# double or triple click.
+WHEEL_ROWS = 3
+CLICK_SECONDS = 0.4
+# Copied text at most, and base64 characters a Y line.
+COPY_MAX = 256 * 1024
+COPY_CHUNK = 3000
+# A paste at most, and how much of one waits in a pane's own queue at once.
+PASTE_MAX = 4 << 20
+PASTE_STEP = 64 * 1024
+# What Shift with Page Up, Page Down, Home and End sends a program on its
+# alternate screen, which keeps no scrollback to move.
+SHIFTED_KEYS = {'up': b'\x1b[5;2~', 'down': b'\x1b[6;2~', 'top': b'\x1b[1;2H', 'bottom': b'\x1b[1;2F'}
+SHIFT, PRESS, RELEASE, MOTION, LEFT = 1, 0, 1, 2, 1
 # Zell's own Kilix window. The shells are not in it, so an agent started in
 # one must not be found, or sent text, as that window.
 IDENTITY = ('KITTY_WINDOW_ID', 'WINDOWID', 'KITTY_PID', 'KITTY_LISTEN_ON', 'KITTY_PUBLIC_KEY',
@@ -98,6 +127,70 @@ def title_text(name):
     return text or 'shell'
 
 
+class Selection:
+    """Text chosen with the left button: from anchor to head, each (row,
+    column), rows counted as the scrollbar counts them so the text stays
+    chosen as the pane scrolls. A word or line selection grows to whole
+    words or lines."""
+
+    def __init__(self, at, mode, alternate):
+        self.anchor = self.head = at
+        self.mode, self.alternate, self.active = mode, alternate, True
+
+    def ends(self):
+        return min(self.anchor, self.head), max(self.anchor, self.head)
+
+
+def word_char(text):
+    return bool(text) and (text.isalnum() or text in '_-./~:@%+=#?&')
+
+
+def selected_spans(pane):
+    """{row shown: (first column, last column)} of a pane's selection."""
+    selection = getattr(pane, 'selection', None)
+    if selection is None:
+        return {}
+    terminal = pane.terminal
+    if selection.alternate != terminal.alternate_screen():
+        pane.selection = None
+        return {}
+    (start_row, start_col), (end_row, end_col) = selection.ends()
+    if selection.mode == 'char' and (start_row, start_col) == (end_row, end_col):
+        return {}
+    first = terminal.scrollbar()[1]
+    rows = None
+    if selection.mode == 'word':
+        rows = terminal.rows_text()
+        if 0 <= start_row - first < len(rows):
+            line = rows[start_row - first]
+            while start_col > 0 and word_char(line[start_col]) and word_char(line[start_col - 1]):
+                start_col -= 1
+        if 0 <= end_row - first < len(rows):
+            line = rows[end_row - first]
+            while end_col + 1 < len(line) and word_char(line[end_col]) and word_char(line[end_col + 1]):
+                end_col += 1
+    if selection.mode == 'line':
+        start_col, end_col = 0, pane.cols - 1
+    spans = {}
+    for row in range(max(start_row, first), min(end_row, first + pane.rows - 1) + 1):
+        left = start_col if row == start_row else 0
+        right = end_col if row == end_row else pane.cols - 1
+        spans[row - first] = (left, min(right, pane.cols - 1))
+    return spans
+
+
+def selected_text(pane):
+    """The selection's text as shown: rows joined by newlines, each with
+    its trailing blanks gone."""
+    spans = selected_spans(pane)
+    if not spans:
+        return ''
+    rows = pane.terminal.rows_text()
+    lines = [''.join(rows[row][left:right + 1]).rstrip() for row, (left, right) in sorted(spans.items())
+             if 0 <= row < len(rows)]
+    return '\n'.join(lines)
+
+
 def room_grid(display, workspace):
     cols, rows = workspace.cols, workspace.rows
     records = [(32, display.FG, display.BG, 0)] * (cols * rows)
@@ -109,6 +202,13 @@ def room_grid(display, workspace):
         cells, cursor = pane.terminal.snapshot()
         for row in range(height):
             records[row * cols + x:row * cols + x + width] = cells[row * width:(row + 1) * width]
+        # Selected cells are drawn reversed, as the cursor is.
+        for row, (left, right) in selected_spans(pane).items():
+            if 0 <= row < height:
+                for column in range(left, min(right, width - 1) + 1):
+                    at = row * cols + x + column
+                    code, foreground, background, flags = records[at]
+                    records[at] = (code, foreground, background, flags ^ 16)
         cx, cy = cursor
         if index == workspace.focus and 0 <= cx < width and 0 <= cy < height:
             at = cy * cols + x + cx
@@ -253,6 +353,10 @@ class Rooms:
         self.hang_up = hang_up
         self.rooms, self.shown, self.dirty, self.quit = {}, None, False, False
         self.titles, self.next_titles = {}, 0.0
+        # Scrollback last said per (room, pane); pastes coming in, and ones
+        # waiting to go to a pane; the last left press (pane, cell, time).
+        self.bars, self.pastes, self.backlog = {}, {}, {}
+        self.last_press, self.clicks = None, 0
 
     def pane(self, word):
         """The shown room and its pane numbered `word`, or None."""
@@ -273,8 +377,11 @@ class Rooms:
             except ValueError:
                 return
             if workspace is not None and data:
+                pane = workspace.selected
+                # Typing shows the live rows again and ends a selection.
+                self.to_live(pane)
                 try:
-                    workspace.selected.send(data)
+                    pane.send(data)
                 except PANE_ERRORS:
                     # A shell that has not read a megabyte of input loses
                     # what is typed until it reads again.
@@ -333,6 +440,26 @@ class Rooms:
                 replace_pane(self.display, workspace, workspace.current, index, self.command, self.clock())
                 workspace.layout()
                 self.dirty = True
+        elif words[0] == 'M' and len(words) == 7:
+            found = self.pane(words[1])
+            try:
+                action, button, mods, x, y = (int(word) for word in words[2:])
+            except ValueError:
+                return
+            if found and action in (PRESS, RELEASE, MOTION) and 0 <= button <= 11 and 0 <= mods <= 7:
+                workspace, index = found
+                self.pointer(workspace.current['panes'][index], index, action, button, mods, max(0, x), max(0, y))
+        elif words[0] == 'W' and len(words) == 3:
+            found = self.pane(words[1])
+            if found and words[2] in SHIFTED_KEYS:
+                self.scroll(found[0].current['panes'][found[1]], words[2])
+        elif words[0] == 'V' and len(words) == 3:
+            found = self.pane(words[1])
+            if found and words[2].isdigit():
+                found[0].current['panes'][found[1]].terminal.scroll_to(int(words[2]))
+                self.dirty = True
+        elif words[0] == 'P' and len(words) == 4:
+            self.paste_line(words[1], words[2], words[3])
         elif words[0] == 'A' and len(words) == 3:
             found = self.pane(words[1])
             if not found or words[2] not in self.agents:
@@ -351,7 +478,158 @@ class Rooms:
             except PANE_ERRORS:
                 pass
 
+    def to_live(self, pane):
+        """Back to the live rows, with no selection."""
+        terminal = pane.terminal
+        kept, first, shown = terminal.scrollbar()
+        if first + shown < kept:
+            terminal.scroll_bottom()
+            self.dirty = True
+        if getattr(pane, 'selection', None) is not None:
+            pane.selection = None
+            self.dirty = True
+
+    def send(self, pane, data):
+        try:
+            pane.send(data)
+        except PANE_ERRORS:
+            pass
+
+    def scroll(self, pane, how):
+        terminal = pane.terminal
+        if terminal.alternate_screen():
+            self.send(pane, SHIFTED_KEYS[how])
+            return
+        page = max(1, pane.rows - 1)
+        if how == 'up':
+            terminal.scroll(-page)
+        elif how == 'down':
+            terminal.scroll(page)
+        elif how == 'top':
+            terminal.scroll_top()
+        else:
+            terminal.scroll_bottom()
+        self.dirty = True
+
+    def pointer(self, pane, index, action, button, mods, x, y):
+        terminal = pane.terminal
+        # The program has the mouse when it asked for it, unless Shift is held.
+        program = terminal.mouse_tracking() and not mods & SHIFT
+        if button in (4, 5):
+            if program:
+                self.send(pane, terminal.mouse(action, button, mods, x, y))
+            elif terminal.alternate_screen():
+                # A program on its alternate screen that asked (1007) gets
+                # arrows, as other terminals give it.
+                if terminal.mode(1007):
+                    arrow = (b'\x1bOA' if terminal.mode(1) else b'\x1b[A') if button == 4 else \
+                        (b'\x1bOB' if terminal.mode(1) else b'\x1b[B')
+                    self.send(pane, arrow * WHEEL_ROWS)
+            else:
+                terminal.scroll(-WHEEL_ROWS if button == 4 else WHEEL_ROWS)
+                self.dirty = True
+            return
+        if program:
+            data = terminal.mouse(action, button, mods, x, y)
+            if data:
+                self.send(pane, data)
+            return
+        if button != LEFT:
+            return
+        column = min(max(0, x // CELL_WIDTH), pane.cols - 1)
+        row = min(max(0, y // CELL_HEIGHT), pane.rows - 1) + terminal.scrollbar()[1]
+        selection = getattr(pane, 'selection', None)
+        if action == PRESS:
+            now = self.clock()
+            same = self.last_press is not None and self.last_press[:2] == (index, (row, column)) and \
+                now - self.last_press[2] < CLICK_SECONDS
+            self.clicks = self.clicks % 3 + 1 if same else 1
+            self.last_press = (index, (row, column), now)
+            pane.selection = Selection((row, column), ('char', 'word', 'line')[self.clicks - 1],
+                                       terminal.alternate_screen())
+            self.dirty = True
+        elif selection is not None and selection.active:
+            selection.head = (row, column)
+            self.dirty = True
+            if action == RELEASE:
+                selection.active = False
+                text = selected_text(pane)
+                if text:
+                    self.copy(index, text)
+                else:
+                    pane.selection = None
+
+    def copy(self, index, text):
+        data = text.encode('utf-8')[:COPY_MAX].decode('utf-8', 'ignore').encode('utf-8')
+        encoded = base64.b64encode(data).decode('ascii')
+        for at in range(0, len(encoded), COPY_CHUNK):
+            self.say('Y ' + encoded[at:at + COPY_CHUNK])
+        self.say('Y .')
+        lines = text.count('\n') + 1
+        self.say(f'N {self.shown} {index} Copied {lines} line{"s" if lines != 1 else ""}.')
+
+    def paste_line(self, room_word, index_word, piece):
+        try:
+            room, index = int(room_word), int(index_word)
+        except ValueError:
+            return
+        workspace = self.rooms.get(room)
+        if workspace is None or not 0 <= index < len(workspace.current['panes']):
+            return
+        key = (room, index)
+        if piece != '.':
+            try:
+                data = bytes.fromhex(piece)
+            except ValueError:
+                # A bad piece spoils the paste: none of it is sent.
+                self.pastes[key] = None
+                return
+            held = self.pastes.setdefault(key, bytearray())
+            if held is not None:
+                if len(held) + len(data) > PASTE_MAX:
+                    self.pastes[key] = None
+                else:
+                    held.extend(data)
+            return
+        held = self.pastes.pop(key, None)
+        if not held:
+            return
+        pane = workspace.current['panes'][index]
+        self.to_live(pane)
+        self.backlog.setdefault(pane, bytearray()).extend(pane.terminal.paste(bytes(held)))
+        self.feed_backlog()
+
+    def feed_backlog(self):
+        """A long paste goes to its pane a step at a time, as it reads."""
+        for pane, data in list(self.backlog.items()):
+            while data and pane.fd is not None and len(getattr(pane, 'pending', b'')) < PASTE_STEP:
+                step = bytes(data[:PASTE_STEP])
+                del data[:PASTE_STEP]
+                self.send(pane, step)
+            if not data or pane.fd is None:
+                del self.backlog[pane]
+
+    def report_bars(self):
+        """Say how far back each shown pane is, when it changes."""
+        workspace = self.rooms.get(self.shown)
+        if workspace is None:
+            return
+        for index, pane in enumerate(workspace.current['panes']):
+            terminal = pane.terminal
+            try:
+                kept, first, shown = terminal.scrollbar()
+                flags = 0
+                if terminal.mouse_tracking():
+                    flags = 1 | (2 if terminal.mode(1003) else 0)
+            except PANE_ERRORS:
+                continue
+            state = (kept, first, shown, flags)
+            if shown and self.bars.get((self.shown, index)) != state:
+                self.bars[self.shown, index] = state
+                self.say(f'B {self.shown} {index} {kept} {first} {shown} {flags}')
+
     def poll(self, now):
+        self.feed_backlog()
         for room, workspace in self.rooms.items():
             changed = False
             for pane in workspace.panes():
@@ -359,6 +637,7 @@ class Rooms:
             changed = renew_exited(self.display, workspace, self.command, now) or changed
             if room == self.shown and changed:
                 self.dirty = True
+        self.report_bars()
         if now >= self.next_titles:
             self.next_titles = now + TITLE_SECONDS
             for room, workspace in self.rooms.items():
@@ -408,6 +687,9 @@ def main():
         signal.signal(sig, stop)
     try:
         display = zell_terminal.load_display()
+        if not hasattr(display.Terminal, 'scrollbar'):
+            say('E The panes need the Neuronte display from 0.2.4, with scrollback and the mouse.')
+            return 1
         weights, library = zell_terminal.renderer_paths()
         cache_dir = Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache')) / 'neuronte-display'
         cache = display.MaskCache(weights, library, cache_dir, CELL_WIDTH, CELL_HEIGHT)

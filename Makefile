@@ -1,6 +1,11 @@
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 MODULES ?= $(abspath $(ROOT)/../../kilix-modules)
-FB_DIR := $(MODULES)/kitty-framebuffer
+# kitty-framebuffer: a checkout with kittyfb_write_control (0.2.4), which
+# puts a copy on the clipboard between frames.
+FB_DIR ?= $(MODULES)/kitty-framebuffer
+# neuronte-display, packaged for the panes and the Command computer: a
+# checkout with nd_scroll (0.2.4), for scrollback, the mouse and pastes.
+DISPLAY_DIR ?= $(MODULES)/neuronte-display
 KB_DIR := $(MODULES)/kitty-input/third_party/kitty_keyboard
 SR_DIR := $(MODULES)/soft-raster
 # neuronte-sdk, for its canvas. It must be a checkout that has
@@ -98,8 +103,22 @@ $(BUILD)/history.o: $(ROOT)/src/history.c | $(BUILD)
 $(BUILD)/test_scene.o: $(ROOT)/tests/test_scene.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/kitty_framebuffer.o: $(FB_DIR)/src/kitty_framebuffer.c | $(BUILD)
-	$(CC) $(CPPFLAGS) -I$(FB_DIR)/src $(CFLAGS) -c $< -o $@
+# Like the canvas below: the stamp names the framebuffer checkout and sums
+# its source and header, so a build against another checkout compiles what
+# includes it again; its recipe turns away a checkout from before 0.2.4.
+FB_STAMP := $(BUILD)/fb.ident
+
+$(FB_STAMP): FORCE | $(BUILD)
+	@grep -q kittyfb_write_control "$(FB_DIR)/include/kitty_framebuffer.h" 2>/dev/null || { \
+		echo "zell: FB_DIR '$(FB_DIR)' has no kittyfb_write_control. Set FB_DIR to a kitty-framebuffer checkout from 0.2.4 (work/0.2.4-control-write)." >&2; \
+		exit 2; }
+	@{ printf '%s\n' '$(abspath $(FB_DIR))'; cksum < "$(FB_DIR)/src/kitty_framebuffer.c"; cksum < "$(FB_DIR)/include/kitty_framebuffer.h"; } > $@.new
+	@if cmp -s $@.new $@; then rm -f $@.new; else mv $@.new $@; fi
+
+$(BUILD)/kitty_framebuffer.o: $(FB_STAMP) | $(BUILD)
+	$(CC) $(filter-out -MMD -MP,$(CPPFLAGS)) -I$(FB_DIR)/src $(CFLAGS) -c "$(FB_DIR)/src/kitty_framebuffer.c" -o $@
+
+$(BUILD)/main.o $(BUILD)/main_neuronte.o: $(FB_STAMP)
 
 $(BUILD)/kitty_keyboard.o: $(KB_DIR)/src/kitty_keyboard.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
@@ -365,7 +384,7 @@ $(BUILD)/test_process.o $(BUILD)/test_desktop.o: $(ROOT)/src/scene.h $(ROOT)/src
 
 # nsdk_canvas.d is left out: an earlier build wrote one that names its
 # checkout's source, and that checkout may be gone.
--include $(filter-out $(BUILD)/nsdk_canvas.d,$(wildcard $(BUILD)/*.d))
+-include $(filter-out $(BUILD)/nsdk_canvas.d $(BUILD)/kitty_framebuffer.d,$(wildcard $(BUILD)/*.d))
 
 $(BUILD)/test_desktop_neuronte.o: $(ROOT)/tests/test_desktop.c | $(BUILD)
 	$(CC) $(N_CPPFLAGS) $(CFLAGS) -c $< -o $@
@@ -408,8 +427,8 @@ test-neuronte-link: $(N_PROGRAMS)
 
 .PHONY: install
 install: neuronte
-	python3 tools/package_runtime.py --modules "$(MODULES)" --neuronte "$(NEURONTE)" --neuronte-sdk "$(NSDK_DIR)" --install "$(DESTDIR)$(ZELL_INSTALL_DIR)" --bin-dir "$(DESTDIR)$(ZELL_BIN_DIR)" $(if $(DESTDIR),,--user-unit-dir "$(HOME)/.config/systemd/user")
+	python3 tools/package_runtime.py --modules "$(MODULES)" --neuronte "$(NEURONTE)" --neuronte-sdk "$(NSDK_DIR)" --neuronte-display "$(DISPLAY_DIR)" --framebuffer "$(FB_DIR)" --install "$(DESTDIR)$(ZELL_INSTALL_DIR)" --bin-dir "$(DESTDIR)$(ZELL_BIN_DIR)" $(if $(DESTDIR),,--user-unit-dir "$(HOME)/.config/systemd/user")
 
 .PHONY: runtime
 runtime: neuronte
-	python3 tools/package_runtime.py --modules "$(MODULES)" --neuronte "$(NEURONTE)" --neuronte-sdk "$(NSDK_DIR)" --output "$(BUILD)/zell-$(shell cat VERSION)-$(shell uname -m).tar.xz"
+	python3 tools/package_runtime.py --modules "$(MODULES)" --neuronte "$(NEURONTE)" --neuronte-sdk "$(NSDK_DIR)" --neuronte-display "$(DISPLAY_DIR)" --framebuffer "$(FB_DIR)" --output "$(BUILD)/zell-$(shell cat VERSION)-$(shell uname -m).tar.xz"

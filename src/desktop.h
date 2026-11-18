@@ -121,6 +121,13 @@ void zell_command_computer_layout(zell_rect *frame,zell_rect *display);
  * high as its pane, up to this. */
 #define ZELL_PANES_MAX_W 3840
 #define ZELL_PANES_MAX_H 2160
+/* A pane's scrollbar is the right BAR_W pixels of its cells, while it has
+ * rows scrolled out of view; its thumb is at least BAR_MIN high. */
+#define ZELL_PANES_BAR_W 10
+#define ZELL_PANES_BAR_MIN 16
+/* Title-bar buttons, right to left: Restart, Zoom, and End (back to the
+ * live rows, only while scrolled back). */
+enum { ZELL_PANES_ZOOM, ZELL_PANES_RESTART, ZELL_PANES_END };
 void zell_panes_frame_limits(int room,int *max_w,int *max_h);
 int zell_panes_count(int room);
 /* Side the exit line is on: -1 left, 1 right, 0 not a pane room. */
@@ -136,6 +143,34 @@ void zell_panes_shutdown(void);
 /* Bytes typed in a pane room, for the focused pane. */
 void zell_panes_key(const unsigned char *bytes,size_t count);
 bool zell_panes_click(zell_scene *s);
+/* A pointer report in a pane room: buttons as SGR sends them (low bits the
+ * button, +4 Shift, +8 Alt, +16 Ctrl, +32 motion, +64 wheel), x and y in
+ * Zell's pixels, release for the report ending in m. Presses, drags and the
+ * wheel over a pane's cells go to its program or select text there; the
+ * scrollbar moves the rows shown. False if the panes did not take it. */
+bool zell_panes_pointer(zell_scene *s,unsigned buttons,int x,int y,bool release);
+/* Text pasted into Zell, for the pane with the keys; false if no pane has
+ * them. Sent to the helper over the next pumps. */
+bool zell_panes_paste(const zell_scene *s,const char *bytes,size_t count);
+#define ZELL_PANES_PASTE_MAX (4u<<20)
+/* Shift with Page Up, Page Down, Home or End while a pane has the keys
+ * scrolls it (or, on its alternate screen, goes to its program). */
+bool zell_panes_scroll_key(const zell_scene *s,uint32_t key,uint32_t modifiers);
+/* A pane's rows as the helper last said: kept, first shown, shown. False
+ * until it has said. */
+bool zell_panes_scrollback(int room,int index,uint64_t out[3]);
+/* Rows scrolled out of view below the ones shown. */
+uint64_t zell_panes_lines_back(int room,int index);
+/* Its scrollbar's track and thumb, empty while there is nothing to show. */
+void zell_panes_scrollbar_rect(const zell_scene *s,int index,zell_rect *track,zell_rect *thumb);
+/* The pane whose scrollbar the pointer is on, or that is being dragged;
+ * -1 for none. */
+int zell_panes_bar_hover(void);
+/* Text selected in a pane, as the escape sequence that puts it on the
+ * outer terminal's clipboard (OSC 52), once the helper has sent all of it.
+ * main writes it and says so. */
+const char *zell_panes_copy_sequence(size_t *length);
+void zell_panes_copy_written(void);
 /* Who has the keys in a pane room: a pane (after a click on it) or Kilix
  * (on the way in, and after a click on the walkway). */
 bool zell_panes_keys_to_pane(void);
@@ -178,6 +213,10 @@ int zell_panes_zoom(int room);
 const char *zell_panes_pending(void);
 int zell_panes_room_line(int room,int cols,int rows,char *out,size_t capacity);
 void zell_panes_test_line(const char *line);
+void zell_panes_test_read(int fd);
+/* Paste lines still to go to the helper; tests drain them as a pump would. */
+size_t zell_panes_paste_left(void);
+void zell_panes_test_drain(void);
 void zell_panes_test_reset(void);
 void zell_panes_test_copy(void *map);
 void zell_panes_test_fail(const char *text);
@@ -265,4 +304,28 @@ const char *zell_theater_caption(void);
 const char *zell_theater_last_command(void);
 void zell_theater_menu_layout(const zell_scene *s,zell_rect *panel,zell_rect *rows,int row_cap,int *row_count);
 int zell_theater_present(const void *map,size_t map_bytes);
+/* The outer terminal's input, split into keys, pointer reports and pastes
+ * (see desktop_input_scan.inc). */
+#define ZELL_INPUT_PASTE_MAX (4u<<20)
+/* An escape held this long with nothing after it goes on as keys. */
+#define ZELL_INPUT_ESCAPE_MS 30
+typedef struct {
+    void (*keys)(void *user,const char *bytes,size_t count);
+    void (*pointer)(void *user,unsigned buttons,int x,int y,bool release);
+    void (*paste)(void *user,const char *bytes,size_t count);
+    void *user;
+} zell_input_sinks;
+typedef struct {
+    char pending[96];
+    size_t used;
+    int64_t changed;
+    bool pasting,paste_over;
+    char *paste;
+    size_t paste_n,paste_cap,end_match;
+} zell_input;
+void zell_input_feed(zell_input *in,const zell_input_sinks *sinks,const char *bytes,size_t count,int64_t now);
+void zell_input_idle(zell_input *in,const zell_input_sinks *sinks,int64_t now);
+bool zell_input_pasting(const zell_input *in);
+void zell_input_free(zell_input *in);
+
 #endif

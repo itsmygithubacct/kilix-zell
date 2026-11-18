@@ -583,13 +583,17 @@ static void desktop_panes_room(const zell_scene *s,sr_canvas *c){
   bool focused=index==focus,keys=focused&&typing;
   sr_fill_rect(c,(float)bar.x,(float)bar.y,(float)bar.w,(float)bar.h,keys?0x2f5878u:focused?0x23394bu:0x18242eu,1);
   if(keys)sr_fill_rect(c,(float)bar.x,(float)bar.y,3,(float)bar.h,0xd9ba79u,1);
-  zell_rect zoom_b,restart_b;
-  zell_panes_chrome_button(s,index,0,&zoom_b);zell_panes_chrome_button(s,index,1,&restart_b);
-  char text[64];const char *notice=zell_panes_notice(s->room,index),*title=zell_panes_title(s->room,index);
+  zell_rect zoom_b,restart_b,end_b;
+  zell_panes_chrome_button(s,index,ZELL_PANES_ZOOM,&zoom_b);zell_panes_chrome_button(s,index,ZELL_PANES_RESTART,&restart_b);
+  zell_panes_chrome_button(s,index,ZELL_PANES_END,&end_b);
+  char text[160];const char *notice=zell_panes_notice(s->room,index),*title=zell_panes_title(s->room,index);
+  unsigned long long back=(unsigned long long)zell_panes_lines_back(s->room,index);
   if(notice)snprintf(text,sizeof text,"%d %s",index+1,notice);
+  else if(back)snprintf(text,sizeof text,"%d %s  %llu %s back",index+1,title[0]?title:"shell",back,back==1?"line":"lines");
   else snprintf(text,sizeof text,"%d %s",index+1,title[0]?title:"shell");
-  int room_for=(zoom_b.w?zoom_b.x:bar.x+bar.w)-bar.x-16;
+  int room_for=(end_b.w?end_b.x:zoom_b.w?zoom_b.x:bar.x+bar.w)-bar.x-16;
   desktop_text(c,bar.x+8,bar.y+2,text,notice?0xe5ad87u:keys?0xffffffu:0x9fb4c0u,room_for);
+  if(end_b.w)desktop_panes_button(c,end_b,"End",0x2f5a4cu,0x9ff0c8u,0xe8f2f6u);
   if(zoom_b.w)desktop_panes_button(c,zoom_b,zoom==index?"Unzoom":"Zoom",0x1f3444u,0x5f8faeu,0xd6e4ec);
   if(restart_b.w){
    bool sure=zell_panes_confirming(s->room,index);
@@ -599,6 +603,15 @@ static void desktop_panes_room(const zell_scene *s,sr_canvas *c){
  if(pixels){
   sr_canvas frame;sr_canvas_wrap(&frame,(uint32_t *)pixels,w,h);
   sr_blit_scaled(c,&frame,0,ZELL_PANES_CELLS_Y,w,h,1);
+  /* Over the cells, a pane's scrollbar while it is scrolled back or the
+   * pointer is on it. */
+  for(int index=0;index<count;index++){
+   zell_rect track,thumb;zell_panes_scrollbar_rect(s,index,&track,&thumb);
+   bool hover=zell_panes_bar_hover()==index;
+   if(!track.w||(!hover&&!zell_panes_lines_back(s->room,index)))continue;
+   sr_fill_rect(c,(float)track.x,(float)track.y,(float)track.w,(float)track.h,0x0b1218u,.75f);
+   sr_fill_rect(c,(float)thumb.x,(float)thumb.y,(float)thumb.w,(float)thumb.h,hover?0x9ff0c8u:0x5f8faeu,1);
+  }
  }else{
   char text[200];const char *error=zell_panes_error();
   if(error[0])snprintf(text,sizeof text,"%s",error);

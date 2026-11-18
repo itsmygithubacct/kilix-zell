@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <unistd.h>
 
 /* Largest per-channel difference between two pixels. */
 static int pixel_gap(uint32_t a,uint32_t b){
@@ -2534,6 +2535,392 @@ static void test_pane_rooms(void){
     }
     sr_canvas_free(&canvas);
 }
+/* What the input scanner hands on, written down as text. */
+typedef struct { char log[8192]; size_t n; } scan_log;
+static void scan_note(scan_log *l,const char *text,size_t count){
+    if(l->n+count+1>=sizeof l->log)return;
+    memcpy(l->log+l->n,text,count);l->n+=count;l->log[l->n]=0;
+}
+static void scan_keys(void *user,const char *bytes,size_t count){scan_note(user,"K[",2);scan_note(user,bytes,count);scan_note(user,"]",1);}
+static void scan_pointer(void *user,unsigned buttons,int x,int y,bool release){
+    char text[64];int n=snprintf(text,sizeof text,"P[%u %d %d %c]",buttons,x,y,release?'m':'M');
+    scan_note(user,text,(size_t)n);
+}
+static void scan_paste(void *user,const char *bytes,size_t count){
+    char text[32];int n=snprintf(text,sizeof text,"V%zu[",count);
+    scan_note(user,text,(size_t)n);scan_note(user,bytes,count<200?count:200);scan_note(user,"]",1);
+}
+static const char *scan(zell_input *in,scan_log *l,const char *bytes,int64_t now){
+    zell_input_sinks sinks={scan_keys,scan_pointer,scan_paste,l};
+    zell_input_feed(in,&sinks,bytes,strlen(bytes),now);
+    return l->log;
+}
+static void test_input_scan(void){
+    zell_input in={0};
+    scan_log l={0};
+    zell_input_sinks sinks={scan_keys,scan_pointer,scan_paste,&l};
+    /* Keys, pointer reports and keys around them. */
+    assert(!strcmp(scan(&in,&l,"ab\033[<0;10;20Mc\033[<35;11;21M\033[<64;1;2M\033[<0;10;20md",0),
+        "K[ab]P[0 10 20 M]K[c]P[35 11 21 M]P[64 1 2 M]P[0 10 20 m]K[d]"));
+    /* Cut between reads, a report waits for its end. */
+    l.n=0;l.log[0]=0;
+    scan(&in,&l,"\033[<2;3",0);scan(&in,&l,"0;4",1);
+    assert(!strcmp(scan(&in,&l,"0m",2),"P[2 30 40 m]"));
+    /* Bad reports are dropped: no zero or huge places, no buttons past 1023. */
+    l.n=0;l.log[0]=0;
+    assert(!strcmp(scan(&in,&l,"\033[<0;0;5M\033[<0;5;100000M\033[<1024;1;1M\033[<0;x;1Mz",0),"K[z]"));
+    /* Other escapes are keys: arrows, CSI 2 keys at their final byte. */
+    l.n=0;l.log[0]=0;
+    assert(!strcmp(scan(&in,&l,"\033[A\033[2~\033[27;5u\033[24;2~\033OP",0),"K[\033[A]K[\033[2~]K[\033[27;5u]K[\033[24;2~]K[\033O]K[P]"));
+    /* A paste, whole, with what looks like an end marker inside it. */
+    l.n=0;l.log[0]=0;
+    assert(!strcmp(scan(&in,&l,"x\033[200~line 1\nline 2\033[201\033[A\033[201~y",0),"K[x]V21[line 1\nline 2\033[201\033[A]K[y]"));
+    /* Markers and paste cut anywhere. */
+    l.n=0;l.log[0]=0;
+    scan(&in,&l,"\033[20",0);scan(&in,&l,"0~ab\033[2",1);assert(zell_input_pasting(&in));
+    zell_input_idle(&in,&sinks,1000);
+    scan(&in,&l,"01",1000);
+    assert(!strcmp(scan(&in,&l,"~",1000),"V2[ab]"));
+    assert(!zell_input_pasting(&in));
+    /* An empty paste is a paste of nothing. */
+    l.n=0;l.log[0]=0;
+    assert(!strcmp(scan(&in,&l,"\033[200~\033[201~",0),"V0[]"));
+    /* Held escapes: a lone one, ESC [, and a CSI 2 key cut short go on as
+     * keys after 30 ms; half a pointer report is dropped. */
+    l.n=0;l.log[0]=0;
+    scan(&in,&l,"\033",100);zell_input_idle(&in,&sinks,130);assert(!l.n);
+    zell_input_idle(&in,&sinks,131);assert(!strcmp(l.log,"K[\033]"));
+    l.n=0;l.log[0]=0;
+    scan(&in,&l,"\033[",200);zell_input_idle(&in,&sinks,231);assert(!strcmp(l.log,"K[\033[]"));
+    l.n=0;l.log[0]=0;
+    scan(&in,&l,"\033[2;5",300);zell_input_idle(&in,&sinks,331);assert(!strcmp(l.log,"K[\033[2;5]"));
+    l.n=0;l.log[0]=0;
+    scan(&in,&l,"\033[<0;1",400);zell_input_idle(&in,&sinks,431);assert(!l.n);
+    assert(!strcmp(scan(&in,&l,"q",432),"K[q]"));
+    /* A paste is not cut short by the 30 ms. */
+    l.n=0;l.log[0]=0;
+    scan(&in,&l,"\033[200~abc",500);zell_input_idle(&in,&sinks,9000);assert(!l.n&&zell_input_pasting(&in));
+    assert(!strcmp(scan(&in,&l,"\033[201~",9001),"V3[abc]"));
+    /* One past the cap is dropped whole; one at it goes. */
+    {
+        size_t big=ZELL_INPUT_PASTE_MAX;
+        char *text=malloc(big+1);
+        assert(text);memset(text,'p',big);text[big]=0;
+        l.n=0;l.log[0]=0;
+        scan(&in,&l,"\033[200~",0);zell_input_feed(&in,&sinks,text,big,0);scan(&in,&l,"\033[201~",0);
+        assert(!strncmp(l.log,"V4194304[ppp",12));
+        l.n=0;l.log[0]=0;
+        scan(&in,&l,"\033[200~",0);zell_input_feed(&in,&sinks,text,big,0);scan(&in,&l,"q\033[201~z",0);
+        assert(!strcmp(l.log,"K[z]"));
+        free(text);
+    }
+    zell_input_free(&in);
+    assert(!in.paste&&!in.used);
+}
+static void pane_pointer(zell_scene *s,unsigned buttons,int x,int y,bool release,bool taken){
+    assert(zell_panes_pointer(s,buttons,x,y,release)==taken);
+}
+static void test_pane_io(void){
+    zell_scene s;
+    char want[2048]="";
+    /* Four panes at 960x600: x 0, 248, 488, 728; cells from y 84, 512 high. */
+    zell_panes_test_reset();
+    place_room(&s,1,0,0);zell_panes_enter(&s,ZELL_ROOM_PANES_RIGHT);
+    assert(!zell_panes_pointer(&s,0,100,50,false));
+    /* Presses, drags and releases over the cells, at pixels from the pane. */
+    pane_pointer(&s,0,260,100,false,true);
+    pane_pointer(&s,32,300,120,false,true);
+    /* A drag out of the pane stays its own, at the nearest pixel. */
+    pane_pointer(&s,32,900,20,false,true);
+    pane_pointer(&s,32,-5,700,false,true);
+    pane_pointer(&s,0,900,20,true,true);
+    strcat(want,"M 1 0 1 0 12 16\nM 1 2 1 0 52 36\nM 1 2 1 0 231 0\nM 1 2 1 0 0 511\nM 1 1 1 0 231 0\n");
+    assert(!strcmp(zell_panes_pending(),want));
+    /* After the release, a report over the walkway is not the panes'. */
+    pane_pointer(&s,0,900,20,true,false);
+    /* Right and middle, with Shift, Alt and Ctrl; the wheel; extra buttons. */
+    pane_pointer(&s,2|16u,10,90,false,true);
+    pane_pointer(&s,1|4u,10,90,false,true);
+    pane_pointer(&s,64|4u|8u|16u,500,300,false,true);
+    pane_pointer(&s,65|8u,500,300,false,true);
+    pane_pointer(&s,128,10,90,false,true);
+    strcat(want,"M 0 0 2 2 10 6\nM 0 0 3 1 10 6\nM 2 0 4 7 12 216\nM 2 0 5 4 12 216\nM 0 0 8 0 10 6\n");
+    assert(!strcmp(zell_panes_pending(),want));
+    /* The last press holds pane 1 until its release, which goes there. */
+    pane_pointer(&s,0,0,0,true,true);
+    strcat(want,"M 0 1 1 0 0 0\n");
+    /* Motion with no button goes only to a program that asked for it
+     * (flags 2), once a cell. */
+    pane_pointer(&s,35,10,90,false,true);
+    assert(!strcmp(zell_panes_pending(),want));
+    zell_panes_test_line("B 10 0 20 0 20 3");
+    pane_pointer(&s,35,10,90,false,true);
+    pane_pointer(&s,35,15,99,false,true);
+    pane_pointer(&s,35,16,99,false,true);
+    pane_pointer(&s,35,16,100,false,true);
+    strcat(want,"M 0 2 0 0 10 6\nM 0 2 0 0 16 15\nM 0 2 0 0 16 16\n");
+    assert(!strcmp(zell_panes_pending(),want));
+    /* B lines: checked, kept per room and pane. */
+    {
+        uint64_t b[3]={9,9,9};
+        assert(!zell_panes_scrollback(ZELL_ROOM_PANES_RIGHT,1,b)&&b[0]==9);
+        const char *bad[]={"B 10 1 10 5 6 0","B 10 1 10 0 0 0","B 10 4 10 0 5 0","B 8 1 10 0 5 0","B 10 1 10 0 5 4",
+                           "B 10 1 10 0 5","B 10 1 10 0 5 0 x","B 10 1 x 0 5 0","B 10 1 10 11 5 0"};
+        for(size_t i=0;i<sizeof bad/sizeof bad[0];i++){zell_panes_test_line(bad[i]);assert(!zell_panes_scrollback(ZELL_ROOM_PANES_RIGHT,1,b));}
+        zell_panes_test_line("B 10 1 532 400 32 1");
+        assert(zell_panes_scrollback(ZELL_ROOM_PANES_RIGHT,1,b)&&b[0]==532&&b[1]==400&&b[2]==32);
+        assert(zell_panes_lines_back(ZELL_ROOM_PANES_RIGHT,1)==100&&zell_panes_lines_back(ZELL_ROOM_PANES_RIGHT,0)==0);
+        assert(zell_panes_lines_back(ZELL_ROOM_PANES_LEFT,1)==0);
+        zell_panes_test_line("B 9 1 50 18 32 0");
+        assert(zell_panes_lines_back(ZELL_ROOM_PANES_LEFT,1)==0&&zell_panes_lines_back(ZELL_ROOM_PANES_RIGHT,1)==100);
+    }
+    /* The scrollbar: the right 10 pixels of the cells, a thumb 32/532 of
+     * them at 400/500 of the way down. */
+    {
+        zell_rect track,thumb;
+        zell_panes_scrollbar_rect(&s,1,&track,&thumb);
+        assert(track.x==470&&track.y==84&&track.w==10&&track.h==512);
+        assert(thumb.x==472&&thumb.w==6&&thumb.h==30*0+30&&thumb.y==84+(512-30)*400/500);
+        zell_panes_scrollbar_rect(&s,0,&track,&thumb);
+        assert(!track.w&&!thumb.w);
+        zell_panes_scrollbar_rect(&s,2,&track,&thumb);
+        assert(!track.w);
+        /* A thumb is at least 16 high. */
+        zell_panes_test_line("B 10 2 100000 0 32 0");
+        zell_panes_scrollbar_rect(&s,2,&track,&thumb);
+        assert(thumb.h==16&&thumb.y==84);
+    }
+    /* A press on it moves the rows shown and drags them with it until the
+     * button goes up, wherever the pointer goes. */
+    assert(zell_panes_bar_hover()==-1);
+    pane_pointer(&s,35,475,300,false,true);
+    assert(zell_panes_bar_hover()==1);
+    pane_pointer(&s,0,475,84,false,true);
+    assert(zell_panes_bar_hover()==1);
+    pane_pointer(&s,32,10,1000,false,true);
+    pane_pointer(&s,32,10,350,false,true);
+    pane_pointer(&s,0,10,350,true,true);
+    assert(zell_panes_bar_hover()==-1);
+    /* Lit while the pointer is on it; off when it goes, even to the walkway. */
+    pane_pointer(&s,35,475,300,false,true);
+    assert(zell_panes_bar_hover()==1);
+    pane_pointer(&s,35,475,30,false,false);
+    assert(zell_panes_bar_hover()==-1);
+    /* (350-84-15)*500/482 */
+    strcat(want,"V 1 0\nV 1 500\nV 1 260\nV 1 260\n");
+    assert(!strcmp(zell_panes_pending(),want));
+    assert(zell_panes_lines_back(ZELL_ROOM_PANES_RIGHT,1)==240);
+    /* Pane 4 has no scrollback: its right edge is cells. */
+    pane_pointer(&s,0,955,300,false,true);
+    pane_pointer(&s,0,955,300,true,true);
+    strcat(want,"M 3 0 1 0 227 216\nM 3 1 1 0 227 216\n");
+    assert(!strcmp(zell_panes_pending(),want));
+    /* End, in the title bar while scrolled back, goes back to the live
+     * rows. Four panes at 960 are too narrow for it beside Zoom and Restart;
+     * the left room's are not. */
+    {
+        zell_scene left;zell_rect end,zoom;
+        zell_panes_chrome_button(&s,1,ZELL_PANES_END,&end);assert(!end.w);
+        place_room(&left,1,0,0);zell_panes_enter(&left,ZELL_ROOM_PANES_LEFT);
+        zell_panes_test_line("B 9 1 50 10 32 0");
+        zell_panes_chrome_button(&left,1,ZELL_PANES_END,&end);
+        zell_panes_chrome_button(&left,1,ZELL_PANES_ZOOM,&zoom);
+        assert(zoom.x==824&&end.x==776&&end.y==65&&end.w==44&&end.h==18);
+        zell_panes_chrome_button(&left,0,ZELL_PANES_END,&end);assert(!end.w);
+        zell_panes_chrome_button(&left,1,ZELL_PANES_END+1,&end);assert(!end.w);
+        zell_panes_chrome_button(&left,1,ZELL_PANES_END,&end);
+        pane_click(&left,end.x+2,end.y+2);
+        strcat(want,"W 1 bottom\nF 1\n");
+        assert(!strcmp(zell_panes_pending(),want)&&zell_panes_keys_to_pane());
+        /* At 480 its first pane is 240 wide: Zoom and Restart, no End. */
+        zell_scene narrow;
+        place_room(&narrow,1,0,0);zell_scene_resize(&narrow,480,600);zell_panes_enter(&narrow,ZELL_ROOM_PANES_LEFT);
+        zell_panes_test_line("B 9 0 100 0 32 0");
+        zell_panes_chrome_button(&narrow,0,ZELL_PANES_END,&end);assert(!end.w);
+        zell_panes_chrome_button(&narrow,0,ZELL_PANES_ZOOM,&zoom);assert(zoom.w);
+        zell_panes_enter(&s,ZELL_ROOM_PANES_RIGHT);
+    }
+    /* Shift with the scroll keys, while a pane has the keys: its focus. */
+    zell_panes_test_reset();want[0]=0;
+    place_room(&s,1,0,0);zell_panes_enter(&s,ZELL_ROOM_PANES_RIGHT);
+    assert(!zell_panes_scroll_key(&s,0xe00au,1u));
+    pane_click(&s,300,300);
+    strcat(want,"F 1\n");
+    assert(zell_panes_scroll_key(&s,0xe00au,1u)&&zell_panes_scroll_key(&s,0xe00bu,1u|64u|128u));
+    assert(zell_panes_scroll_key(&s,0xe00cu,1u)&&zell_panes_scroll_key(&s,0xe00du,1u));
+    assert(!zell_panes_scroll_key(&s,0xe00au,0)&&!zell_panes_scroll_key(&s,0xe00au,1u|4u)&&!zell_panes_scroll_key(&s,0xe00au,2u));
+    assert(!zell_panes_scroll_key(&s,0xe009u,1u)&&!zell_panes_scroll_key(&s,'a',1u));
+    {
+        const char *pending=zell_panes_pending();
+        assert(!strcmp(pending,"F 1\nW 1 up\nW 1 down\nW 1 top\nW 1 bottom\n"));
+    }
+    /* A paste: for the pane with the keys, two kilobytes of hex a line,
+     * then the end. */
+    zell_panes_test_reset();
+    place_room(&s,1,0,0);zell_panes_enter(&s,ZELL_ROOM_PANES_RIGHT);
+    assert(!zell_panes_paste(&s,"x",1));
+    pane_click(&s,500,300);
+    {
+        char *text=malloc(4096+3);
+        assert(text);
+        for(int i=0;i<4099;i++)text[i]=(char)(i%251);
+        assert(zell_panes_paste(&s,text,4099));
+        assert(zell_panes_paste_left()==4099+1);
+        zell_panes_test_drain();
+        assert(!zell_panes_paste_left());
+        const char *pending=zell_panes_pending();
+        assert(!strncmp(pending,"F 2\nP 10 2 000102",17));
+        const char *second=strchr(pending+4,'\n')+1,*third=strchr(second,'\n')+1,*end=strchr(third,'\n')+1;
+        assert(second-pending-4==(ptrdiff_t)(7+4096+1)&&third-second==(ptrdiff_t)(7+4096+1)&&end-third==(ptrdiff_t)(7+6+1));
+        /* Bytes 4096 to 4098 are 4096%251 = 80 on. */
+        assert(!strncmp(third,"P 10 2 505152\n",14)&&!strcmp(end,"P 10 2 .\n"));
+        /* Another pane's paste waits for this one; an empty one is nothing. */
+        assert(zell_panes_paste(&s,"a",1));
+        pane_click(&s,10,300);
+        assert(!zell_panes_paste(&s,"b",1)&&zell_panes_paste(&s,"",0));
+        free(text);
+    }
+    /* With the queue full, the paste waits; none of it is lost. */
+    zell_panes_test_reset();
+    place_room(&s,1,0,0);zell_panes_enter(&s,ZELL_ROOM_PANES_RIGHT);pane_click(&s,10,300);
+    {
+        unsigned char bytes[400];memset(bytes,'k',sizeof bytes);
+        size_t before;
+        assert(zell_panes_paste(&s,"abc",3));
+        do{before=strlen(zell_panes_pending());zell_panes_key(bytes,sizeof bytes);}while(strlen(zell_panes_pending())>before);
+        do{before=strlen(zell_panes_pending());zell_panes_key(bytes,1);}while(strlen(zell_panes_pending())>before);
+        zell_panes_test_drain();
+        assert(strlen(zell_panes_pending())==before&&zell_panes_paste_left()==4);
+    }
+    /* Not in a pane room, and not while Kilix has the keys. */
+    {
+        zell_scene out;place_room(&out,1,0,0);
+        assert(!zell_panes_paste(&out,"x",1)&&!zell_panes_pointer(&out,0,10,100,false)&&!zell_panes_scroll_key(&out,0xe00au,1u));
+    }
+    /* Too long: refused, and the pane says so. */
+    zell_panes_test_reset();
+    place_room(&s,1,0,0);zell_panes_enter(&s,ZELL_ROOM_PANES_RIGHT);pane_click(&s,10,300);
+    {
+        size_t big=ZELL_PANES_PASTE_MAX;
+        char *text=calloc(big+1,1);
+        assert(text);
+        assert(!zell_panes_paste(&s,text,big+1));
+        assert(!strcmp(zell_panes_notice(ZELL_ROOM_PANES_RIGHT,0),"The paste is over 4 MiB and was not sent."));
+        assert(zell_panes_paste(&s,text,big)&&!zell_panes_paste(&s,text,1));
+        free(text);
+    }
+    /* Copied text, from Y pieces to the clipboard sequence. */
+    zell_panes_test_reset();
+    {
+        size_t n=0;
+        assert(!zell_panes_copy_sequence(&n));
+        zell_panes_test_line("Y aGVsbG8g");
+        assert(!zell_panes_copy_sequence(&n));
+        zell_panes_test_line("Y d29ybGQ=");
+        zell_panes_test_line("Y .");
+        const char *seq=zell_panes_copy_sequence(&n);
+        assert(seq&&n==24&&!memcmp(seq,"\033]52;c;aGVsbG8gd29ybGQ=\a",24));
+        zell_panes_copy_written();
+        assert(!zell_panes_copy_sequence(&n));
+        /* A bad piece spoils it; the next copy starts clean. */
+        zell_panes_test_line("Y aGVs");zell_panes_test_line("Y a\033b");zell_panes_test_line("Y bG8=");zell_panes_test_line("Y .");
+        assert(!zell_panes_copy_sequence(&n));
+        zell_panes_test_line("Y .");assert(!zell_panes_copy_sequence(&n));
+        zell_panes_test_line("Y eA==");zell_panes_test_line("Y .");
+        seq=zell_panes_copy_sequence(&n);
+        assert(seq&&n==12&&!memcmp(seq,"\033]52;c;eA==\a",12));
+        /* A newer copy before main wrote it wins. */
+        zell_panes_test_line("Y eQ==");zell_panes_test_line("Y .");
+        seq=zell_panes_copy_sequence(&n);
+        assert(seq&&n==12&&!memcmp(seq,"\033]52;c;eQ==\a",12));
+        zell_panes_copy_written();
+        /* At most 1 MiB of base64. */
+        static char piece[3003];
+        memset(piece,'A',sizeof piece-1);piece[0]='Y';piece[1]=' ';piece[sizeof piece-1]=0;
+        size_t sent=0;
+        while(sent+3000<=(1u<<20)){zell_panes_test_line(piece);sent+=3000;}
+        piece[2+((1u<<20)-sent)]=0;zell_panes_test_line(piece);
+        zell_panes_test_line("Y .");
+        seq=zell_panes_copy_sequence(&n);
+        assert(seq&&n==7+(1u<<20)+1);
+        zell_panes_copy_written();
+        memset(piece,'A',sizeof piece-1);piece[0]='Y';piece[1]=' ';piece[sizeof piece-1]=0;
+        sent=0;
+        while(sent<=(1u<<20)){zell_panes_test_line(piece);sent+=3000;}
+        zell_panes_test_line("Y .");
+        assert(!zell_panes_copy_sequence(&n));
+    }
+    /* From the helper's pipe: a line too long for the reader is dropped, not
+     * taken cut short; the next is read. */
+    zell_panes_test_reset();
+    {
+        int fds[2];
+        size_t n=0;
+        static char longline[6000];
+        assert(pipe(fds)==0);
+        memset(longline,'A',sizeof longline);longline[0]='Y';longline[1]=' ';longline[sizeof longline-1]='\n';
+        assert(write(fds[1],longline,sizeof longline)==(ssize_t)sizeof longline);
+        assert(write(fds[1],"Y .\nY eA==\nY .\n",15)==15);
+        close(fds[1]);
+        for(int i=0;i<4;i++)zell_panes_test_read(fds[0]);
+        close(fds[0]);
+        const char *seq=zell_panes_copy_sequence(&n);
+        assert(seq&&n==12&&!memcmp(seq,"\033]52;c;eA==\a",12));
+    }
+    /* Drawn: the End button and lines back in the title, the scrollbar over
+     * the cells while scrolled back, brighter under the pointer. */
+    zell_panes_test_reset();
+    {
+        sr_canvas canvas;
+        size_t bytes=zell_panes_map_bytes();
+        unsigned char *map=mmap(NULL,bytes,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_ANONYMOUS,-1,0);
+        assert(map!=MAP_FAILED&&sr_canvas_init(&canvas,960,600));
+        place_room(&s,1,0,0);zell_panes_enter(&s,ZELL_ROOM_PANES_RIGHT);
+        int cols,rows;zell_panes_cells(960,600,&cols,&rows);
+        int w=cols*8,h=rows*16;
+        uint32_t header[6]={0,1,(uint32_t)w,(uint32_t)h,2,ZELL_ROOM_PANES_RIGHT};
+        memcpy(map,"ZPNE",4);memcpy(map+4,header+1,20);
+        uint32_t *px=(uint32_t *)(void *)(map+64);
+        for(int i=0;i<w*h;i++)px[i]=0xff202020u;
+        zell_panes_test_copy(map);
+        zell_draw(&s,&canvas);
+        zell_rect track,thumb;
+        zell_panes_test_line("B 10 1 532 400 32 0");
+        zell_panes_test_line("B 10 2 532 500 32 0");
+        zell_draw(&s,&canvas);
+        zell_panes_scrollbar_rect(&s,1,&track,&thumb);
+        assert(ink_count(&canvas,thumb,0x5f8faeu,0)==thumb.w*thumb.h);
+        /* At the live rows its bar is not drawn until the pointer is on it. */
+        zell_panes_scrollbar_rect(&s,2,&track,&thumb);
+        assert(!ink_count(&canvas,thumb,0x5f8faeu,0)&&ink_count(&canvas,track,0x202020u,0)==track.w*track.h);
+        pane_pointer(&s,35,track.x+2,300,false,true);
+        zell_draw(&s,&canvas);
+        assert(ink_count(&canvas,thumb,0x9ff0c8u,0)==thumb.w*thumb.h);
+        /* In the left room: End, and "2 shell  8 lines back" where the
+         * live rows say "2 shell". */
+        zell_rect end,bar;
+        zell_panes_enter(&s,ZELL_ROOM_PANES_LEFT);
+        zell_panes_test_line("B 9 1 50 10 32 0");
+        zell_draw(&s,&canvas);
+        zell_panes_chrome_button(&s,1,ZELL_PANES_END,&end);
+        zell_panes_chrome_rect(&s,1,&bar);
+        assert(end.w&&ink_count(&canvas,end,0x2f5a4cu,0)>end.w*end.h/2);
+        {
+            sr_canvas live;
+            assert(sr_canvas_init(&live,960,600));
+            zell_panes_test_line("B 9 1 50 18 32 0");
+            zell_draw(&s,&live);
+            assert(!ink_count(&live,end,0x2f5a4cu,0));
+            assert(region_diffs(&canvas,&live,(zell_rect){bar.x+8+7*8,bar.y+2,8*16,16})>40);
+            assert(region_diffs(&canvas,&live,(zell_rect){bar.x+8,bar.y+2,8*7,16})==0);
+            sr_canvas_free(&live);
+        }
+        sr_canvas_free(&canvas);
+        /* The reset unmaps the map the copy was handed. */
+        zell_panes_test_reset();
+    }
+    zell_panes_test_reset();
+}
 int main(void) {
     zell_scene s;
     zell_controls c={0};
@@ -2961,6 +3348,8 @@ int main(void) {
     test_command_center();
     test_command_openings();
     test_pane_rooms();
+    test_input_scan();
+    test_pane_io();
     puts("desktop world, camera, alpha, idle/walk animation, launcher and voice: ok");
     return 0;
 }

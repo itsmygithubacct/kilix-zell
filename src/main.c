@@ -873,6 +873,8 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
             int route=zell_panes_route(press);
             if(route==ZELL_PANES_KEY_PRESS){pressed_with=zell_panes_press(scene)?event.key:0;continue;}
             if(route!=ZELL_PANES_KEY_PANE)continue;
+            /* Shift with Page Up, Page Down, Home or End scrolls the pane. */
+            if(event.action!=KITTYKB_ACTION_RELEASE&&zell_panes_scroll_key(scene,event.key,event.modifiers))continue;
             unsigned char bytes[TERMINAL_KEY_BYTES];size_t length=terminal_key_bytes(&event,bytes);
             if(length)zell_panes_key(bytes,length);
         }
@@ -1103,7 +1105,7 @@ static int run_scene(void)
                 scene.theater_install_code=-1;
             }
         }
-        if(scene.desktop)zell_panes_pump(&scene);
+        if(scene.desktop){zell_panes_pump(&scene);desktop_copy();}
         /* service_frame ignores a job frame whose window generation does not match. */
         service_pump(&vitals,&scene);
         service_pump(&service,&scene);

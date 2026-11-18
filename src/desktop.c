@@ -1048,3 +1048,4 @@ void zell_notice_apply(zell_scene *s,const char *text){
 
 #include "desktop_theater.inc"
 #include "desktop_panes.inc"
+#include "desktop_input_scan.inc"

@@ -24,13 +24,66 @@ FG, BG = 0xD0D0D0, 0x101418
 
 
 class Terminal:
+    """The parts of neuronte_display.Terminal the helper uses. It keeps
+    `kept` rows, shows the `rows` from `first`; its program's modes are in
+    `modes`, its text in `text` (one string a row shown)."""
+
     def __init__(self, owner):
         self.owner = owner
+        self.kept, self.first, self.modes, self.alternate, self.text = None, 0, set(), False, None
+        self.calls = []
 
     def snapshot(self):
         pane = self.owner
         cell = (pane.letter, FG, BG, 0)
         return [cell] * (pane.cols * pane.rows), pane.cursor
+
+    def scrollbar(self):
+        rows = self.owner.rows
+        kept = rows if self.kept is None or self.alternate else self.kept
+        return kept, min(self.first, kept - rows) if not self.alternate else 0, rows
+
+    def last(self):
+        return self.scrollbar()[0] - self.owner.rows
+
+    def scroll(self, rows):
+        self.calls.append(('scroll', rows))
+        self.first = min(max(0, self.first + rows), self.last())
+
+    def scroll_to(self, row):
+        self.calls.append(('scroll_to', row))
+        self.first = min(max(0, row), self.last())
+
+    def scroll_top(self):
+        self.calls.append(('top',))
+        self.first = 0
+
+    def scroll_bottom(self):
+        self.calls.append(('bottom',))
+        self.first = self.last()
+
+    def mode(self, number, ansi=False):
+        return number in self.modes
+
+    def mouse_tracking(self):
+        return bool(self.modes & {9, 1000, 1002, 1003})
+
+    def alternate_screen(self):
+        return self.alternate
+
+    def mouse(self, action, button, mods, x, y):
+        self.calls.append(('mouse', action, button, mods, x, y))
+        if not self.mouse_tracking():
+            return b''
+        return f'<{action};{button};{mods};{x};{y}>'.encode()
+
+    def paste(self, data):
+        self.calls.append(('paste', data))
+        return b'[' + data + b']'
+
+    def rows_text(self):
+        rows = self.text or [''] * self.owner.rows
+        return [list(row.ljust(self.owner.cols)[:self.owner.cols]) for row in rows]
 
 
 class Pane:
@@ -56,6 +109,8 @@ class Pane:
         if self.explode == 'send':
             raise RuntimeError('PTY input queue exceeds one MiB')
         self.sent.append(bytes(data))
+        # Until flushed, as a pane that has not written it yet holds it.
+        self.pending.extend(data)
 
     def read(self):
         if self.explode == 'read':
@@ -534,6 +589,316 @@ class ProtocolTests(unittest.TestCase):
         self.assertIs(room.current['panes'][0], first)
 
 
+def copied(said):
+    """The text in the Y lines said, and how many pieces it came in."""
+    pieces = [line[2:] for line in said if line.startswith('Y ')]
+    assert pieces and pieces[-1] == '.', said
+    import base64
+    return base64.b64decode(''.join(pieces[:-1])).decode(), len(pieces) - 1
+
+
+class ScrollMouseTests(unittest.TestCase):
+    """Scrollback, the pointer, selection and copy, and pastes, over the
+    stand-in terminal."""
+
+    def setUp(self):
+        Pane.made.clear()
+        self.said, self.now = [], 50.0
+        self.rooms = panes.Rooms(DISPLAY, ['/bin/sh'], wait=ready, front=front, say=self.said.append,
+                                 clock=lambda: self.now)
+        self.rooms.line('S 9 40 20')
+        self.first, self.second = self.rooms.rooms[9].current['panes']
+        self.term = self.first.terminal
+        self.term.kept = 120
+        self.term.first = 100
+        self.rooms.poll(0.0)
+        self.said.clear()
+
+    def bars(self):
+        self.rooms.poll(1.0)
+        out = [line for line in self.said if line.startswith('B ')]
+        self.said[:] = [line for line in self.said if not line.startswith('B ')]
+        return out
+
+    def test_the_scrollback_is_said_when_it_changes(self):
+        rooms = panes.Rooms(DISPLAY, ['/bin/sh'], wait=ready, front=front, say=self.said.append)
+        rooms.line('S 9 40 20')
+        rooms.rooms[9].current['panes'][0].terminal.kept = 50
+        rooms.poll(0.0)
+        self.assertEqual([line for line in self.said if line.startswith('B ')], ['B 9 0 50 0 20 0', 'B 9 1 20 0 20 0'])
+        self.said.clear()
+        rooms.poll(0.1)
+        self.assertEqual(self.said, [])
+        terminal = rooms.rooms[9].current['panes'][1].terminal
+        terminal.modes = {1000}
+        rooms.poll(0.2)
+        terminal.modes = {1000, 1003}
+        rooms.poll(0.3)
+        self.assertEqual(self.said, ['B 9 1 20 0 20 1', 'B 9 1 20 0 20 3'])
+        # A hidden room says nothing, and its change is said when shown.
+        self.said.clear()
+        rooms.line('H')
+        terminal.modes = set()
+        rooms.poll(0.4)
+        self.assertEqual(self.said, [])
+        rooms.line('S 9 40 20')
+        rooms.poll(0.5)
+        self.assertEqual(self.said, ['B 9 1 20 0 20 0'])
+
+    def test_the_wheel_scrolls_back_and_typing_comes_back(self):
+        self.rooms.line('M 0 0 4 0 10 10')
+        self.assertEqual(self.term.calls, [('scroll', -3)])
+        self.assertEqual(self.bars(), ['B 9 0 120 97 20 0'])
+        self.rooms.line('M 0 0 5 0 10 10')
+        self.rooms.line('M 0 0 4 0 10 10')
+        self.rooms.line('M 0 0 4 0 10 10')
+        self.assertEqual(self.bars(), ['B 9 0 120 94 20 0'])
+        self.rooms.dirty = False
+        self.rooms.line('K68')
+        self.assertEqual(self.first.sent, [b'h'])
+        self.assertEqual(self.term.calls[-1], ('bottom',))
+        self.assertTrue(self.rooms.dirty)
+        self.assertEqual(self.bars(), ['B 9 0 120 100 20 0'])
+        # At the live rows already, typing does not scroll.
+        self.rooms.line('K69')
+        self.assertEqual(self.term.calls[-1], ('bottom',))
+        self.assertEqual(len([c for c in self.term.calls if c == ('bottom',)]), 1)
+
+    def test_the_wheel_goes_to_a_program_that_asked_unless_shift(self):
+        self.term.modes = {1000, 1006}
+        self.rooms.line('M 0 0 4 0 17 33')
+        self.assertEqual(self.first.sent, [b'<0;4;0;17;33>'])
+        self.rooms.line('M 0 0 5 1 17 33')
+        self.assertEqual(self.term.calls[-1], ('scroll', 3))
+        self.assertEqual(len(self.first.sent), 1)
+
+    def test_the_wheel_on_an_alternate_screen_sends_arrows_if_asked(self):
+        self.term.alternate = True
+        self.rooms.line('M 0 0 4 0 0 0')
+        self.assertEqual(self.first.sent, [])
+        self.term.modes = {1007}
+        self.rooms.line('M 0 0 4 0 0 0')
+        self.rooms.line('M 0 0 5 0 0 0')
+        self.term.modes = {1007, 1}
+        self.rooms.line('M 0 0 5 0 0 0')
+        self.assertEqual(self.first.sent, [b'\x1b[A' * 3, b'\x1b[B' * 3, b'\x1bOB' * 3])
+        self.assertFalse([c for c in self.term.calls if c[0] == 'scroll'])
+
+    def test_presses_and_drags_go_to_a_program_that_asked(self):
+        self.term.modes = {1002}
+        for line in ('M 0 0 1 0 9 17', 'M 0 2 1 0 30 17', 'M 0 1 1 0 30 17', 'M 1 0 2 2 0 0'):
+            self.rooms.line(line)
+        self.assertEqual(self.first.sent, [b'<0;1;0;9;17>', b'<2;1;0;30;17>', b'<1;1;0;30;17>'])
+        self.assertEqual(self.second.sent, [])
+        self.assertIsNone(getattr(self.first, 'selection', None))
+        # The right button does not select.
+        self.assertIsNone(getattr(self.second, 'selection', None))
+        # Lines out of range change nothing.
+        for line in ('M 0 3 1 0 9 17', 'M 0 0 12 0 9 17', 'M 0 0 1 8 9 17', 'M 0 0 1 0 x 17', 'M 4 0 1 0 9 17', 'M 0 0 1 0 9'):
+            self.rooms.line(line)
+        self.assertEqual(len(self.first.sent), 3)
+        # With Shift held the left button selects instead.
+        self.rooms.line('M 0 0 1 1 9 17')
+        self.assertEqual(len(self.first.sent), 3)
+        self.assertIsNotNone(self.first.selection)
+
+    def test_a_drag_selects_and_the_release_copies(self):
+        self.term.text = ['', 'hello world   ', 'second line', 'third']
+        # Row 1 column 6 to row 2 column 5, counted from the first row shown.
+        self.rooms.line('M 0 0 1 0 50 20')
+        self.assertTrue(self.rooms.dirty)
+        self.assertEqual(self.first.selection.anchor, (101, 6))
+        self.rooms.line('M 0 2 1 0 44 40')
+        self.assertEqual(panes.selected_spans(self.first), {1: (6, 19), 2: (0, 5)})
+        self.assertEqual(self.said, [])
+        self.rooms.line('M 0 1 1 0 44 40')
+        self.assertEqual(copied(self.said), ('world\nsecond', 1))
+        self.assertEqual(self.said[-1], 'N 9 0 Copied 2 lines.')
+        # The text stays chosen and is drawn reversed.
+        records = panes.room_grid(DISPLAY, self.rooms.rooms[9])
+        reversed_at = [at for at, record in enumerate(records) if record[3] & 16]
+        self.assertEqual(reversed_at, [0] + [40 + c for c in range(6, 20)] + [80 + c for c in range(0, 6)])
+        # Scrolled back three rows, it is three rows lower.
+        self.term.first = 97
+        self.assertEqual(panes.selected_spans(self.first), {4: (6, 19), 5: (0, 5)})
+        # Typing ends it.
+        self.rooms.line('K61')
+        self.assertIsNone(self.first.selection)
+
+    def test_a_click_without_a_drag_selects_nothing(self):
+        self.term.text = ['abc']
+        self.rooms.line('M 0 0 1 0 0 0')
+        self.rooms.line('M 0 1 1 0 0 0')
+        self.assertIsNone(self.first.selection)
+        self.assertEqual(self.said, [])
+
+    def test_double_and_triple_clicks_take_words_and_lines(self):
+        self.first.cols = 40
+        self.term.text = ['run ./tools/zell_panes.py now  ']
+        self.rooms.line('M 0 0 1 0 72 0')
+        self.rooms.line('M 0 1 1 0 72 0')
+        self.now += 0.1
+        self.rooms.line('M 0 0 1 0 72 0')
+        self.rooms.line('M 0 1 1 0 72 0')
+        self.assertEqual(copied(self.said)[0], './tools/zell_panes.py')
+        self.said.clear()
+        self.now += 0.1
+        self.rooms.line('M 0 0 1 0 72 0')
+        self.rooms.line('M 0 1 1 0 72 0')
+        self.assertEqual(copied(self.said)[0], 'run ./tools/zell_panes.py now')
+        # A fourth is a single click again; so is one too late or elsewhere.
+        self.said.clear()
+        self.now += 0.1
+        self.rooms.line('M 0 0 1 0 72 0')
+        self.rooms.line('M 0 1 1 0 72 0')
+        self.assertEqual(self.said, [])
+        self.now += 0.1
+        self.rooms.line('M 0 0 1 0 72 0')
+        self.now += 0.5
+        self.rooms.line('M 0 0 1 0 72 0')
+        self.rooms.line('M 0 1 1 0 72 0')
+        self.assertEqual(self.said, [])
+        self.now += 0.1
+        self.rooms.line('M 0 0 1 0 80 0')
+        self.rooms.line('M 0 1 1 0 80 0')
+        self.assertEqual(self.said, [])
+
+    def test_a_long_copy_comes_in_pieces_and_is_capped(self):
+        self.term.text = ['x' * 40] * 20
+        self.first.cols = 40
+        self.rooms.line('M 0 0 1 0 0 0')
+        self.rooms.line('M 0 1 1 0 319 319')
+        text, pieces = copied(self.said)
+        self.assertEqual(text, '\n'.join(['x' * 40] * 20))
+        self.assertEqual(pieces, 1)
+        self.said.clear()
+        self.rooms.copy(0, 'é' * panes.COPY_MAX)
+        text, pieces = copied(self.said)
+        # Cut at a character, within the cap.
+        self.assertEqual(text, 'é' * (panes.COPY_MAX // 2))
+        self.assertEqual(pieces, -(-len(panes.base64.b64encode(text.encode())) // panes.COPY_CHUNK))
+        self.assertTrue(all(len(line) <= panes.COPY_CHUNK + 2 for line in self.said))
+
+    def test_a_selection_ends_when_the_screen_changes(self):
+        self.term.text = ['abcdef']
+        self.rooms.line('M 0 0 1 0 0 0')
+        self.rooms.line('M 0 2 1 0 30 0')
+        self.term.alternate = True
+        self.assertEqual(panes.selected_spans(self.first), {})
+        self.assertIsNone(self.first.selection)
+
+    def test_scroll_keys_and_rows(self):
+        self.rooms.line('W 0 up')
+        self.rooms.line('W 0 down')
+        self.rooms.line('W 0 top')
+        self.rooms.line('W 0 bottom')
+        self.rooms.line('V 0 42')
+        self.rooms.line('W 0 sideways')
+        self.rooms.line('V 0 -1')
+        self.rooms.line('V 9 1')
+        self.assertEqual(self.term.calls, [('scroll', -19), ('scroll', 19), ('top',), ('bottom',), ('scroll_to', 42)])
+        self.term.alternate = True
+        for how in ('up', 'down', 'top', 'bottom'):
+            self.rooms.line('W 0 ' + how)
+        self.assertEqual(self.first.sent, [b'\x1b[5;2~', b'\x1b[6;2~', b'\x1b[1;2H', b'\x1b[1;2F'])
+
+    def test_a_paste_is_framed_by_the_terminal_and_sent_whole(self):
+        self.term.first = 90
+        self.rooms.line('P 9 0 6869')
+        self.rooms.line('P 9 0 0a21')
+        self.assertEqual(self.first.sent, [])
+        self.rooms.line('P 9 0 .')
+        self.assertEqual(self.term.calls[-2:], [('bottom',), ('paste', b'hi\n!')])
+        self.assertEqual(self.first.sent, [b'[hi\n!]'])
+        # To a pane of a room that is not shown, by its room.
+        self.rooms.line('S 10 40 20')
+        self.rooms.line('P 9 1 41')
+        self.rooms.line('P 9 1 .')
+        self.assertEqual(self.second.sent, [b'[A]'])
+        # A bad piece spoils the paste; so does one too long; an end with
+        # nothing before it sends nothing.
+        self.rooms.line('P 9 1 4')
+        self.rooms.line('P 9 1 41')
+        self.rooms.line('P 9 1 .')
+        self.rooms.line('P 9 1 .')
+        self.rooms.line('P 11 0 41')
+        self.rooms.line('P 9 7 41')
+        self.assertEqual(self.second.sent, [b'[A]'])
+        self.rooms.pastes[9, 1] = bytearray(panes.PASTE_MAX)
+        self.rooms.line('P 9 1 41')
+        self.rooms.line('P 9 1 .')
+        self.assertEqual(self.second.sent, [b'[A]'])
+
+    def test_a_long_paste_goes_as_the_pane_reads(self):
+        data = bytes(range(256)) * 1024
+        self.rooms.line('P 9 0 ' + data.hex())
+        self.first.pending = bytearray(panes.PASTE_STEP)
+        self.rooms.line('P 9 0 .')
+        self.assertEqual(self.first.sent, [])
+        self.first.pending = bytearray()
+        self.rooms.poll(1.0)
+        self.assertEqual(len(self.first.sent), 1)
+        self.assertEqual(len(self.first.sent[0]), panes.PASTE_STEP)
+        self.first.pending.clear()
+        for _ in range(10):
+            self.rooms.poll(1.0)
+        self.assertEqual(b''.join(self.first.sent), b'[' + data + b']')
+        self.assertEqual(self.rooms.backlog, {})
+
+
+class RealTerminalTests(unittest.TestCase):
+    """The same, through the Neuronte display's real terminal (Ghostty), when
+    it is there; ZELL_PANES_REAL_DISPLAY=1 makes it required."""
+
+    def setUp(self):
+        try:
+            import zell_terminal
+            self.display = zell_terminal.load_display()
+            if not hasattr(self.display.Terminal, 'scrollbar'):
+                raise RuntimeError('a display from before 0.2.4')
+        except Exception as error:
+            if os.environ.get('ZELL_PANES_REAL_DISPLAY') == '1':
+                raise
+            self.skipTest(f'no 0.2.4 Neuronte display here: {error}')
+        Pane.made.clear()
+        self.said = []
+        self.rooms = panes.Rooms(DISPLAY, ['/bin/sh'], wait=ready, front=front, say=self.said.append,
+                                 clock=lambda: 50.0)
+        self.rooms.line('S 9 40 8')
+        self.pane = self.rooms.rooms[9].current['panes'][0]
+        self.terminal = self.display.Terminal(self.pane.cols, self.pane.rows)
+        self.addCleanup(self.terminal.close)
+        self.pane.terminal = self.terminal
+
+    def test_scrollback_selection_and_copy(self):
+        for i in range(30):
+            self.terminal.feed(f'line {i}\r\n'.encode())
+        self.rooms.poll(0.0)
+        self.assertIn('B 9 0 31 23 8 0', self.said)
+        self.rooms.line('M 0 0 4 0 0 0')
+        self.rooms.line('M 0 0 4 0 0 0')
+        self.assertEqual(self.terminal.scrollbar(), (31, 17, 8))
+        self.assertEqual(''.join(self.terminal.rows_text()[0]).rstrip(), 'line 17')
+        # Row 0 column 5 to row 1 column 6: "17" and "line 18".
+        self.rooms.line('M 0 0 1 0 40 0')
+        self.rooms.line('M 0 1 1 0 48 16')
+        self.assertEqual(copied(self.said)[0], '17\nline 18')
+        self.rooms.line('K0d')
+        self.assertEqual(self.terminal.scrollbar(), (31, 23, 8))
+
+    def test_the_mouse_and_pastes_as_the_program_asked(self):
+        self.terminal.feed(b'\x1b[?1002h\x1b[?1006h\x1b[?2004h')
+        self.rooms.line('M 0 0 1 0 9 17')
+        self.rooms.line('M 0 2 1 0 25 17')
+        self.rooms.line('M 0 0 4 0 0 0')
+        self.rooms.line('P 9 0 610a62')
+        self.rooms.line('P 9 0 .')
+        self.assertEqual(self.pane.sent, [b'\x1b[<0;2;2M', b'\x1b[<32;4;2M', b'\x1b[<64;1;1M',
+                                          b'\x1b[200~a\nb\x1b[201~'])
+        self.rooms.poll(0.0)
+        self.assertIn('B 9 0 8 0 8 1', self.said)
+
+
 class FailureTests(unittest.TestCase):
     def setUp(self):
         Pane.made.clear()
@@ -633,6 +998,11 @@ def note(**row):
 class Terminal:
     def __init__(self, pane): self.pane = pane
     def snapshot(self): return [(self.pane.code, FG, BG, 0)] * (self.pane.cols * self.pane.rows), (0, 0)
+    def scrollbar(self): return self.pane.rows, 0, self.pane.rows
+    def mouse_tracking(self): return False
+    def mode(self, number, ansi=False): return False
+    def alternate_screen(self): return False
+    def scroll_bottom(self): pass
 class Pane:
     def __init__(self, command, cols, rows, cw, ch, lib):
         self.cols, self.rows, self.exit_status, self.fd = cols, rows, None, None
@@ -687,7 +1057,7 @@ class HelperRunTests(unittest.TestCase):
     """tools/zell_panes.py as Zell runs it: fd in the environment, lines on
     stdin, "R"/"E" on stdout, frames in the map."""
 
-    def run_helper(self, lines, broken=False, agents=(), not_runnable=()):
+    def run_helper(self, lines, broken=False, agents=(), not_runnable=(), old=False):
         folder = Path(self.temp.name)
         # PATH is a folder with a command for each agent given, and files
         # that are not commands for the rest.
@@ -700,7 +1070,8 @@ class HelperRunTests(unittest.TestCase):
             (commands / name).write_text('#!/bin/sh\n')
             (commands / name).chmod(0o644)
         display = folder / 'neuronte_display.py'
-        display.write_text(FAKE_DISPLAY)
+        # An old display has no scrollback calls.
+        display.write_text(FAKE_DISPLAY.replace('def scrollbar(self)', 'def no_scrollbar(self)') if old else FAKE_DISPLAY)
         log = folder / 'log.jsonl'
         fd = os.memfd_create('zell-panes-test', 0)
         os.ftruncate(fd, panes.MAP_BYTES)
@@ -743,7 +1114,8 @@ class HelperRunTests(unittest.TestCase):
         # typed: these stand-in panes have no terminal to be at a prompt in.
         self.assertEqual(rest.decode().splitlines(),
                          ['G %s %s' % (name, zell_providers.LABELS[name]) for name in names] +
-                         ['T 9 0 shell', 'T 9 1 shell', 'N 9 0 ' + panes.BUSY])
+                         ['B 9 0 20 0 20 0', 'B 9 1 20 0 20 0', 'T 9 0 shell', 'T 9 1 shell',
+                          'N 9 0 ' + panes.BUSY])
         magic, version, width, height, sequence, room = header
         self.assertEqual((magic, version, width, height, room), (b'ZPNE', 1, 320, 320, 9))
         self.assertTrue(sequence and not sequence & 1)
@@ -777,6 +1149,13 @@ class HelperRunTests(unittest.TestCase):
         first, rest, code, header, rows = self.run_helper([('Q', 0.0)], agents=names[:1], not_runnable=names[1:])
         self.assertEqual((first, code), (b'R\n', 0))
         self.assertEqual(rest.decode().splitlines(), ['G %s %s' % (names[0], zell_providers.LABELS[names[0]])])
+
+    def test_a_display_from_before_scrollback_is_refused(self):
+        first, rest, code, header, rows = self.run_helper([('S 9 40 20', 0.2)], old=True)
+        self.assertEqual(code, 1)
+        self.assertEqual(first, b'E The panes need the Neuronte display from 0.2.4, with scrollback and the mouse.\n')
+        self.assertEqual(header[0], b'\0\0\0\0')
+        self.assertEqual(rows, [])
 
     def test_a_broken_display_says_so_without_terminal_text(self):
         first, rest, code, header, rows = self.run_helper([], broken=True)
