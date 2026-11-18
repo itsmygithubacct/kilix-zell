@@ -28,8 +28,10 @@ Requires Kitty graphics, C11, zlib, libm and Python 3. The default Neuronte
 dependency is a neuronte-v2 checkout (2.5.1 or later) at
 `~/projects/neuronte-v2`, with its library already built and
 `weights/neuronte-split-v9.nrt` present. Text the split-v9 net was not
-trained on is drawn from the `neuronte-term-*` and `neuronte-kilix-*`
-bundles beside it, which the install copies too. `NEURONTE` and `NEURONTE_WEIGHTS`
+trained on is drawn from the listed `neuronte-term-*` and `neuronte-kilix-*`
+bundles beside it (each with its `NAME.list.txt`), else as the untrained
+mark, in Zell's own drawing and in its terminals alike; the install copies
+those bundles and their lists. `NEURONTE` and `NEURONTE_WEIGHTS`
 override build paths. `ZELL_NEURONTE_WEIGHTS` overrides the runtime weight file.
 The build does not modify that dependency. It records which checkout and
 weights file it used in `build/neuronte.ident`, and compiles the Neuronte

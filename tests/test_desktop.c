@@ -256,6 +256,12 @@ static void test_room_fit(void){
         for(int i=0;i<20;i++)zell_desktop_tick(&s,&up);
         assert(s.room==0&&s.y<start-20.f&&s.y<(float)ZELL_WORLD_H*.91f);
     }
+    /* zell_desktop_start, which main() calls, is the desktop's set-up and
+     * then that entrance, from wherever the scene was. */
+    s.room=3;s.x=1.f;s.y=1.f;s.direction=ZELL_DIR_LEFT;s.desktop=false;s.hp=1;
+    zell_desktop_start(&s);
+    assert(s.desktop&&s.hp==100&&s.room==0&&s.direction==ZELL_DIR_UP);
+    assert(s.x==(float)ZELL_WORLD_W*.5f&&s.y==(float)ZELL_WORLD_H*ZELL_HALL_ENTRY_Y);
     zell_desktop_init(&s);
     s.room=1;
     x=s.x;y=s.y;room=s.room;

@@ -236,6 +236,29 @@ class UpdateTests(unittest.TestCase):
             self.assertEqual(events[-1], 'helper.done', events)
             self.assertNotIn('helper.crashed', events)
 
+    def test_a_helper_that_exits_with_a_code_logs_it_and_keeps_it(self):
+        # Something the helper calls ends it with code 3: that is logged as
+        # an exit with its code, not as done, and the code is still the
+        # helper's exit status.
+        helper = Path(__file__).resolve().parent.parent / 'tools' / 'desktop.py'
+        stand_in = ("import runpy, sys, types\n"
+                    "journal = types.ModuleType('zell_journal')\n"
+                    "def recorder(*_):\n    raise SystemExit(3)\n"
+                    "journal.recorder = recorder\n"
+                    "sys.modules['zell_journal'] = journal\n"
+                    f"sys.argv = [{str(helper)!r}, '-1', '0', '--dialogue']\n"
+                    f"sys.path.insert(0, {str(helper.parent)!r})\n"
+                    f"runpy.run_path({str(helper)!r}, run_name='__main__')\n")
+        with tempfile.TemporaryDirectory() as directory:
+            where = Path(directory, 'log.jsonl')
+            env = dict(os.environ, KILIX_ZELL_DEBUG_LOG=str(where), KILIX_ZELL_STATE=directory)
+            done = subprocess.run([sys.executable, '-c', stand_in], env=env, stdin=subprocess.DEVNULL,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+            records = [json.loads(line) for line in where.read_text().splitlines()]
+            self.assertEqual(done.returncode, 3)
+            self.assertEqual([(r['event'], r.get('code')) for r in records if r['event'].startswith('helper.')][-1:],
+                             [('helper.exit', 3)], records)
+
     def test_a_floating_terminal_that_fails_says_where_the_log_is(self):
         with tempfile.TemporaryDirectory() as directory:
             where = Path(directory, 'log.jsonl')

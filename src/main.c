@@ -1120,8 +1120,7 @@ static int run_scene(void)
     zell_scene_init(&scene, kittyfb_width(&framebuffer),
                     kittyfb_height(&framebuffer));
 #ifdef ZELL_RENDER_NEURONTE
-    zell_desktop_init(&scene);
-    zell_desktop_enter_hall(&scene);
+    zell_desktop_start(&scene);
 #endif
     if(scene.desktop)service_start_mode(&vitals,&scene,true);
     if(scene.desktop)desktop_mouse_mode(true);

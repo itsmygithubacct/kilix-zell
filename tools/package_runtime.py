@@ -22,14 +22,17 @@ def copy(source, target, executable=False):
 
 def neuronte_weights(neuronte):
     """The weight files Zell takes from a neuronte-v2 checkout: its split-v9
-    text net, and the bundles beside it that draw what that net was not
-    trained on (draw_neuronte.c finds them in the net's folder)."""
+    text net, and the listed bundles beside it, each with its NAME.list.txt,
+    that draw what that net was not trained on. draw_neuronte.c finds them
+    in the net's folder by those lists; an unlisted file, such as
+    kilix-chrome-v2 for a box two cells wide, is not text and is left."""
     folder = neuronte/'weights'
     split = folder/'neuronte-split-v9.nrt'
     if not split.is_file():
         raise SystemExit(f'{split} is missing: NEURONTE must be a neuronte-v2 checkout, 2.5.1 or later')
-    bundles = sorted(path.name for pattern in ('neuronte-term-*.nrt', 'neuronte-kilix-*.nrt') for path in folder.glob(pattern))
-    return [split.name] + bundles
+    bundles = sorted(path.name for pattern in ('neuronte-term-*.nrt', 'neuronte-kilix-*.nrt') for path in folder.glob(pattern)
+                     if (folder/(path.stem + '.list.txt')).is_file())
+    return [split.name] + [name for bundle in bundles for name in (bundle, bundle[:-4] + '.list.txt')]
 
 
 def build(dest, modules, neuronte, ghostty, sdk, display=None, framebuffer=None):

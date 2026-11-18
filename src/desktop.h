@@ -45,6 +45,8 @@ extern const zell_station zell_stations[ZELL_STATIONS];
 void zell_desktop_camera(const zell_scene *s, int *x, int *y);
 void zell_desktop_init(zell_scene *s);
 void zell_desktop_enter_hall(zell_scene *s);
+/* How Zell starts the desktop: zell_desktop_init, then the entrance. */
+void zell_desktop_start(zell_scene *s);
 int zell_desktop_tick(zell_scene *s,const zell_controls *c);
 int zell_desktop_near(const zell_scene *s);
 bool zell_desktop_station_visible(const zell_scene *s,int station);

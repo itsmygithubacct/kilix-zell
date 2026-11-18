@@ -12,18 +12,34 @@ import zell_library as local
 import package_runtime
 
 
+class StartTests(unittest.TestCase):
+    def test_zell_starts_the_desktop_at_the_entrance(self):
+        # main() is not run by a unit test; it must start the desktop with
+        # zell_desktop_start (test_desktop.c holds what that does), not
+        # with zell_desktop_init alone, which leaves Kilix mid-cave.
+        main = (Path(__file__).resolve().parents[1]/'src/main.c').read_text()
+        self.assertEqual(main.count('zell_desktop_start(&scene);'), 1)
+        self.assertNotIn('zell_desktop_init(', main)
+
+
 class NeuronteWeightsTests(unittest.TestCase):
     def test_zell_takes_split_v9_and_the_bundles_beside_it(self):
         with tempfile.TemporaryDirectory() as directory:
             weights = Path(directory, 'weights')
             weights.mkdir()
             for name in ('neuronte-split-v9.nrt', 'neuronte-split-v4.nrt', 'neuronte-term-letters-v1.nrt',
-                         'neuronte-term-blocks-v1.nrt', 'neuronte-term-blocks-v1.list.txt',
-                         'neuronte-kilix-chrome-v2.nrt', 'neuronte-emoji-v1.nrt', 'neuronte-ui9-v2.nrt'):
+                         'neuronte-term-letters-v1.list.txt', 'neuronte-term-blocks-v1.nrt',
+                         'neuronte-term-blocks-v1.list.txt', 'neuronte-term-math-v1.nrt',
+                         'neuronte-kilix-chrome-v1.nrt', 'neuronte-kilix-chrome-v1.list.txt',
+                         'neuronte-kilix-chrome-v2.nrt', 'neuronte-kilix-chrome-v2.symbols.txt',
+                         'neuronte-emoji-v1.nrt', 'neuronte-ui9-v2.nrt'):
                 (weights/name).touch()
+            # Only listed bundles, each with its list: not term-math (no list
+            # here) nor kilix-chrome-v2 (two cells wide, so never listed).
             self.assertEqual(package_runtime.neuronte_weights(Path(directory)),
-                             ['neuronte-split-v9.nrt', 'neuronte-kilix-chrome-v2.nrt', 'neuronte-term-blocks-v1.nrt',
-                              'neuronte-term-letters-v1.nrt'])
+                             ['neuronte-split-v9.nrt', 'neuronte-kilix-chrome-v1.nrt', 'neuronte-kilix-chrome-v1.list.txt',
+                              'neuronte-term-blocks-v1.nrt', 'neuronte-term-blocks-v1.list.txt',
+                              'neuronte-term-letters-v1.nrt', 'neuronte-term-letters-v1.list.txt'])
             # A checkout from before neuronte-v2 is refused, by name.
             (weights/'neuronte-split-v9.nrt').unlink()
             with self.assertRaises(SystemExit) as refused:

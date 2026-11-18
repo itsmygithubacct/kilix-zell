@@ -32,6 +32,7 @@
 #include "draw_neuronte.h"
 
 #include <dirent.h>
+#include <sys/stat.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,11 +47,12 @@
 
 enum { ZN_CELL_W = 8, ZN_CELL_H = 16 };
 
-enum { ZN_EXTRA_MAX = 16, ZN_NAME_MAX = 256 };
+enum { ZN_EXTRA_MAX = 16, ZN_NAME_MAX = 256, ZN_SEEN_MAX = 256 };
 
 static neuronte *zn_font;
 static neuronte *zn_mark;                 /* the same file, drawing the untrained mark */
 static neuronte *zn_extra[ZN_EXTRA_MAX];  /* the term bundles beside it, by name */
+static char zn_extra_names[ZN_EXTRA_MAX][ZN_NAME_MAX];
 static int zn_extras;
 static int zn_state; /* 0 not tried, 1 open, -1 failed */
 
@@ -75,12 +77,25 @@ static int zn_name_order(const void *a, const void *b)
     return strcmp((const char *)a, (const char *)b);
 }
 
-/* Open the term bundles in the weight file's directory, in name order,
- * and a second handle on the weight file for the untrained mark. A bundle
- * that does not open is left out. */
+/* A listed bundle has its NAME.list.txt beside it. neuronte-v2 lists the
+ * bundles that draw a character in one cell, and no two of them claim one
+ * character; a file left unlisted, such as neuronte-kilix-chrome-v2 (made
+ * for a box two cells wide), is not used for text. */
+static bool zn_listed(const char *dir, const char *name)
+{
+    char path[1024 + ZN_NAME_MAX + 16];
+    struct stat st;
+    int need = snprintf(path, sizeof path, "%s/%.*s.list.txt", dir, (int)(strlen(name) - 4), name);
+
+    return need > 0 && (size_t)need < sizeof path && stat(path, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+/* Open the listed bundles in the weight file's directory, the first
+ * ZN_EXTRA_MAX of them in name order, and a second handle on the weight
+ * file for the untrained mark. A bundle that does not open is left out. */
 static void zn_open_extras(const char *weights)
 {
-    static char names[ZN_EXTRA_MAX][ZN_NAME_MAX];
+    static char names[ZN_SEEN_MAX][ZN_NAME_MAX];
     char dir[1024];
     char path[1024 + ZN_NAME_MAX + 2];
     const char *slash = strrchr(weights, '/');
@@ -103,24 +118,27 @@ static void zn_open_extras(const char *weights)
     if (list == NULL) {
         return;
     }
-    while (count < ZN_EXTRA_MAX && (entry = readdir(list)) != NULL) {
+    /* Every listed name first, then the sort, then the cap: which bundles
+     * load does not hang on the directory's order. */
+    while (count < ZN_SEEN_MAX && (entry = readdir(list)) != NULL) {
         size_t len = strlen(entry->d_name);
 
         if (len > 18 && len < ZN_NAME_MAX &&
             (strncmp(entry->d_name, "neuronte-term-", 14) == 0 || strncmp(entry->d_name, "neuronte-kilix-", 15) == 0) &&
-            strcmp(entry->d_name + len - 4, ".nrt") == 0) {
+            strcmp(entry->d_name + len - 4, ".nrt") == 0 && zn_listed(dir, entry->d_name)) {
             memcpy(names[count++], entry->d_name, len + 1);
         }
     }
     closedir(list);
     qsort(names, (size_t)count, sizeof names[0], zn_name_order);
-    for (i = 0; i < count; i++) {
+    for (i = 0; i < count && zn_extras < ZN_EXTRA_MAX; i++) {
         int need = snprintf(path, sizeof path, "%s/%s", dir, names[i]);
 
         if (need < 0 || (size_t)need >= sizeof path) {
             continue;
         }
         if (neuronte_open_file(path, &zn_extra[zn_extras]) == 0) {
+            memcpy(zn_extra_names[zn_extras], names[i], strlen(names[i]) + 1);
             zn_extras++;
         } else {
             zn_extra[zn_extras] = NULL;
@@ -175,6 +193,30 @@ static neuronte *zn_text_font(uint32_t scalar)
     return zn_mark != NULL ? zn_mark : zn_font;
 }
 
+const char *zell_neuronte_text_net(uint32_t scalar)
+{
+    neuronte *net;
+    const char *weights;
+    const char *slash;
+    int i;
+
+    if (!zell_neuronte_open()) {
+        return NULL;
+    }
+    net = zn_text_font(scalar);
+    if (net == zn_font) {
+        weights = zell_neuronte_weights();
+        slash = strrchr(weights, '/');
+        return slash != NULL ? slash + 1 : weights;
+    }
+    for (i = 0; i < zn_extras; i++) {
+        if (net == zn_extra[i]) {
+            return zn_extra_names[i];
+        }
+    }
+    return "mark";
+}
+
 static int zn_scale(int scale)
 {
     return scale < 1 ? 1 : scale;
@@ -226,6 +268,12 @@ static void zn_text(sr_canvas *c, float x, float y, const char *s,
                              scalar, zn_color(rgb, alpha));
         pen += ZN_CELL_W * k;
     }
+}
+
+void zell_neuronte_text(sr_canvas *canvas, float x, float y, const char *text,
+                        uint32_t rgb, float alpha, int scale)
+{
+    zn_text(canvas, x, y, text, rgb, alpha, scale);
 }
 
 /* A dark rim one scaled pixel wide, then the text. Eight more draws of
