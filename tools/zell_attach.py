@@ -325,9 +325,10 @@ class View:
         self.sender = Sender(kilix, pane.id)
         self.ox = self.oy = 0
         self.lines = []  # (row, start, width) of each row drawn
-        # Wrapped lines past the drawn ones, and how many of them the wheel
-        # has gone up through at the oldest row kept.
-        self.spare = self.extra = 0
+        # Scrolled back, the top line drawn, as (row of all those kept, its
+        # first column), and how many lines the wheel has moved it since;
+        # None while the view follows the cursor.
+        self.top, self.move = None, 0
         self.named = ''
         self.next_size = clock() + SIZE_SECONDS
         self.ended = False
@@ -413,15 +414,31 @@ class View:
                     if on_row is not None and start <= cx < start + max(1, width):
                         at = (len(lines), cx - start)
                     lines.append((row, start, width))
-        # Live, the cursor is followed; scrolled back, the lines nearest the
-        # live ones are shown, so each wheel step brings new rows in; at the
-        # oldest row kept, the wheel goes on up through the wrapped lines.
-        self.spare = max(0, len(lines) - area)
-        self.extra = min(self.extra, self.spare)
-        if live and not self.extra and at is not None:
-            self.oy = follow(self.oy, at[0], area, len(lines))
+        # Live, the cursor is followed. Scrolled back, the view keeps its top
+        # line, wherever the rows under it now are, and the wheel moves it a
+        # line at a time, so every wrapped line is passed over in turn.
+        last = max(0, len(lines) - area)
+        if self.top is None:
+            if live and at is not None:
+                self.oy = follow(self.oy, at[0], area, len(lines))
+            else:
+                self.oy = last
         else:
-            self.oy = self.spare - self.extra
+            row, start = self.top
+            row -= first
+            if row < 0:
+                at_top = row  # above the rows here: at least a line each
+            elif row >= trows:
+                at_top = len(lines) + row - trows
+            else:
+                at_top = max(i for i, (r, c, _w) in enumerate(lines) if r < row or (r == row and c <= start))
+            self.oy = min(max(0, at_top + self.move), last)
+            back_down = self.move > 0 and live and self.oy == last
+            self.move = 0
+            if back_down or not lines:
+                self.top = None
+            else:
+                self.top = (lines[self.oy][0] + first, lines[self.oy][1])
         self.lines = lines[self.oy:self.oy + area]
         drawn = []
         for y in range(area):
@@ -508,20 +525,28 @@ class View:
                 letter = b'A' if low == 0 else b'B'
                 self.send(((b'\x1bO' if terminal.mode(1) else b'\x1b[') + letter) * WHEEL_ROWS)
             return
-        up = low == 0
-        _kept, first, _shown = terminal.scrollbar()
-        if up and first == 0 and self.oy > 0:
-            self.extra = min(self.spare, self.spare - self.oy + WHEEL_ROWS)
-        elif not up and self.extra:
-            self.extra = max(0, self.extra - WHEEL_ROWS)
+        if not self.lines:
+            return
+        kept, first, shown = terminal.scrollbar()
+        if self.top is None:
+            self.top = (self.lines[0][0] + first, self.lines[0][1])
+        rows = terminal.rows
+        # The parser is moved only when the view nears the end of its rows,
+        # and by no more than keeps the top line among them.
+        if low == 0:
+            if self.top[0] - first < WHEEL_ROWS and first > 0:
+                terminal.scroll(-max(1, min(WHEEL_ROWS, first, rows - 1 - (self.top[0] - first))))
+            self.move -= WHEEL_ROWS
         else:
-            terminal.scroll(-WHEEL_ROWS if up else WHEEL_ROWS)
+            if rows - 1 - self.lines[-1][0] < WHEEL_ROWS and first + shown < kept:
+                terminal.scroll(min(WHEEL_ROWS, kept - first - shown))
+            self.move += WHEEL_ROWS
 
     def send(self, data, live=True):
         if not data:
             return
         if live:
-            self.extra = 0
+            self.top, self.move = None, 0
             kept, first, shown = self.terminal.scrollbar()
             if first + shown < kept:
                 self.terminal.scroll_bottom()

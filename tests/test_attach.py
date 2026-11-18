@@ -358,38 +358,34 @@ class ViewTests(unittest.TestCase):
         _text, drawn = self.view.paint(50, 8, [])
         self.assertEqual((self.view.ox, self.view.lines[:2]), (0, [(0, 0, 5), (0, 5, 50)]))
 
-    def test_the_wheel_reaches_every_wrapped_line(self):
-        # Six rows that wrap to two lines each, shown six lines at a time.
+    def test_the_wheel_moves_a_line_at_a_time_through_wrapped_lines(self):
+        # Six rows that wrap to two lines each, shown six lines at a time,
+        # nothing kept above: the wheel goes up through the wrapped lines,
+        # to the first, and back down to the cursor's, then follows it.
         self.term.cols = 60
         self.term.screen = [f'{row}' + 'x' * 50 for row in range(6)]
         self.term.cursor = (0, 5)
         self.view.paint(30, 7, [])
-        self.assertEqual((self.view.oy, self.view.spare), (5, 6))
-        # No rows kept above: the wheel goes up through the wrapped lines,
-        # to the first, and back down to the cursor's.
+        self.assertEqual((self.view.oy, self.view.top), (5, None))
         tops = []
-        for _ in range(4):
-            self.view.pointer(64, 3, 3, False, 30, 7)
+        for low in (64, 64, 64, 65, 65, 65):
+            self.view.pointer(low, 3, 3, False, 30, 7)
             self.view.paint(30, 7, [])
-            tops.append(self.view.oy)
-        self.assertEqual(tops, [2, 0, 0, 0])
+            tops.append((self.view.oy, self.view.top))
+        self.assertEqual(tops, [(2, (1, 0)), (0, (0, 0)), (0, (0, 0)), (3, (1, 30)), (6, None), (6, None)])
         self.assertEqual(self.term.back, 0)
-        for _ in range(3):
-            self.view.pointer(65, 3, 3, False, 30, 7)
-            self.view.paint(30, 7, [])
-            tops.append(self.view.oy)
-        self.assertEqual(tops[4:], [3, 5, 5])
         # Typing goes back to the cursor's lines.
         self.view.pointer(64, 3, 3, False, 30, 7)
         self.view.send(b'x')
         self.view.paint(30, 7, [])
-        self.assertEqual(self.view.oy, 5)
-        # With rows kept above, the wheel scrolls them in first, the lines
-        # nearest the live ones shown.
+        self.assertEqual((self.view.oy, self.view.top), (6, None))
+        # With rows kept above, the parser is moved only near its first row.
         self.term.kept_above = 40
         self.view.pointer(64, 3, 3, False, 30, 7)
+        self.assertEqual(self.term.back, 0)
         self.view.paint(30, 7, [])
-        self.assertEqual((self.term.back, self.view.oy), (3, 6))
+        self.view.pointer(64, 3, 3, False, 30, 7)
+        self.assertEqual(self.term.back, 3)
 
     def test_scrolled_back_it_shows_from_the_top_and_says_so(self):
         self.term.kept_above, self.term.back = 40, 12
@@ -555,20 +551,43 @@ class RealScrollTests(RealDisplayTests):
         text = re.sub('\x1b\\[[0-9;?]*[A-Za-z]|\x1b\\][^\x07]*\x07', '', view.paint(cols, rows, [])[0])
         return set(int(n) for n in re.findall(r'L(\d{3})', text))
 
+    def wheel_through(self, view):
+        """The rows shown going up to the oldest line kept and back down to
+        the live view, a wheel step at a time."""
+        seen = self.shown(view, 30, 11)
+        for _ in range(3000):
+            view.pointer(64, 3, 3, False, 30, 11)
+            seen |= self.shown(view, 30, 11)
+            if view.terminal.scrollbar()[1] == 0 and view.oy == 0:
+                break
+        else:
+            self.fail('the wheel never reached the oldest line')
+        for _ in range(3000):
+            view.pointer(65, 3, 3, False, 30, 11)
+            seen |= self.shown(view, 30, 11)
+            if view.top is None:
+                return seen
+        self.fail('the wheel never came back to the live view')
+
     def test_the_wheel_reaches_every_wrapped_row(self):
         view = self.view_of(60, 10)
         view.terminal.feed(b''.join(b'L%03d ' % n + b'x' * 51 + b'\r\n' for n in range(200)))
-        seen = self.shown(view, 30, 11)
-        for _ in range(80):
-            view.pointer(64, 3, 3, False, 30, 11)
-            seen |= self.shown(view, 30, 11)
-        for _ in range(80):
-            view.pointer(65, 3, 3, False, 30, 11)
-            seen |= self.shown(view, 30, 11)
+        seen = self.wheel_through(view)
         # Every row still kept is reached.
         kept = view.terminal.scrollbar()[0]
         self.assertGreater(kept, 100)
         self.assertEqual(set(range(max(0, 201 - kept), 200)) - seen, set())
+
+    def test_the_wheel_reaches_every_row_wrapped_past_the_view(self):
+        # Rows four lines long, two and a half to a view; and rows longer
+        # than the view itself.
+        for columns, width in ((120, 111), (400, 395)):
+            view = self.view_of(columns, 10)
+            view.terminal.feed(b''.join(b'L%03d ' % n + b'x' * min(width, columns - 5) + b'\r\n' for n in range(120)))
+            seen = self.wheel_through(view)
+            kept = view.terminal.scrollbar()[0]
+            self.assertEqual(set(range(max(0, 121 - kept), 120)) - seen, set(), columns)
+            self.assertIsNone(view.top)
 
     def test_a_full_screen_program_keeps_every_row(self):
         view = self.view_of(60, 10)

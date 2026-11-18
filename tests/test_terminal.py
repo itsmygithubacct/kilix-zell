@@ -189,6 +189,28 @@ class UpdateTests(unittest.TestCase):
             new = [json.loads(line)['event'] for line in where.read_text().splitlines()]
             self.assertEqual((old, new), (['old'] * 60, ['from A', 'from B']))
 
+    def test_a_reopen_that_fails_after_a_rotation_closes_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            where = Path(directory, 'log.jsonl')
+            where.write_text('x' * 2000)
+            opens, closes, real_open, real_close = [], [], debug._open, os.close
+
+            def failing_open(path):
+                opens.append(path)
+                if len(opens) == 2:
+                    raise OSError(28, 'No space left on device')
+                return real_open(path)
+
+            def close(fd):
+                closes.append(fd)
+                real_close(fd)
+            with patch.dict(os.environ, KILIX_ZELL_DEBUG_LOG=str(where)), patch.object(debug, 'LOG_BYTES', 1000), \
+                    patch.object(debug, '_open', failing_open), patch.object(debug.os, 'close', close):
+                debug.log('lost')
+            self.assertEqual(len(opens), 2)
+            self.assertEqual(len(closes), len(set(closes)), closes)
+            self.assertEqual(len(closes), 1)
+
     def test_a_floating_terminal_that_fails_says_where_the_log_is(self):
         with tempfile.TemporaryDirectory() as directory:
             where = Path(directory, 'log.jsonl')

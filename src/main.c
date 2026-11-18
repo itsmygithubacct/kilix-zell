@@ -36,6 +36,20 @@ static void on_signal(int signal_number)
     stop_requested = 1;
 }
 
+/* Zell stops as it does on SIGTERM when its window closes (SIGHUP) or a
+ * quit is asked (SIGQUIT) too, so it gives Kilix back the keys a pane room
+ * took. */
+static void catch_stop_signals(void)
+{
+    struct sigaction action;
+    memset(&action, 0, sizeof action);
+    action.sa_handler = on_signal;
+    sigaction(SIGINT, &action, NULL);
+    sigaction(SIGTERM, &action, NULL);
+    sigaction(SIGHUP, &action, NULL);
+    sigaction(SIGQUIT, &action, NULL);
+}
+
 static int64_t now_ms(void)
 {
     struct timespec ts;
@@ -882,14 +896,20 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
             /* The Hotkeys window: F1 opens it; while it is open, Esc, Enter,
              * Space, q or F1 closes it and no key goes anywhere else. */
             if(zell_panes_hotkeys_open()){
-                if(pressed&&!mods&&(event.key==KITTYKB_KEY_ESCAPE||event.key==KITTYKB_KEY_ENTER||event.key==KITTYKB_KEY_KP_ENTER||
+                int fit=zell_panes_hotkeys_fit(scene->height);
+                int by=event.key==KITTYKB_KEY_UP||event.key=='k'?-1:event.key==KITTYKB_KEY_DOWN||event.key=='j'?1:
+                       event.key==KITTYKB_KEY_PAGE_UP?1-fit:event.key==KITTYKB_KEY_PAGE_DOWN?fit-1:
+                       event.key==KITTYKB_KEY_HOME?-zell_panes_hotkeys_lines:event.key==KITTYKB_KEY_END?zell_panes_hotkeys_lines:0;
+                if(by&&!mods&&event.action!=KITTYKB_ACTION_RELEASE)zell_panes_hotkeys_scroll(scene,by);
+                else if(pressed&&!mods&&(event.key==KITTYKB_KEY_ESCAPE||event.key==KITTYKB_KEY_ENTER||event.key==KITTYKB_KEY_KP_ENTER||
                                     event.key==' '||event.key=='q'||event.key==KITTYKB_KEY_F1)){
                     zell_panes_hotkeys_show(false);
                     pressed_with=event.key;
                 }
                 continue;
             }
-            if(event.key==KITTYKB_KEY_F1&&!mods){
+            /* From a pane, F1 is the program's (help, in many). */
+            if(event.key==KITTYKB_KEY_F1&&!mods&&!zell_panes_keys_to_pane()){
                 if(pressed){zell_panes_hotkeys_show(true);pressed_with=event.key;}
                 continue;
             }
@@ -1066,7 +1086,6 @@ static int run_scene(void)
     sr_canvas canvas;
     uint8_t *rgba = NULL;
     size_t rgba_bytes = 0;
-    struct sigaction action;
 
     memset(&canvas, 0, sizeof canvas);
     memset(&proc, 0, sizeof proc);
@@ -1096,10 +1115,7 @@ static int run_scene(void)
         fprintf(stderr, "zell: keyboard setup failed (%s)\n", strerror(errno));
         return 1;
     }
-    memset(&action, 0, sizeof action);
-    action.sa_handler = on_signal;
-    sigaction(SIGINT, &action, NULL);
-    sigaction(SIGTERM, &action, NULL);
+    catch_stop_signals();
     signal(SIGPIPE,SIG_IGN);
     zell_scene_init(&scene, kittyfb_width(&framebuffer),
                     kittyfb_height(&framebuffer));

@@ -555,11 +555,13 @@ static void desktop_panes_button(sr_canvas *c,zell_rect r,const char *label,uint
  sr_text(c,(float)(r.x+(r.w-tw)/2),(float)(r.y+(r.h-16)/2),label,ink,1,1);
 }
 /* The Hotkeys window, over the panes below the walkway: the keys in a
- * column, what they do beside them, each cut to fit. */
+ * column, what they do beside them, each cut to fit; on a Zell too short
+ * for them all, the lines from its top and a line saying there are more. */
 static void desktop_panes_hotkeys(sr_canvas *c){
- int line_h=18,keys_w=27*8,w=c->w-32<820?c->w-32:820,h=zell_panes_hotkeys_lines*line_h+56;
- if(h>c->h-ZELL_PANES_WALK_H-16)h=c->h-ZELL_PANES_WALK_H-16;
- if(w<120||h<60)return;
+ int line_h=ZELL_PANES_HOTKEYS_LINE_H,keys_w=27*8,w=c->w-32<820?c->w-32:820;
+ int fit=zell_panes_hotkeys_fit(c->h),top=zell_panes_hotkeys_top(),more=fit<zell_panes_hotkeys_lines;
+ int h=(fit+more)*line_h+ZELL_PANES_HOTKEYS_EDGES;
+ if(w<120||h>c->h-ZELL_PANES_WALK_H-8)return;
  int x=(c->w-w)/2,y=ZELL_PANES_WALK_H+8;
  sr_fill_rect(c,0,(float)ZELL_PANES_WALK_H,(float)c->w,(float)(c->h-ZELL_PANES_WALK_H),0x05090cu,.55f);
  sr_fill_rect(c,(float)x,(float)y,(float)w,(float)h,0x101b24u,.97f);
@@ -567,7 +569,12 @@ static void desktop_panes_hotkeys(sr_canvas *c){
  desktop_text(c,x+14,y+8,"Hotkeys",0xd9ba79u,w-28);
  desktop_text(c,x+w-14-15*8,y+8,"Esc closes",0x9fb4c0u,15*8);
  int row=y+34;
- for(int i=0;i<zell_panes_hotkeys_lines&&row+16<=y+h-6;i++,row+=line_h){
+ if(more){
+  char note[96];
+  snprintf(note,sizeof note,"Up / Down or the wheel for more: lines %d-%d of %d",top+1,top+fit,zell_panes_hotkeys_lines);
+  desktop_text(c,x+14,y+34+fit*line_h,note,0xd9ba79u,w-28);
+ }
+ for(int i=top;i<top+fit&&i<zell_panes_hotkeys_lines;i++,row+=line_h){
   const char *text=zell_panes_hotkeys_text[i],*bar=strchr(text,'|');
   if(text[0]=='#'){desktop_text(c,x+14,row,text+1,0x9ff0c8u,w-28);continue;}
   if(!bar){desktop_text(c,x+14,row,text,0x9fb4c0u,w-28);continue;}

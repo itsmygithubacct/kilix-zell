@@ -3262,6 +3262,32 @@ static void test_pane_io(void){
             else assert(strlen(line)<=98);
         }
         assert(parts==2&&zell_panes_hotkeys_lines>20);
+        /* What a Kilix user can press: W, ] and [, L are there; R's own keys. */
+        bool w=false,brackets=false,layout=false,resize=false;
+        for(int i=0;i<zell_panes_hotkeys_lines;i++){
+            const char *line=zell_panes_hotkeys_text[i];
+            w|=!strncmp(line,"Ctrl+Shift+W|",13);brackets|=!strncmp(line,"Ctrl+Shift+] / [|",17);
+            layout|=!strncmp(line,"Ctrl+Shift+L|",13);
+            resize|=!strncmp(line,"Ctrl+Shift+R|",13)&&strstr(line,"W / N")&&!strstr(line,"arrows");
+        }
+        assert(w&&brackets&&layout&&resize);
+        /* All of it fits a tall Zell; a short one shows what fits and a line
+         * for the rest, and scrolls no further than the last line. */
+        int all=zell_panes_hotkeys_lines*ZELL_PANES_HOTKEYS_LINE_H+ZELL_PANES_WALK_H+16+ZELL_PANES_HOTKEYS_EDGES;
+        assert(zell_panes_hotkeys_fit(all)==zell_panes_hotkeys_lines&&zell_panes_hotkeys_fit(all-1)==zell_panes_hotkeys_lines-2);
+        assert(zell_panes_hotkeys_fit(100)==1);
+        int saved_w=s.width,saved_h=s.height;
+        s.width=960;s.height=480;
+        int fit=zell_panes_hotkeys_fit(480);
+        zell_panes_hotkeys_show(true);
+        zell_panes_hotkeys_scroll(&s,-5);assert(zell_panes_hotkeys_top()==0);
+        zell_panes_hotkeys_scroll(&s,1000);assert(zell_panes_hotkeys_top()==zell_panes_hotkeys_lines-fit);
+        /* The wheel scrolls it, and nothing under it. */
+        assert(zell_panes_pointer(&s,64u,500,300,false)&&zell_panes_hotkeys_top()==zell_panes_hotkeys_lines-fit-3);
+        assert(zell_panes_pointer(&s,65u,500,300,false)&&zell_panes_hotkeys_top()==zell_panes_hotkeys_lines-fit);
+        zell_panes_hotkeys_show(false);zell_panes_hotkeys_show(true);assert(zell_panes_hotkeys_top()==0);
+        zell_panes_hotkeys_show(false);
+        s.width=saved_w;s.height=saved_h;
     }
     /* Ctrl+Tab and Ctrl+Shift+Tab go round the panes; from the walkway to the
      * pane below Kilix; zoomed, the room shows the pane they go to. Ctrl+Alt+Z

@@ -695,6 +695,17 @@ static void test_app_keys(void){
     assert(!app_keys_change(&scene,true));
     /* Not the desktop: never. */
     scene.desktop=false;assert(!app_keys_change(&scene,false));
+    /* Each signal that ends Zell asks it to stop, so the unset is said. */
+    int signals[]={SIGINT,SIGTERM,SIGHUP,SIGQUIT};
+    struct sigaction before[4];
+    for(int i=0;i<4;i++)sigaction(signals[i],NULL,&before[i]);
+    catch_stop_signals();
+    for(int i=0;i<4;i++){
+        stop_requested=0;
+        assert(raise(signals[i])==0&&stop_requested);
+    }
+    stop_requested=0;
+    for(int i=0;i<4;i++)sigaction(signals[i],&before[i],NULL);
 }
 static void test_paste_question(void){
     zell_scene scene;
@@ -882,20 +893,64 @@ static void test_paste_question(void){
             desktop_input_feed(&scene,"\033[1;1:1C",8);
             read_controls(&scene,&controls);
             assert(strchr(zell_panes_pending()+at,'K'));
+            /* Alt held through the arrow's press and release: one move,
+             * not one for the release as well. */
+            at=strlen(zell_panes_pending());
+            n=snprintf(held,sizeof held,"\033[%d;3:1u\033[1;3:1D\033[1;3:3D\033[%d;3:3u",KITTYKB_KEY_LEFT_ALT,KITTYKB_KEY_LEFT_ALT);
+            desktop_input_feed(&scene,held,(size_t)n);
+            read_controls(&scene,&controls);
+            assert(zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==0&&zell_panes_keys_to_pane()&&!strcmp(zell_panes_pending()+at,"F 0\n"));
+            /* And back the same way, to pane 1. */
+            n=snprintf(held,sizeof held,"\033[%d;3:1u\033[1;3:1C\033[1;3:3C\033[%d;3:3u",KITTYKB_KEY_LEFT_ALT,KITTYKB_KEY_LEFT_ALT);
+            desktop_input_feed(&scene,held,(size_t)n);
+            read_controls(&scene,&controls);
+            assert(zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==1&&!strcmp(zell_panes_pending()+at,"F 0\nF 1\n"));
             keyboard.input.support=support;keyboard.input.terminal_flags=flags;
         }
-        /* F1 opens the Hotkeys window; while it is open no key goes to the
-         * pane or moves anything; Esc closes it. */
+        /* F1 from a pane is the program's. */
         before=strlen(zell_panes_pending());
         desktop_input_feed(&scene,"\033[11~",5);
         read_controls(&scene,&controls);
-        assert(zell_panes_hotkeys_open());
+        assert(!zell_panes_hotkeys_open()&&!strcmp(zell_panes_pending()+before,"K1b4f50\n"));
+        /* From the walkway F1 opens the Hotkeys window; while it is open no
+         * key goes to the pane or moves anything, the arrows scroll it when
+         * it does not all fit, and Esc closes it. */
+        desktop_input_feed(&scene,"\033[1;3A",6);
+        read_controls(&scene,&controls);
+        assert(!zell_panes_keys_to_pane());
+        before=strlen(zell_panes_pending());
+        desktop_input_feed(&scene,"\033[11~",5);
+        read_controls(&scene,&controls);
+        assert(zell_panes_hotkeys_open()&&zell_panes_hotkeys_top()==0);
         desktop_input_feed(&scene,"ab\033[1;3C\033[9;5u",14);
         read_controls(&scene,&controls);
         assert(zell_panes_hotkeys_open()&&!strcmp(zell_panes_pending()+before,"")&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==1);
+        {
+            int height=scene.height,fit;
+            scene.height=480;fit=zell_panes_hotkeys_fit(480);
+            assert(fit<zell_panes_hotkeys_lines);
+            desktop_input_feed(&scene,"\033[B\033[B\033[A",9);
+            read_controls(&scene,&controls);
+            assert(zell_panes_hotkeys_top()==1);
+            desktop_input_feed(&scene,"\033[F",3);
+            read_controls(&scene,&controls);
+            assert(zell_panes_hotkeys_top()==zell_panes_hotkeys_lines-fit);
+            desktop_input_feed(&scene,"\033[6~\033[5~",8);
+            read_controls(&scene,&controls);
+            assert(zell_panes_hotkeys_top()==zell_panes_hotkeys_lines-fit-(fit-1));
+            desktop_input_feed(&scene,"\033[H",3);
+            read_controls(&scene,&controls);
+            assert(zell_panes_hotkeys_top()==0&&zell_panes_hotkeys_open());
+            scene.height=height;
+        }
         desktop_input_feed(&scene,"\033[27u",5);
         read_controls(&scene,&controls);
         assert(!zell_panes_hotkeys_open()&&!strcmp(zell_panes_pending()+before,""));
+        /* Back down into pane 1. */
+        desktop_input_feed(&scene,"\033[1;3B",6);
+        read_controls(&scene,&controls);
+        assert(zell_panes_keys_to_pane()&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==1);
+        before=strlen(zell_panes_pending());
         /* Ctrl+Tab, Ctrl+Shift+Tab and Ctrl+Alt+Z are the room's, never the
          * pane's. */
         desktop_input_feed(&scene,"\033[9;5u",6);

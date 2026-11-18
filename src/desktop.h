@@ -225,6 +225,11 @@ bool zell_panes_zoom_key(zell_scene *s);
 void zell_panes_hotkeys_rect(const zell_scene *s,zell_rect *r);
 bool zell_panes_hotkeys_open(void);
 void zell_panes_hotkeys_show(bool open);
+#define ZELL_PANES_HOTKEYS_LINE_H 18
+#define ZELL_PANES_HOTKEYS_EDGES 56 /* its title above the lines, a margin below */
+int zell_panes_hotkeys_fit(int height);
+int zell_panes_hotkeys_top(void);
+void zell_panes_hotkeys_scroll(const zell_scene *s,int lines);
 extern const char *const zell_panes_hotkeys_text[];
 extern const int zell_panes_hotkeys_lines;
 /* Agent button `agent` over pane index; w is 0 when it does not fit. */

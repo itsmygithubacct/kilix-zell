@@ -57,12 +57,14 @@ def log(event, **fields):
                 except FileNotFoundError:
                     pass
                 os.close(fd)
+                fd = -1  # closed once, even if the reopen fails
                 fd = _open(where)
             # One O_APPEND write per line keeps concurrent helpers from
             # interleaving.
             os.write(fd, (json.dumps(record, default=str) + '\n').encode())
         finally:
-            os.close(fd)
+            if fd >= 0:
+                os.close(fd)
     except OSError:
         pass  # A log must never break the action it describes.
 

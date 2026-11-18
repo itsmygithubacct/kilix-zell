@@ -72,6 +72,7 @@ typedef struct {
     int focus[2],zoom[2];
     /* The Hotkeys window is open over the room. */
     bool hotkeys;
+    int hotkeys_top; /* its first line shown, when not all fit */
     char title[2][4][32];
     pn_agent agents[ZELL_PANES_AGENTS];
     int agent_count;
@@ -169,7 +170,7 @@ void zell_panes_enter(zell_scene *s,int room){
     if(!zell_panes_count(room))return;
     s->room=room;pn_stand(s);
     /* He walked in: the keys are his. */
-    pn.keys_pane=false;pn.confirm_room=0;pn.entering=true;pn.hotkeys=false;
+    pn.keys_pane=false;pn.confirm_room=0;pn.entering=true;pn.hotkeys=false;pn.hotkeys_top=0;
     pn.grab=pn.bar_grab=pn.bar_hover=pn.motion_pane=-1;
     pn_place(s);
     pn.rest_room=room;pn.rest_x=s->x;
@@ -301,7 +302,22 @@ void zell_panes_hotkeys_rect(const zell_scene *s,zell_rect *r){
     *r=(zell_rect){x,ZELL_PANES_BUTTON_Y,w,ZELL_PANES_BUTTON_H};
 }
 bool zell_panes_hotkeys_open(void){return pn.hotkeys;}
-void zell_panes_hotkeys_show(bool open){pn.hotkeys=open;}
+void zell_panes_hotkeys_show(bool open){pn.hotkeys=open;pn.hotkeys_top=0;}
+/* How many of its lines the Hotkeys window shows in a Zell `height` tall:
+ * all, or as many as leave a line for saying there are more. */
+int zell_panes_hotkeys_fit(int height){
+    int room=height-ZELL_PANES_WALK_H-16-ZELL_PANES_HOTKEYS_EDGES;
+    if(zell_panes_hotkeys_lines*ZELL_PANES_HOTKEYS_LINE_H<=room)return zell_panes_hotkeys_lines;
+    int fit=room/ZELL_PANES_HOTKEYS_LINE_H-1;
+    return fit<1?1:fit;
+}
+int zell_panes_hotkeys_top(void){return pn.hotkeys_top;}
+void zell_panes_hotkeys_scroll(const zell_scene *s,int lines){
+    int last=zell_panes_hotkeys_lines-zell_panes_hotkeys_fit(s->height);
+    int top=pn.hotkeys_top+lines;
+    pn.hotkeys_top=top>last?last:top;
+    if(pn.hotkeys_top<0)pn.hotkeys_top=0;
+}
 void zell_panes_pad_rect(const zell_scene *s,int index,zell_rect *r){
     zell_rect pane,hotkeys;zell_panes_pane_rect(s,index,&pane);
     *r=(zell_rect){0};
@@ -512,7 +528,7 @@ const char *const zell_panes_hotkeys_text[]={
     "Left / Right|walk Kilix along the walkway; hold Shift to run",
     "Enter or Space|press what Kilix stands at",
     "Shift+PgUp / PgDn|scroll the pane a page; Shift+Home / End: top, bottom",
-    "F1|this window; Esc, Enter or a click closes it",
+    "F1|this window, from the walkway; Esc, Enter or a click closes it",
     "Mouse|click a pane to type in it, the walkway to give Kilix the keys;",
     "|the wheel scrolls; a drag selects and copies",
     "",
@@ -524,13 +540,24 @@ const char *const zell_panes_hotkeys_text[]={
     "Ctrl+Shift+N|a new Kilix window on the desktop",
     "Ctrl+Shift+C / V|copy Kilix's selection / paste, into the pane with the keys",
     "Ctrl+Shift+Up / Down|scroll Kilix's own window a line",
-    "Ctrl+Shift+R|resize Kilix's windows: the arrows, then Enter",
+    "Ctrl+Shift+R|resize: W / N wider, narrower; T / S taller, shorter; R reset",
+    "|(Ctrl doubles the step); Esc leaves it",
     "Ctrl+Shift+Home|Kilix's windows back to their sizes",
     "Ctrl+Shift+D|dictate",
     "Ctrl+Shift+B|Kilix's tmux-style prefix, then a key; Esc leaves it",
+    "Ctrl+Shift+W|close this Kilix window, Zell with it",
+    "Ctrl+Shift+] / [|Kilix's next / previous window, past Zell",
+    "Ctrl+Shift+L|Kilix's next layout",
+    "Ctrl+Shift+H|this window's scrollback, in a pager",
+    "Ctrl+Shift+= / -|Kilix's font size up / down",
+    "Ctrl+Shift+F11|full screen",
+    "Ctrl+Shift+E / U|open a link by hints / type a Unicode character",
+    "Ctrl+Shift+F2 / F5|edit / reload Kilix's settings",
     "",
     "Alt+arrows, Ctrl+Tab and Ctrl+Alt+Z reach Zell from a Kilix that hands",
     "them to it (0.2.4 on); an older Kilix moves between its own windows.",
+    "If Zell is killed in this room, its window goes on handing them over:",
+    "printf '\\033]1337;SetUserVar=kilix_app_keys\\007' there gives them back.",
 };
 const int zell_panes_hotkeys_lines=(int)(sizeof zell_panes_hotkeys_text/sizeof zell_panes_hotkeys_text[0]);
 bool zell_panes_press(zell_scene *s){
@@ -598,7 +625,11 @@ static void pn_send_pointer(int index,int action,int button,int mods,int px,int 
 bool zell_panes_pointer(zell_scene *s,unsigned buttons,int x,int y,bool release){
     if(!ZELL_ROOM_IS_PANES(s->room))return false;
     /* Under the Hotkeys window the panes get no pointer. */
-    if(pn.hotkeys){pn.grab=pn.bar_grab=-1;return true;}
+    if(pn.hotkeys){
+        pn.grab=pn.bar_grab=-1;
+        if((buttons&64u)&&(buttons&3u)<2)zell_panes_hotkeys_scroll(s,(buttons&3u)?3:-3);
+        return true;
+    }
     int slot=pn_slot(s->room);
     bool motion=(buttons&32u)!=0,wheel=(buttons&64u)!=0;
     unsigned low=buttons&3u;
