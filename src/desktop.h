@@ -93,20 +93,35 @@ void zell_command_computer_layout(zell_rect *frame,zell_rect *display);
 #define ZELL_COMMAND_OPENING_BOTTOM 330
 #define ZELL_COMMAND_OPENING_DEPTH 40
 /* Rooms through the Command Center's openings: a Kilix tab of two panes on
- * the left, of four on the right, side by side, filling the whole pane. Kilix
- * walks over them in canvas pixels. The way back is a thin green line down
- * the top of the side he came in by. */
+ * the left, of four on the right, side by side, across the whole Zell pane.
+ * Along the top is a walkway for Kilix, with buttons over each pane that
+ * start a coding agent in it; under it each pane has a title bar, then its
+ * cells. Clicking a pane gives it the keys; clicking the walkway gives them
+ * back to Kilix. The way back is a thin green line at the walkway's end on
+ * the side he came in by. In canvas pixels: */
 #define ZELL_ROOM_PANES_LEFT 9
 #define ZELL_ROOM_PANES_RIGHT 10
 #define ZELL_ROOM_IS_PANES(room) ((room)==ZELL_ROOM_PANES_LEFT||(room)==ZELL_ROOM_PANES_RIGHT)
-#define ZELL_PANES_EXIT_H 112
+#define ZELL_PANES_WALK_H 64
+#define ZELL_PANES_CHROME_H 20
+#define ZELL_PANES_CELLS_Y (ZELL_PANES_WALK_H+ZELL_PANES_CHROME_H)
+#define ZELL_PANES_EXIT_H ZELL_PANES_WALK_H
 #define ZELL_PANES_EXIT_W 3
 #define ZELL_PANES_EXIT_RGB 0x3ee07cu
-/* Kilix's feet stay this far inside the canvas: SIDE from either side, TOP
- * from the top (his picture is 84 high), BOTTOM from the bottom. */
+/* Kilix stands on the walkway, feet at FEET_Y, drawn KILIX_H high, his feet
+ * at least SIDE from either end. */
+#define ZELL_PANES_FEET_Y 58
+#define ZELL_PANES_KILIX_H 52
 #define ZELL_PANES_SIDE 24
-#define ZELL_PANES_TOP 88
-#define ZELL_PANES_BOTTOM 2
+/* The agent buttons on the walkway's back wall. */
+#define ZELL_PANES_BUTTON_Y 6
+#define ZELL_PANES_BUTTON_H 22
+#define ZELL_PANES_AGENTS 6
+/* Elsewhere Zell's picture is at most 1600x1000; a pane room is as wide and
+ * high as its pane, up to this. */
+#define ZELL_PANES_MAX_W 3840
+#define ZELL_PANES_MAX_H 2160
+void zell_panes_frame_limits(int room,int *max_w,int *max_h);
 int zell_panes_count(int room);
 /* Side the exit line is on: -1 left, 1 right, 0 not a pane room. */
 int zell_panes_exit_side(int room);
@@ -118,24 +133,55 @@ int zell_panes_tick(zell_scene *s,const zell_controls *c);
 /* The helper process: started by the pump while a pane room is shown. */
 void zell_panes_pump(zell_scene *s);
 void zell_panes_shutdown(void);
-/* Bytes typed in a pane room, for the pane last clicked. */
+/* Bytes typed in a pane room, for the focused pane. */
 void zell_panes_key(const unsigned char *bytes,size_t count);
 bool zell_panes_click(zell_scene *s);
+/* Who has the keys in a pane room: a pane (after a click on it) or Kilix
+ * (on the way in, and after a click on the walkway). */
+bool zell_panes_keys_to_pane(void);
+/* What a key does there: the pane's, Kilix presses the button he stands
+ * on (Enter or Space), or nothing. Kilix walks on the arrows only while
+ * he has the keys. */
+enum { ZELL_PANES_KEY_NONE, ZELL_PANES_KEY_PANE, ZELL_PANES_KEY_PRESS };
+int zell_panes_route(bool press_key);
+/* Kilix presses the button under his feet; false if there is none. */
+bool zell_panes_press(zell_scene *s);
 /* The latest picture of the shown room, or NULL. */
 const uint32_t *zell_panes_frame(int room,int *width,int *height);
 /* Why there is no picture, or "". */
 const char *zell_panes_error(void);
-/* Terminal cells for a canvas: 8x16 pixels, at most 240x120. */
+/* Terminal cells under the walkway and title bars: 8x16 pixels, at most
+ * 480x135. */
 void zell_panes_cells(int width,int height,int *cols,int *rows);
-/* Pane-protocol lines, for tests: what the pump would send next, and the
- * column a click at canvas x lands in. */
+/* Pane index's cells, title bar and walkway part, in canvas pixels; w is 0
+ * for a pane hidden by another one's zoom. */
+void zell_panes_pane_rect(const zell_scene *s,int index,zell_rect *r);
+void zell_panes_chrome_rect(const zell_scene *s,int index,zell_rect *r);
+/* Its title bar's buttons: 0 zoom, 1 restart. */
+void zell_panes_chrome_button(const zell_scene *s,int index,int button,zell_rect *r);
+/* The pane a canvas x is over; a separator belongs to the pane on its left. */
+int zell_panes_pane_at(const zell_scene *s,int x);
+/* Agent button `agent` over pane index; w is 0 when it does not fit. */
+void zell_panes_button_rect(const zell_scene *s,int index,int agent,zell_rect *r);
+int zell_panes_agent_count(void);
+const char *zell_panes_agent_label(int agent);
+/* What the helper says a pane runs ("" until it says), a notice it gave
+ * for one (NULL once it is 4 seconds old), and whether its restart button
+ * waits for the second click (3 seconds). */
+const char *zell_panes_title(int room,int index);
+const char *zell_panes_notice(int room,int index);
+bool zell_panes_confirming(int room,int index);
+int zell_panes_focus(int room);
+int zell_panes_zoom(int room);
+/* Pane-protocol lines, for tests: what the pump would send next, and a
+ * line as if the helper had written it. */
 const char *zell_panes_pending(void);
-int zell_panes_column(const zell_scene *s,int x);
+int zell_panes_room_line(int room,int cols,int rows,char *out,size_t capacity);
+void zell_panes_test_line(const char *line);
 void zell_panes_test_reset(void);
 void zell_panes_test_copy(void *map);
 void zell_panes_test_fail(const char *text);
 size_t zell_panes_map_bytes(void);
-bool zell_panes_walks(bool arrow,unsigned modifiers);
 void zell_command_switch_layout(int index,zell_rect *frame);
 /* World frame and glass for floor panel 0 (YOLO), 1 (agents), or 2 (spare).
  * Panels 0 and 1 use the command-switch rectangles. glass may be NULL. */

@@ -1,21 +1,27 @@
 /* Pane rooms, through the Command Center's top corners: a Kilix tab of two
- * panes on the left and of four on the right, side by side, filling the
- * whole Zell pane with no border. Kilix walks over them in canvas pixels,
- * arrow keys only; every other key goes to the pane last clicked.
+ * panes on the left and of four on the right, side by side, across the whole
+ * Zell pane. Along the top is a walkway Kilix walks on, with buttons over
+ * each pane that start a coding agent in it; under it each pane has a title
+ * bar with Zoom and Restart, then its cells. A click on a pane gives it the
+ * keys; a click on the walkway gives them back to Kilix.
  *
  * tools/zell_panes.py owns the shells and paints their cells, in its own
  * process group with its own pipes and map, as the theater's helper does.
  * The pump starts it the first time a pane room is shown, never the tick,
  * so tests walk in and out without a process. Its shells keep running while
- * Kilix is elsewhere; only the shown room is painted. The map starts with
- * 64 bytes: "ZPNE", version 1, width, height, sequence (odd while a frame
- * is written), room. */
+ * Kilix is elsewhere; only the shown room is painted. Zell keeps which pane
+ * is focused and zoomed and tells the helper. The map starts with 64 bytes:
+ * "ZPNE", version 1, width, height, sequence (odd while a frame is
+ * written), room. */
 #include <stdatomic.h>
-#define PN_MAX_W 1920
-#define PN_MAX_H 1920
+#define PN_MAX_W ZELL_PANES_MAX_W
+#define PN_MAX_H ZELL_PANES_MAX_H
 #define PN_MAP_BYTES (64u+(size_t)PN_MAX_W*PN_MAX_H*4u)
 #define PN_QUEUE 8192
+#define PN_NOTICE_MS 4000
+#define PN_CONFIRM_MS 3000
 
+typedef struct { char id[16],label[24]; } pn_agent;
 typedef struct {
     pid_t pid;
     int in_fd,out_fd,frame_fd;
@@ -32,44 +38,83 @@ typedef struct {
     size_t queued;
     char line[256];
     size_t line_n;
+    /* Who has the keys, and per room (left, right) the focused pane and
+     * the zoomed one (-1 for none). */
+    bool keys_pane;
+    /* He has not moved since walking in: his place follows the room's
+     * size, which grows past the Command Center's a frame later. */
+    bool entering;
+    int focus[2],zoom[2];
+    char title[2][4][32];
+    pn_agent agents[ZELL_PANES_AGENTS];
+    int agent_count;
+    char notice[96];
+    int notice_room,notice_pane;
+    int64_t notice_until;
+    int confirm_room,confirm_pane;
+    int64_t confirm_until;
 } pn_state;
 
-static pn_state pn={.in_fd=-1,.out_fd=-1,.frame_fd=-1};
+#define PN_START {.in_fd=-1,.out_fd=-1,.frame_fd=-1,.zoom={-1,-1}}
+static pn_state pn=PN_START;
 
-/* A plain arrow walks Kilix; with Shift, Ctrl, Alt, Super, Hyper or Meta
- * it is the pane's (word moves, selections). Lock keys do not count. */
-bool zell_panes_walks(bool arrow,unsigned modifiers){return arrow&&!(modifiers&0x3fu);}
+static int pn_slot(int room){return room==ZELL_ROOM_PANES_LEFT?0:room==ZELL_ROOM_PANES_RIGHT?1:-1;}
 int zell_panes_count(int room){return room==ZELL_ROOM_PANES_LEFT?2:room==ZELL_ROOM_PANES_RIGHT?4:0;}
 /* The left room is entered from its right and is left the same way. */
 int zell_panes_exit_side(int room){return room==ZELL_ROOM_PANES_LEFT?1:room==ZELL_ROOM_PANES_RIGHT?-1:0;}
-static void pn_bounds(const zell_scene *s,float *x0,float *x1,float *y0,float *y1){
-    int w=s->width>0?s->width:1,h=s->height>0?s->height:1;
-    *x0=(float)ZELL_PANES_SIDE;*x1=(float)(w-ZELL_PANES_SIDE);
-    *y0=(float)ZELL_PANES_TOP;*y1=(float)(h-ZELL_PANES_BOTTOM);
-    if(*x1<*x0)*x1=*x0;
-    if(*y1<*y0)*y1=*y0;
+void zell_panes_frame_limits(int room,int *max_w,int *max_h){
+    if(ZELL_ROOM_IS_PANES(room)){*max_w=ZELL_PANES_MAX_W;*max_h=ZELL_PANES_MAX_H;}
+    else {*max_w=1600;*max_h=1000;}
 }
+bool zell_panes_keys_to_pane(void){return pn.keys_pane;}
+int zell_panes_route(bool press_key){return pn.keys_pane?ZELL_PANES_KEY_PANE:press_key?ZELL_PANES_KEY_PRESS:ZELL_PANES_KEY_NONE;}
+int zell_panes_focus(int room){int slot=pn_slot(room);return slot<0?-1:pn.focus[slot];}
+int zell_panes_zoom(int room){int slot=pn_slot(room);return slot<0?-1:pn.zoom[slot];}
+const char *zell_panes_title(int room,int index){
+    int slot=pn_slot(room);
+    return slot<0||index<0||index>=zell_panes_count(room)?"":pn.title[slot][index];
+}
+const char *zell_panes_notice(int room,int index){
+    if(!pn.notice[0]||pn.notice_room!=room||pn.notice_pane!=index)return NULL;
+    if(zell_notice_clock_ms()>=pn.notice_until){pn.notice[0]=0;return NULL;}
+    return pn.notice;
+}
+bool zell_panes_confirming(int room,int index){
+    return pn.confirm_room==room&&pn.confirm_pane==index&&zell_notice_clock_ms()<pn.confirm_until;
+}
+int zell_panes_agent_count(void){return pn.agent_count;}
+const char *zell_panes_agent_label(int agent){return agent>=0&&agent<pn.agent_count?pn.agents[agent].label:"";}
+
 void zell_panes_exit_rect(const zell_scene *s,zell_rect *r){
     int side=zell_panes_exit_side(s->room),w=s->width>0?s->width:1;
     if(!side){*r=(zell_rect){0};return;}
     *r=(zell_rect){side>0?w-ZELL_PANES_EXIT_W:0,0,ZELL_PANES_EXIT_W,ZELL_PANES_EXIT_H};
 }
+static void pn_bounds(const zell_scene *s,float *x0,float *x1){
+    int w=s->width>0?s->width:1;
+    *x0=(float)ZELL_PANES_SIDE;*x1=(float)(w-ZELL_PANES_SIDE);
+    if(*x1<*x0)*x1=*x0;
+}
 static void pn_stand(zell_scene *s){
     s->mode=ZELL_MODE_WALK;s->running=false;s->run_charge=0;s->run_bump=0;s->run_blocked=false;
     s->step=0;s->step_ticks=0;s->desktop_launch=false;
 }
-void zell_panes_enter(zell_scene *s,int room){
-    float x0,x1,y0,y1;
-    if(!zell_panes_count(room))return;
-    s->room=room;pn_stand(s);
-    pn_bounds(s,&x0,&x1,&y0,&y1);
+static void pn_place(zell_scene *s){
+    float x0,x1;
+    pn_bounds(s,&x0,&x1);
     /* Just inside, beside the line he came in by, facing into the room. */
-    if(zell_panes_exit_side(room)>0){s->x=x1-48.f;s->direction=2;}
+    if(zell_panes_exit_side(s->room)>0){s->x=x1-48.f;s->direction=2;}
     else {s->x=x0+48.f;s->direction=3;}
     if(s->x<x0)s->x=x0;
     if(s->x>x1)s->x=x1;
-    s->y=y0+(float)ZELL_PANES_EXIT_H*.5f;
-    if(s->y>y1)s->y=y1;
+    s->y=(float)ZELL_PANES_FEET_Y;
+}
+void zell_panes_enter(zell_scene *s,int room){
+    if(!zell_panes_count(room))return;
+    s->room=room;pn_stand(s);
+    /* He walked in: the keys are his. */
+    pn.keys_pane=false;pn.confirm_room=0;pn.entering=true;
+    pn_place(s);
 }
 void zell_panes_leave(zell_scene *s){
     int side=zell_panes_exit_side(s->room);
@@ -81,52 +126,106 @@ void zell_panes_leave(zell_scene *s){
     s->direction=side>0?3:2;
 }
 int zell_panes_tick(zell_scene *s,const zell_controls *c){
-    float x0,x1,y0,y1,dx=(float)c->move_x,dy=(float)c->move_y,d=sqrtf(dx*dx+dy*dy);
+    float x0,x1,dx=pn.keys_pane?0.f:(float)c->move_x,dy=pn.keys_pane?0.f:(float)c->move_y;
     int side=zell_panes_exit_side(s->room);
     s->mode=ZELL_MODE_WALK;s->running=false;s->run_charge=0;s->run_bump=0;s->run_blocked=false;
-    pn_bounds(s,&x0,&x1,&y0,&y1);
-    if(d>0){
+    if(dx!=0.f)pn.entering=false;
+    if(pn.entering){int direction=s->direction;pn_place(s);if(dy!=0.f)s->direction=direction;}
+    pn_bounds(s,&x0,&x1);
+    /* Along the walkway only: up and down turn him. */
+    if(dx!=0.f){
         float speed=ZELL_WALK_SPEED*zell_desktop_speed_factor(s);
-        s->direction=dx<0?2:dx>0?3:dy<0?1:0;
-        s->x+=dx/d*speed;s->y+=dy/d*speed;
+        s->direction=dx<0?2:3;
+        s->x+=dx>0?speed:-speed;
         s->step_ticks++;s->step=(s->step_ticks/7)%2;
-    }else{s->step=0;s->step_ticks=0;}
+    }else{
+        if(dy!=0.f)s->direction=dy<0?1:0;
+        s->step=0;s->step_ticks=0;
+    }
     if(s->x<x0)s->x=x0;
     if(s->x>x1)s->x=x1;
-    if(s->y<y0)s->y=y0;
-    if(s->y>y1)s->y=y1;
-    /* Out by walking into the line: at the side, beside it, going that way. */
-    if(s->y<y0+(float)ZELL_PANES_EXIT_H&&((side>0&&dx>0&&s->x>=x1)||(side<0&&dx<0&&s->x<=x0)))zell_panes_leave(s);
+    s->y=(float)ZELL_PANES_FEET_Y;
+    /* Out by walking into the line at the walkway's end. */
+    if((side>0&&dx>0&&s->x>=x1)||(side<0&&dx<0&&s->x<=x0))zell_panes_leave(s);
     return 1;
 }
 void zell_panes_cells(int width,int height,int *cols,int *rows){
-    int c=width/8,r=height/16;
+    int c=width/8,r=(height-ZELL_PANES_CELLS_Y)/16;
     if(c<20)c=20;
     if(c>PN_MAX_W/8)c=PN_MAX_W/8;
     if(r<8)r=8;
     if(r>PN_MAX_H/16)r=PN_MAX_H/16;
     *cols=c;*rows=r;
 }
-/* Cells are drawn 1:1 from the top left. Only a pane bigger than the
- * largest frame stretches it to fit. */
-static void pn_frame_rect(const zell_scene *s,zell_rect *r){
-    int cols,rows,w=s->width>0?s->width:1,h=s->height>0?s->height:1;
-    zell_panes_cells(w,h,&cols,&rows);
-    if(w>PN_MAX_W||h>PN_MAX_H)*r=(zell_rect){0,0,w,h};
-    else *r=(zell_rect){0,0,cols*8,rows*16};
+/* The helper's split: panes as even as can be, wider ones first, one
+ * column of line between neighbours. */
+static int pn_width(int cols,int count,int index){
+    int room=cols-(count-1);
+    return room/count+(index<room%count);
 }
-int zell_panes_column(const zell_scene *s,int x){
-    int cols,rows;zell_rect r;
-    pn_frame_rect(s,&r);
+static int pn_left(int cols,int count,int index){
+    int x=0;
+    for(int i=0;i<index;i++)x+=pn_width(cols,count,i)+1;
+    return x;
+}
+void zell_panes_pane_rect(const zell_scene *s,int index,zell_rect *r){
+    int count=zell_panes_count(s->room),slot=pn_slot(s->room),cols,rows;
+    *r=(zell_rect){0};
+    if(index<0||index>=count)return;
     zell_panes_cells(s->width>0?s->width:1,s->height>0?s->height:1,&cols,&rows);
-    if(x<r.x||r.w<1)return -1;
-    int column=(int)((int64_t)(x-r.x)*cols/r.w);
-    return column<cols?column:cols-1;
+    int zoom=pn.zoom[slot];
+    if(zoom>=0){
+        if(index==zoom)*r=(zell_rect){0,ZELL_PANES_CELLS_Y,cols*8,rows*16};
+        return;
+    }
+    *r=(zell_rect){pn_left(cols,count,index)*8,ZELL_PANES_CELLS_Y,pn_width(cols,count,index)*8,rows*16};
 }
-static void pn_send(const char *text,size_t n){
-    if(n==0||pn.queued+n>=sizeof pn.queue)return;
+void zell_panes_chrome_rect(const zell_scene *s,int index,zell_rect *r){
+    zell_panes_pane_rect(s,index,r);
+    if(r->w){r->y=ZELL_PANES_WALK_H;r->h=ZELL_PANES_CHROME_H;}
+}
+/* Right-aligned in the title bar: Zoom, then Restart. Both go when the bar
+ * is too narrow for them and a title. */
+void zell_panes_chrome_button(const zell_scene *s,int index,int button,zell_rect *r){
+    zell_rect bar;zell_panes_chrome_rect(s,index,&bar);
+    *r=(zell_rect){0};
+    if(!bar.w||bar.w<68+60+12+56||button<0||button>1)return;
+    int restart_x=bar.x+bar.w-4-68;
+    *r=button?(zell_rect){restart_x,bar.y+1,68,bar.h-2}:(zell_rect){restart_x-4-60,bar.y+1,60,bar.h-2};
+}
+int zell_panes_pane_at(const zell_scene *s,int x){
+    int count=zell_panes_count(s->room),slot=pn_slot(s->room),cols,rows;
+    if(!count||x<0)return -1;
+    if(pn.zoom[slot]>=0)return pn.zoom[slot];
+    zell_panes_cells(s->width>0?s->width:1,s->height>0?s->height:1,&cols,&rows);
+    for(int i=0;i<count-1;i++)if(x<(pn_left(cols,count,i)+pn_width(cols,count,i)+1)*8)return i;
+    return count-1;
+}
+/* Left to right from 12 pixels into the pane's part of the walkway (104
+ * when the way back is at its left, so Kilix does not come in standing on
+ * one), 6 apart; one that would pass 8 pixels short of its end is not
+ * shown, nor any after it. */
+void zell_panes_button_rect(const zell_scene *s,int index,int agent,zell_rect *r){
+    zell_rect pane;zell_panes_pane_rect(s,index,&pane);
+    *r=(zell_rect){0};
+    if(!pane.w||agent<0||agent>=pn.agent_count)return;
+    int x=pane.x+(pane.x==0&&zell_panes_exit_side(s->room)<0?104:12);
+    for(int i=0;i<=agent;i++){
+        int w=(int)strlen(pn.agents[i].label)*8+16;
+        if(x+w>pane.x+pane.w-8)return;
+        if(i==agent){*r=(zell_rect){x,ZELL_PANES_BUTTON_Y,w,ZELL_PANES_BUTTON_H};return;}
+        x+=w+6;
+    }
+}
+static bool pn_inside(zell_rect r,int x,int y){return r.w>0&&x>=r.x&&x<r.x+r.w&&y>=r.y&&y<r.y+r.h;}
+static bool pn_send(const char *text,size_t n){
+    if(n==0||pn.queued+n>=sizeof pn.queue)return false;
     memcpy(pn.queue+pn.queued,text,n);pn.queued+=n;pn.queue[pn.queued]=0;
+    return true;
 }
+/* One formatted line; ok says whether it was queued. Zell changes what
+ * it shows only when the helper will be told. */
+#define pn_sendf(ok,...) do{char pn_l[64];int pn_n=snprintf(pn_l,sizeof pn_l,__VA_ARGS__);(ok)=pn_n>0&&(size_t)pn_n<sizeof pn_l&&pn_send(pn_l,(size_t)pn_n);}while(0)
 const char *zell_panes_pending(void){pn.queue[pn.queued<sizeof pn.queue?pn.queued:sizeof pn.queue-1]=0;return pn.queue;}
 void zell_panes_key(const unsigned char *bytes,size_t count){
     static const char hex[]="0123456789abcdef";
@@ -139,14 +238,58 @@ void zell_panes_key(const unsigned char *bytes,size_t count){
     line[at++]='\n';
     pn_send(line,at);
 }
+/* Pane index gets the keys, unless the helper cannot be told. */
+static void pn_take(const zell_scene *s,int index){
+    int slot=pn_slot(s->room);
+    bool ok=true;
+    if(pn.focus[slot]!=index){pn_sendf(ok,"F %d\n",index);if(!ok)return;pn.focus[slot]=index;}
+    pn.keys_pane=true;
+}
+static void pn_start_agent(const zell_scene *s,int index,int agent){
+    bool ok;
+    pn_sendf(ok,"A %d %s\n",index,pn.agents[agent].id);
+    if(ok)pn_take(s,index);
+}
+bool zell_panes_press(zell_scene *s){
+    int count=zell_panes_count(s->room);
+    if(!count||pn.keys_pane)return false;
+    for(int index=0;index<count;index++)for(int agent=0;agent<pn.agent_count;agent++){
+        zell_rect b;zell_panes_button_rect(s,index,agent,&b);
+        if(b.w&&s->x>=(float)b.x&&s->x<(float)(b.x+b.w)){pn_start_agent(s,index,agent);return true;}
+    }
+    return false;
+}
 bool zell_panes_click(zell_scene *s){
-    char line[32];
     if(!ZELL_ROOM_IS_PANES(s->room)||!s->mouse_click||!s->mouse_valid)return false;
     s->mouse_click=false;
-    int column=zell_panes_column(s,s->mouse_x);
-    if(column<0)return true;
-    int n=snprintf(line,sizeof line,"C %d\n",column);
-    if(n>0&&(size_t)n<sizeof line)pn_send(line,(size_t)n);
+    int slot=pn_slot(s->room),x=s->mouse_x,y=s->mouse_y,count=zell_panes_count(s->room);
+    if(y<ZELL_PANES_WALK_H){
+        for(int index=0;index<count;index++)for(int agent=0;agent<pn.agent_count;agent++){
+            zell_rect b;zell_panes_button_rect(s,index,agent,&b);
+            if(pn_inside(b,x,y)){pn_start_agent(s,index,agent);return true;}
+        }
+        pn.keys_pane=false;
+        return true;
+    }
+    int index=zell_panes_pane_at(s,x);
+    if(index<0)return true;
+    if(y<ZELL_PANES_CELLS_Y){
+        zell_rect zoom,restart;
+        zell_panes_chrome_button(s,index,0,&zoom);
+        zell_panes_chrome_button(s,index,1,&restart);
+        bool ok=true;
+        if(pn_inside(zoom,x,y)){
+            int zoomed=pn.zoom[slot]==index?-1:index;
+            pn_sendf(ok,"Z %d\n",zoomed);
+            if(ok)pn.zoom[slot]=zoomed;
+        }else if(pn_inside(restart,x,y)){
+            /* Once arms it; again within 3 seconds restarts the pane. */
+            if(zell_panes_confirming(s->room,index)){pn_sendf(ok,"X %d\n",index);if(ok)pn.confirm_room=0;}
+            else {pn.confirm_room=s->room;pn.confirm_pane=index;pn.confirm_until=zell_notice_clock_ms()+PN_CONFIRM_MS;}
+        }
+        if(!ok)return true;
+    }
+    pn_take(s,index);
     return true;
 }
 static void pn_close_fds(void){
@@ -160,6 +303,47 @@ static void pn_fail(const char *text){
     while(text[n]&&n+1<sizeof pn.error){pn.error[n]=text[n];n++;}
     pn.error[n]=0;
     pn.failed=true;
+}
+/* Printable ASCII only, at most capacity-1 bytes; false if none. */
+static bool pn_copy_text(char *out,size_t capacity,const char *text){
+    size_t n=0;
+    for(;text[n]&&n+1<capacity;n++){if(text[n]<32||text[n]>126)return false;out[n]=text[n];}
+    if(text[n])return false;
+    out[n]=0;
+    return n>0;
+}
+/* One line from the helper: E failed, G an agent it can start, T what a
+ * pane runs, N a notice about a pane. Anything else is ignored. */
+static void pn_line(const char *line){
+    if(line[0]=='E'&&line[1]==' '){pn_fail(line+2);return;}
+    if(line[0]=='G'&&line[1]==' '){
+        const char *id=line+2,*space=strchr(id,' ');
+        size_t n=space?(size_t)(space-id):0;
+        pn_agent agent;
+        if(!n||n>=sizeof agent.id||pn.agent_count>=ZELL_PANES_AGENTS)return;
+        for(size_t i=0;i<n;i++)if(!((id[i]>='a'&&id[i]<='z')||(id[i]>='0'&&id[i]<='9')||id[i]=='-'||id[i]=='_'))return;
+        memcpy(agent.id,id,n);agent.id[n]=0;
+        if(!pn_copy_text(agent.label,sizeof agent.label,space+1))return;
+        for(int i=0;i<pn.agent_count;i++)if(!strcmp(pn.agents[i].id,agent.id))return;
+        pn.agents[pn.agent_count++]=agent;
+        return;
+    }
+    if((line[0]=='T'||line[0]=='N')&&line[1]==' '){
+        int room=0,index=-1,used=0;
+        if(sscanf(line+2,"%d %d %n",&room,&index,&used)<2||used<=0)return;
+        if(!ZELL_ROOM_IS_PANES(room)||index<0||index>=zell_panes_count(room))return;
+        if(line[0]=='T'){
+            char title[32];
+            if(pn_copy_text(title,sizeof title,line+2+used))memcpy(pn.title[pn_slot(room)][index],title,sizeof title);
+        }else if(pn_copy_text(pn.notice,sizeof pn.notice,line+2+used)){
+            pn.notice_room=room;pn.notice_pane=index;pn.notice_until=zell_notice_clock_ms()+PN_NOTICE_MS;
+        }
+    }
+}
+/* What the helper said goes with it: titles, notices and its agents. */
+static void pn_forget_helper(void){
+    memset(pn.title,0,sizeof pn.title);
+    pn.agent_count=0;pn.notice[0]=0;
 }
 static bool pn_start(void){
     char script[4096],fd_text[24];
@@ -208,6 +392,7 @@ static bool pn_start(void){
     fcntl(pn.in_fd,F_SETFD,FD_CLOEXEC);
     fcntl(pn.out_fd,F_SETFD,FD_CLOEXEC);
     pn.seq=0;pn.frame_w=pn.frame_h=pn.frame_room=0;pn.line_n=0;
+    pn_forget_helper();
     /* A new helper has no rooms yet: the next pump sends the shown one. */
     pn.sent_room=-1;pn.sent_cols=pn.sent_rows=0;
     return true;
@@ -234,7 +419,7 @@ static void pn_read(void){
         for(ssize_t i=0;i<count;i++){
             if(bytes[i]!='\n'){if(pn.line_n+1<sizeof pn.line)pn.line[pn.line_n++]=bytes[i];continue;}
             pn.line[pn.line_n]=0;
-            if(pn.line[0]=='E'&&pn.line[1]==' ')pn_fail(pn.line+2);
+            pn_line(pn.line);
             pn.line_n=0;
         }
     }
@@ -271,7 +456,15 @@ static void pn_reap(void){
     if(waitpid(pn.pid,&status,WNOHANG)!=pn.pid)return;
     /* Its last picture goes too, so the room says what happened. */
     pn.pid=0;pn_close_fds();pn.queued=0;pn.frame_room=0;pn.seq=0;
+    pn_forget_helper();
     if(!pn.failed)pn_fail("The panes stopped. Walk out and in again to start new shells.");
+}
+/* The line that shows a room (0 hides), with the focus and zoom Zell keeps
+ * for it, which a new helper does not know. */
+int zell_panes_room_line(int room,int cols,int rows,char *out,size_t capacity){
+    int slot=pn_slot(room);
+    if(slot<0)return snprintf(out,capacity,"H\n");
+    return snprintf(out,capacity,"S %d %d %d\nF %d\nZ %d\n",room,cols,rows,pn.focus[slot],pn.zoom[slot]);
 }
 void zell_panes_pump(zell_scene *s){
     bool shown=ZELL_ROOM_IS_PANES(s->room);
@@ -283,7 +476,8 @@ void zell_panes_pump(zell_scene *s){
     int room=shown?s->room:0,cols=0,rows=0;
     if(shown)zell_panes_cells(s->width,s->height,&cols,&rows);
     if(room!=pn.sent_room||cols!=pn.sent_cols||rows!=pn.sent_rows){
-        char line[48];int n=room?snprintf(line,sizeof line,"S %d %d %d\n",room,cols,rows):snprintf(line,sizeof line,"H\n");
+        char line[80];
+        int n=zell_panes_room_line(room,cols,rows,line,sizeof line);
         /* After the lines already queued, which may be half written and
          * belong to the room he was in; until it fits it is tried again. */
         if(n>0&&(size_t)n<sizeof line&&pn.queued+(size_t)n<sizeof pn.queue){
@@ -328,12 +522,13 @@ void zell_panes_shutdown(void){
     free(pn.shown);free(pn.scratch);pn.shown=pn.scratch=NULL;pn.cap=0;
 }
 /* Tests hand the copy a map of their own (from mmap, PN_MAP_BYTES long, so
- * the reset can unmap it) and fail the helper without starting one. */
+ * the reset can unmap it), feed helper lines and fail the helper without
+ * starting one. */
 void zell_panes_test_copy(void *map){if(!pn.map)pn.map=map;pn_copy();}
+void zell_panes_test_line(const char *line){pn_line(line);}
 void zell_panes_test_fail(const char *text){pn_fail(text);pn.frame_room=0;}
 size_t zell_panes_map_bytes(void){return PN_MAP_BYTES;}
 void zell_panes_test_reset(void){
     zell_panes_shutdown();
-    memset(&pn,0,sizeof pn);
-    pn.in_fd=pn.out_fd=pn.frame_fd=-1;
+    pn=(pn_state)PN_START;
 }

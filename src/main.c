@@ -851,22 +851,28 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
         (kittykb_input_key_down(&keyboard.input, KITTYKB_KEY_LEFT_SHIFT) ||
          kittykb_input_key_down(&keyboard.input, KITTYKB_KEY_RIGHT_SHIFT));
 
-    /* In a pane room the plain arrow keys walk Kilix and every other key,
-     * modified arrows included, goes to the pane last clicked. */
+    /* In a pane room the keys are a pane's after a click on it, every key
+     * of them; after a click on the walkway they are Kilix's: the arrows
+     * walk him and Enter or Space presses the button he stands on. */
     if(scene->desktop&&ZELL_ROOM_IS_PANES(scene->room)){
-        static const uint32_t held_mods[]={KITTYKB_KEY_LEFT_SHIFT,KITTYKB_KEY_RIGHT_SHIFT,KITTYKB_KEY_LEFT_CONTROL,KITTYKB_KEY_RIGHT_CONTROL,
-                                           KITTYKB_KEY_LEFT_ALT,KITTYKB_KEY_RIGHT_ALT,KITTYKB_KEY_LEFT_SUPER,KITTYKB_KEY_RIGHT_SUPER};
-        unsigned held=0;
-        for(size_t i=0;i<sizeof held_mods/sizeof held_mods[0];i++)if(kittykb_input_key_down(&keyboard.input,held_mods[i]))held|=1u;
         controls->run=false;
         controls->move_x=controls->move_y=0;
-        if(zell_panes_walks(true,held)){
+        if(!zell_panes_keys_to_pane()){
             controls->move_x=(kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_RIGHT)?1:0)-(kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_LEFT)?1:0);
             controls->move_y=(kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_DOWN)?1:0)-(kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_UP)?1:0);
         }
+        /* The key that pressed a button is not the pane's until it is let go:
+         * its repeats would follow the agent's command in. */
+        static uint32_t pressed_with;
         while(kittykb_input_next(&keyboard.input,&event)){
-            bool arrow=event.key==KITTYKB_KEY_UP||event.key==KITTYKB_KEY_DOWN||event.key==KITTYKB_KEY_LEFT||event.key==KITTYKB_KEY_RIGHT;
-            if(zell_panes_walks(arrow,event.modifiers))continue;
+            if(pressed_with&&event.key==pressed_with&&event.action!=KITTYKB_ACTION_PRESS){
+                if(event.action==KITTYKB_ACTION_RELEASE)pressed_with=0;
+                continue;
+            }
+            bool press=event.action==KITTYKB_ACTION_PRESS&&(event.key==KITTYKB_KEY_ENTER||event.key==KITTYKB_KEY_KP_ENTER||event.key==' ');
+            int route=zell_panes_route(press);
+            if(route==ZELL_PANES_KEY_PRESS){pressed_with=zell_panes_press(scene)?event.key:0;continue;}
+            if(route!=ZELL_PANES_KEY_PANE)continue;
             unsigned char bytes[TERMINAL_KEY_BYTES];size_t length=terminal_key_bytes(&event,bytes);
             if(length)zell_panes_key(bytes,length);
         }
@@ -955,6 +961,11 @@ static bool present_scene(zell_scene *scene, sr_canvas *canvas, uint8_t **rgba,
     int resized_w = 0;
     int resized_h = 0;
 
+    /* A pane room is as big as the pane; elsewhere the picture keeps its
+     * cap. The session measures against these on every check. */
+    if (scene->desktop)
+        zell_panes_frame_limits(scene->room, &framebuffer.options.max_width,
+                                &framebuffer.options.max_height);
     if (kittyfb_check_resize(&framebuffer, &resized_w, &resized_h)) {
         width = resized_w;
         height = resized_h;

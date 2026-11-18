@@ -213,9 +213,27 @@ int main(int argc, char **argv)
         /* Up the strip beside the left screens, then in the opening above them. */
         scene.x=150.f;scene.y=600.f;scene.direction=ZELL_DIR_UP;failed+=shot(&scene,&canvas,argv[1],"command-strip");
         scene.x=80.f;scene.y=278.f;scene.direction=ZELL_DIR_LEFT;failed+=shot(&scene,&canvas,argv[1],"command-opening");
-        /* The two pane rooms before their helper has painted anything. */
+        /* The two pane rooms before their helper has painted anything, with
+         * two agents' buttons: Kilix has the keys on the way in. */
+        zell_panes_test_line("G codex Codex");zell_panes_test_line("G grok Grok");
         zell_panes_enter(&scene,ZELL_ROOM_PANES_LEFT);failed+=shot(&scene,&canvas,argv[1],"panes-left");
         zell_panes_enter(&scene,ZELL_ROOM_PANES_RIGHT);failed+=shot(&scene,&canvas,argv[1],"panes-right");
+        /* Pane 2 clicked, so it has the keys and says what it runs; then
+         * pane 3 zoomed over the room. */
+        {
+            zell_rect pane,zoom;
+            zell_panes_test_line("T 10 1 vim");
+            zell_panes_pane_rect(&scene,1,&pane);
+            scene.mouse_valid=true;scene.mouse_click=true;scene.mouse_x=pane.x+4;scene.mouse_y=pane.y+40;
+            zell_panes_click(&scene);failed+=shot(&scene,&canvas,argv[1],"panes-typing");
+            zell_panes_chrome_button(&scene,2,0,&zoom);
+            zell_panes_pane_rect(&scene,2,&pane);
+            scene.mouse_click=true;scene.mouse_x=zoom.w?zoom.x+2:pane.x+4;scene.mouse_y=zoom.w?zoom.y+2:pane.y+40;
+            zell_panes_click(&scene);
+            if(zoom.w)failed+=shot(&scene,&canvas,argv[1],"panes-zoom");
+            scene.mouse_valid=false;
+            zell_panes_test_reset();
+        }
         scene.room=1;scene.direction=ZELL_DIR_RIGHT;
         scene.x=ZELL_WORLD_W*.50f;scene.y=ZELL_WORLD_H*.55f;
         scene.room=0;scene.hp=57;scene.os_health=70;scene.dirty_files=13;scene.update_age_days=3;

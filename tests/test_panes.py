@@ -1,8 +1,10 @@
-"""The pane rooms' helper: layout, protocol, respawn, the map, and a run
-through its real pipes and map with a stand-in for the Neuronte display."""
+"""The pane rooms' helper: layout and zoom, protocol, agents and titles,
+respawn, the map, and a run through its real pipes and map with a stand-in
+for the Neuronte display."""
 import mmap
 import os
 from pathlib import Path
+import pty
 import select
 import signal
 import struct
@@ -16,6 +18,7 @@ import unittest
 TOOLS = Path(__file__).resolve().parents[1] / 'tools'
 sys.path.insert(0, str(TOOLS))
 import zell_panes as panes
+import zell_providers
 
 FG, BG = 0xD0D0D0, 0x101418
 
@@ -37,6 +40,10 @@ class Pane:
         self.command, self.cols, self.rows = command, cols, rows
         self.sent, self.closed, self.exit_status, self.fd = [], False, None, 1000 + len(Pane.made)
         self.letter, self.cursor = ord('A') + len(Pane.made) % 26, (0, 0)
+        # What front() reports: by default the shell itself, at its prompt.
+        self.pid = 5000 + len(Pane.made)
+        self.group, self.title = self.pid, 'sh'
+
         self.terminal = Terminal(self)
         self.resizes, self.pending, self.output, self.explode, self.ended = [], bytearray(), False, None, 0
         Pane.made.append(self)
@@ -68,6 +75,11 @@ class Pane:
 
     def close(self):
         self.closed = True
+
+
+def front(pane):
+    """foreground() over the fake panes."""
+    return (pane.group, pane.title) if pane.fd is not None else (None, None)
 
 
 def ready(readable, writable, _errors, timeout):
@@ -135,24 +147,16 @@ class LayoutTests(unittest.TestCase):
                 self.assertEqual(widths, sorted(widths, reverse=True))
         self.assertEqual(panes.column_widths(240, 4), [60, 59, 59, 59])
 
-    def test_every_column_is_in_one_pane_and_a_separator_in_the_left_one(self):
-        for cols in (20, 37, 191, 240):
-            for count in (2, 4):
-                x, owner = 0, []
-                for index, width in enumerate(panes.column_widths(cols, count)):
-                    owner += [index] * width + ([index] if index < count - 1 else [])
-                    x += width + 1
-                self.assertEqual(len(owner), cols)
-                self.assertEqual([panes.pane_at(cols, count, column) for column in range(cols)], owner)
-        self.assertEqual(panes.pane_at(20, 2, 10), 0)
-        self.assertEqual(panes.pane_at(20, 2, 11), 1)
+        # The split Zell draws the title bars over (tests/test_desktop.c).
+        self.assertEqual(panes.column_widths(120, 2), [60, 59])
+        self.assertEqual(panes.column_widths(238, 4), [59, 59, 59, 58])
 
     def test_sizes_the_map_and_renderer_can_hold(self):
         self.assertTrue(panes.valid_size(20, 8, 2))
-        self.assertTrue(panes.valid_size(240, 120, 4))
-        for cols, rows in ((19, 8), (241, 8), (20, 7), (20, 121)):
+        self.assertTrue(panes.valid_size(480, 135, 4))
+        for cols, rows in ((19, 8), (481, 8), (20, 7), (20, 136)):
             self.assertFalse(panes.valid_size(cols, rows, 2))
-        self.assertEqual(panes.MAP_BYTES, 64 + 1920 * 1920 * 4)
+        self.assertEqual(panes.MAP_BYTES, 64 + 3840 * 2160 * 4)
 
     def test_a_room_is_one_row_of_panes_with_no_titles(self):
         Pane.made.clear()
@@ -173,6 +177,28 @@ class LayoutTests(unittest.TestCase):
             workspace.resize(60, 20)
             self.assertEqual(sum(pane.cols for pane in workspace.current['panes']) + count - 1, 60)
             self.assertTrue(all(pane.rows == 20 for pane in workspace.current['panes']))
+
+    def test_a_zoomed_pane_has_the_room_and_the_others_keep_their_size(self):
+        Pane.made.clear()
+        workspace = panes.room_workspace(DISPLAY, 4, 23, 3, ['/bin/sh'])
+        sizes = [(pane.cols, pane.rows) for pane in workspace.current['panes']]
+        workspace.zoom = 2
+        self.assertEqual(workspace.layout(), [None, None, (0, 0, 23, 3), None])
+        third = workspace.current['panes'][2]
+        self.assertEqual((third.cols, third.rows), (23, 3))
+        self.assertEqual([(p.cols, p.rows) for i, p in enumerate(workspace.current['panes']) if i != 2],
+                         [size for i, size in enumerate(sizes) if i != 2])
+        third.cursor = (4, 1)
+        workspace.focus = 2
+        records = panes.room_grid(DISPLAY, workspace)
+        # Every cell is the zoomed pane's: no other pane and no lines.
+        self.assertEqual({record[0] for record in records}, {third.letter})
+        self.assertEqual([at for at, record in enumerate(records) if record[3] & 16], [23 + 4])
+        workspace.resize(30, 5)
+        self.assertEqual((third.cols, third.rows), (30, 5))
+        workspace.zoom = None
+        workspace.layout()
+        self.assertEqual([p.cols for p in workspace.current['panes']], panes.column_widths(30, 4))
 
     def test_the_grid_is_the_panes_and_the_lines_between_them(self):
         Pane.made.clear()
@@ -201,7 +227,9 @@ class LayoutTests(unittest.TestCase):
 class ProtocolTests(unittest.TestCase):
     def setUp(self):
         Pane.made.clear()
-        self.rooms = panes.Rooms(DISPLAY, ['/bin/sh'], wait=ready)
+        self.said = []
+        self.rooms = panes.Rooms(DISPLAY, ['/bin/sh'], wait=ready, front=front, agents=[('codex', 'Codex')],
+                                 say=self.said.append, clock=lambda: 50.0)
 
     def test_a_room_starts_once_and_keeps_its_shells_while_hidden(self):
         self.rooms.line('S 9 40 20')
@@ -230,38 +258,41 @@ class ProtocolTests(unittest.TestCase):
         self.assertTrue(first.closed and self.rooms.rooms == {})
 
     def test_bad_lines_change_nothing(self):
-        for text in ('S 11 40 20', 'S 0 40 20', 'S 9 19 20', 'S 9 241 20', 'S 9 40 7', 'S 9 40 121',
-                     'S 9 40', 'S nine 40 20', 'S 9 40 20 1', 'C 3', 'Kzz', 'K6c', 'X', '', 'Q9'):
+        for text in ('S 11 40 20', 'S 0 40 20', 'S 9 19 20', 'S 9 481 20', 'S 9 40 7', 'S 9 40 136',
+                     'S 9 40', 'S nine 40 20', 'S 9 40 20 1', 'C 3', 'Kzz', 'K6c', 'X', '', 'Q9',
+                     'F 0', 'Z 0', 'Z -1', 'X 0', 'A 0 codex', 'F', 'Z'):
             self.rooms.line(text)
         self.assertEqual((self.rooms.rooms, self.rooms.shown, self.rooms.dirty, self.rooms.quit), ({}, None, False, False))
+        self.assertEqual(self.said, [])
+        self.rooms.line('S 10 40 20')
+        room, self.rooms.dirty = self.rooms.rooms[10], False
+        for text in ('F 4', 'F -1', 'F x', 'F 1 2', 'Z 4', 'Z -2', 'Z x', 'X 4', 'X -1', 'X x',
+                     'A 4 codex', 'A 1 nosuch', 'A 1', 'A x codex', 'C 30'):
+            self.rooms.line(text)
+        self.assertEqual((room.focus, room.zoom, self.rooms.dirty, self.said), (0, None, False, []))
+        self.assertFalse(any(p.closed or p.sent for p in room.panes()))
 
-    def test_keys_go_to_the_clicked_pane_of_the_shown_room_only(self):
+    def test_keys_go_to_the_focused_pane_of_the_shown_room_only(self):
         self.rooms.line('S 10 40 20')
         room = self.rooms.rooms[10]
         first, second, third, fourth = room.current['panes']
         self.rooms.line('K6c730d')
         self.assertEqual(first.sent, [b'ls\r'])
-        widths = panes.column_widths(40, 4)
-        self.rooms.line('C %d' % (widths[0] + 1 + widths[1] + 1))
-        self.assertEqual(room.focus, 2)
+        self.rooms.dirty = False
+        self.rooms.line('F 2')
+        self.assertEqual((room.focus, self.rooms.dirty), (2, True))
         self.rooms.line('K71')
         self.assertEqual(third.sent, [b'q'])
-        # Forty columns are panes of 10, 9, 9 and 9 with lines at 10, 20
-        # and 30; a line belongs to the pane on its left.
-        self.assertEqual(widths, [10, 9, 9, 9])
-        for column, pane in ((0, 0), (9, 0), (10, 0), (11, 1), (19, 1), (20, 1), (21, 2), (30, 2), (31, 3), (39, 3), (21, 2)):
-            self.rooms.line('C %d' % column)
-            self.assertEqual(room.focus, pane, column)
-        for text in ('C -1', 'C 40', 'C x'):
-            self.rooms.line(text)
-            self.assertEqual(room.focus, 2)
+        for index in (3, 1, 0, 2):
+            self.rooms.line('F %d' % index)
+            self.assertEqual(room.focus, index)
         self.rooms.line('Knothex')
         self.rooms.line('K')
         self.assertEqual(third.sent, [b'q'])
         # Hidden, nothing is typed into it.
         self.rooms.line('H')
         self.rooms.line('K71')
-        self.rooms.line('C 0')
+        self.rooms.line('F 0')
         self.assertEqual([p.sent for p in room.current['panes']], [[b'ls\r'], [], [b'q'], []])
         self.assertEqual(room.focus, 2)
         # The other room has its own focus.
@@ -270,6 +301,194 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(self.rooms.rooms[9].current['panes'][0].sent, [b'y'])
         self.rooms.line('Q')
         self.assertTrue(self.rooms.quit)
+
+    def test_zoom_shows_one_pane_and_gives_it_the_focus(self):
+        self.rooms.line('S 10 40 20')
+        room = self.rooms.rooms[10]
+        self.rooms.dirty = False
+        self.rooms.line('Z 2')
+        self.assertEqual((room.zoom, room.focus, self.rooms.dirty), (2, 2, True))
+        third = room.current['panes'][2]
+        self.assertEqual((third.cols, third.rows), (40, 20))
+        self.rooms.line('K71')
+        self.assertEqual(third.sent, [b'q'])
+        # Resized while zoomed, the zoomed pane follows.
+        self.rooms.line('S 10 50 22')
+        self.assertEqual((third.cols, third.rows), (50, 22))
+        self.rooms.dirty = False
+        self.rooms.line('Z -1')
+        self.assertEqual((room.zoom, room.focus, self.rooms.dirty), (None, 2, True))
+        self.assertEqual([p.cols for p in room.current['panes']], panes.column_widths(50, 4))
+        # A pane hidden by a zoom does not take the focus.
+        self.rooms.line('Z 1')
+        self.rooms.line('F 3')
+        self.assertEqual(room.focus, 1)
+        self.rooms.line('F 1')
+        self.assertEqual(room.focus, 1)
+        self.rooms.line('Z -1')
+        # Each room keeps its own.
+        self.rooms.line('Z 3')
+        self.rooms.line('S 9 40 20')
+        self.assertIsNone(self.rooms.rooms[9].zoom)
+        self.assertEqual(room.zoom, 3)
+
+    def test_restart_hangs_up_what_runs_in_front(self):
+        hung = []
+        self.rooms.hang_up = lambda group, sig: hung.append((group, sig))
+        self.rooms.line('S 10 40 20')
+        first, second = self.rooms.rooms[10].current['panes'][:2]
+        self.rooms.line('X 0')
+        self.assertEqual(hung, [])
+        second.group = second.pid + 3
+        self.rooms.line('X 1')
+        self.assertEqual(hung, [(second.pid + 3, signal.SIGHUP)])
+        self.assertTrue(second.closed)
+        # A group already gone does not stop the restart.
+        third = self.rooms.rooms[10].current['panes'][2]
+        third.group = 1
+
+        def gone(group, sig):
+            raise ProcessLookupError
+        self.rooms.hang_up = gone
+        self.rooms.line('X 2')
+        self.assertTrue(third.closed)
+
+    def test_a_clear_line_empties_a_real_prompt(self):
+        """CLEAR_LINE in a real interactive bash with the cursor mid-line."""
+        bash = '/bin/bash'
+        if not os.path.exists(bash):
+            self.skipTest('no bash')
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.execve(bash, [bash, '--norc', '--noprofile', '-i'], {'PS1': '$ ', 'TERM': 'xterm', 'PATH': '/usr/bin:/bin'})
+        output = bytearray()
+
+        def read_for(seconds):
+            end = time.monotonic() + seconds
+            while time.monotonic() < end:
+                if select.select([fd], [], [], 0.05)[0]:
+                    try:
+                        output.extend(os.read(fd, 4096))
+                    except OSError:
+                        return
+        try:
+            read_for(0.5)
+            os.write(fd, b'echo ab\x1b[D')
+            read_for(0.3)
+            os.write(fd, panes.CLEAR_LINE + b'echo MARK-$((6*7))\r')
+            read_for(1.0)
+        finally:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+            os.close(fd)
+        text = output.decode('utf-8', 'replace')
+        self.assertIn('MARK-42\r\n', text)
+        self.assertNotIn('MARK-42b', text)
+
+    def test_restart_puts_a_new_shell_in_the_pane(self):
+        self.rooms.line('S 10 40 20')
+        room = self.rooms.rooms[10]
+        old, other = room.current['panes'][1], room.current['panes'][0]
+        self.rooms.dirty = False
+        self.rooms.line('X 1')
+        fresh = room.current['panes'][1]
+        self.assertIsNot(fresh, old)
+        self.assertTrue(old.closed and not other.closed)
+        self.assertEqual((fresh.cols, fresh.rows, fresh.command, fresh.born), (old.cols, old.rows, ['/bin/sh'], 50.0))
+        self.assertIs(room.current['panes'][0], other)
+        self.assertTrue(self.rooms.dirty)
+
+    def test_an_agent_is_typed_at_an_idle_prompt_only(self):
+        self.assertEqual(panes.CLEAR_LINE, b'\x05\x15')
+        self.rooms.line('S 10 40 20')
+        room = self.rooms.rooms[10]
+        first, second, third, fourth = room.current['panes']
+        self.rooms.line('A 1 codex')
+        self.assertEqual(second.sent, [b'\x05\x15codex\r'])
+        self.assertEqual((first.sent, third.sent, self.said), ([], [], []))
+        # Something else is in front: nothing is typed, the pane says why.
+        third.group = third.pid + 7
+        self.rooms.line('A 2 codex')
+        self.assertEqual(third.sent, [])
+        self.assertEqual(self.said, ['N 10 2 ' + panes.BUSY])
+        # So does a pane whose shell has ended, or whose front is unknown.
+        fourth.fd = None
+        first.group = None
+        self.rooms.line('A 3 codex')
+        self.rooms.line('A 0 codex')
+        self.assertEqual(self.said[1:], ['N 10 3 ' + panes.BUSY, 'N 10 0 ' + panes.BUSY])
+        self.assertEqual(first.sent, [])
+        # A pane that will not take input loses it, and the helper goes on.
+        second.explode = 'send'
+        self.rooms.line('A 1 codex')
+        self.assertEqual(second.sent, [b'\x05\x15codex\r'])
+        second.explode = None
+        # A shell that has become another program (exec) is not a prompt.
+        second.name, second.title = 'sh', 'vim'
+        self.rooms.line('A 1 codex')
+        self.assertEqual(self.said[-1], 'N 10 1 ' + panes.BUSY)
+        second.title = 'sh'
+        self.rooms.line('A 1 codex')
+        self.assertEqual(second.sent, [b'\x05\x15codex\r'] * 2)
+        # Hidden, nothing is started.
+        self.rooms.line('H')
+        self.rooms.line('A 1 codex')
+        self.assertEqual(second.sent, [b'\x05\x15codex\r'] * 2)
+
+    def test_what_each_pane_runs_is_said_when_it_changes(self):
+        self.rooms.line('S 9 40 20')
+        self.rooms.line('S 10 40 20')
+        self.rooms.line('H')
+        self.rooms.poll(100.0)
+        self.assertEqual(sorted(self.said), sorted(['T 9 0 sh', 'T 9 1 sh', 'T 10 0 sh', 'T 10 1 sh', 'T 10 2 sh', 'T 10 3 sh']))
+        del self.said[:]
+        third = self.rooms.rooms[10].current['panes'][2]
+        third.title = 'vim'
+        self.rooms.poll(100.0 + panes.TITLE_SECONDS / 2)
+        self.assertEqual(self.said, [])
+        self.rooms.poll(100.0 + panes.TITLE_SECONDS)
+        self.assertEqual(self.said, ['T 10 2 vim'])
+        # An ended shell with no name of its own is a shell.
+        third.fd = None
+        self.rooms.poll(101.0 + panes.TITLE_SECONDS)
+        self.assertEqual(self.said[1:], ['T 10 2 shell'])
+
+    def test_titles_are_what_zell_can_show(self):
+        self.assertEqual(panes.title_text('vim'), 'vim')
+        self.assertEqual(panes.title_text(None), 'shell')
+        self.assertEqual(panes.title_text(''), 'shell')
+        self.assertEqual(panes.title_text(' \u00e9 b\t'), 'b')
+        self.assertEqual(panes.title_text('tmux: server'), 'tmux: server')
+        self.assertEqual(panes.title_text('x' * 40), 'x' * 31)
+
+    def test_agents_are_the_ones_on_path(self):
+        names = list(zell_providers.CLI_FILES)
+        self.assertGreaterEqual(len(names), 2)
+        found = panes.available_agents(which=lambda name: name == names[1])
+        self.assertEqual(found, [(names[1], zell_providers.LABELS[names[1]])])
+        self.assertEqual(panes.available_agents(which=lambda name: True),
+                         [(name, zell_providers.LABELS[name]) for name in names])
+        self.assertEqual(panes.available_agents(which=lambda name: None), [])
+
+    def test_the_front_of_a_real_terminal(self):
+        pid, fd = pty.fork()
+        if pid == 0:
+            time.sleep(5)
+            os._exit(0)
+        try:
+            pane = SimpleNamespace(fd=fd, pid=pid)
+            deadline = time.monotonic() + 3
+            while panes.foreground(pane)[0] != pid and time.monotonic() < deadline:
+                time.sleep(0.01)
+            group, name = panes.foreground(pane)
+            self.assertEqual(group, pid)
+            self.assertEqual(name, Path(f'/proc/{pid}/comm').read_text().strip())
+        finally:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+            os.close(fd)
+        self.assertEqual(panes.foreground(SimpleNamespace(fd=None, pid=1)), (None, None))
+        self.assertEqual(panes.foreground(SimpleNamespace(fd=fd, pid=1)), (None, None))
 
     def test_only_the_shown_room_asks_for_a_frame(self):
         self.rooms.line('S 9 40 20')
@@ -318,7 +537,7 @@ class ProtocolTests(unittest.TestCase):
 class FailureTests(unittest.TestCase):
     def setUp(self):
         Pane.made.clear()
-        self.rooms = panes.Rooms(DISPLAY, ['/bin/sh'], wait=ready)
+        self.rooms = panes.Rooms(DISPLAY, ['/bin/sh'], wait=ready, front=front)
         self.rooms.line('S 10 40 20')
         self.rooms.line('S 9 40 20')
         self.room = self.rooms.rooms[9]
@@ -383,7 +602,9 @@ class MapTests(unittest.TestCase):
             self.assertEqual((magic, version, width, height, sequence, room), (b'ZPNE', 1, 4, 3, expected, 10))
             self.assertEqual(shared[64:72], bytes([3, 2, 1, 255, 6, 5, 4, 255]))
         with self.assertRaises(ValueError):
-            panes.publish(shared, np.zeros((1, 1921, 3), dtype=np.uint8), 9)
+            panes.publish(shared, np.zeros((1, 3841, 3), dtype=np.uint8), 9)
+        with self.assertRaises(ValueError):
+            panes.publish(shared, np.zeros((2161, 1, 3), dtype=np.uint8), 9)
         self.assertEqual(struct.unpack_from('<I', shared, 16)[0], 4)
 
     def test_the_pixels_are_written_while_the_sequence_is_odd(self):
@@ -466,8 +687,18 @@ class HelperRunTests(unittest.TestCase):
     """tools/zell_panes.py as Zell runs it: fd in the environment, lines on
     stdin, "R"/"E" on stdout, frames in the map."""
 
-    def run_helper(self, lines, broken=False):
+    def run_helper(self, lines, broken=False, agents=(), not_runnable=()):
         folder = Path(self.temp.name)
+        # PATH is a folder with a command for each agent given, and files
+        # that are not commands for the rest.
+        commands = folder / 'bin'
+        commands.mkdir(exist_ok=True)
+        for name in agents:
+            (commands / name).write_text('#!/bin/sh\n')
+            (commands / name).chmod(0o755)
+        for name in not_runnable:
+            (commands / name).write_text('#!/bin/sh\n')
+            (commands / name).chmod(0o644)
         display = folder / 'neuronte_display.py'
         display.write_text(FAKE_DISPLAY)
         log = folder / 'log.jsonl'
@@ -479,7 +710,7 @@ class HelperRunTests(unittest.TestCase):
         env.update(ZELL_PANES_FD=str(fd), KILIX_ZELL_NEURONTE_DISPLAY=str(display), PANES_TEST_LOG=str(log),
                    KITTY_WINDOW_ID='77', HOME=str(folder), SHELL='/bin/true', PYTHONDONTWRITEBYTECODE='1',
                    WINDOWID='5', KITTY_PID='9', KITTY_LISTEN_ON='unix:@x', KITTY_PUBLIC_KEY='1:x',
-                   KITTY_PTY_BROKER_SESSION='s', KITTY_INSTALLATION_DIR='/opt/kilix')
+                   KITTY_PTY_BROKER_SESSION='s', KITTY_INSTALLATION_DIR='/opt/kilix', PATH=str(commands))
         if broken:
             env['PANES_TEST_BROKEN'] = '1'
         child = subprocess.Popen([sys.executable, str(TOOLS / 'zell_panes.py')], stdin=subprocess.PIPE,
@@ -504,8 +735,15 @@ class HelperRunTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
 
     def test_shows_a_room_and_types_into_it(self):
-        first, rest, code, header, rows = self.run_helper([('S 9 40 20', 0.4), ('K6869', 0.2), ('Q', 0.0)])
-        self.assertEqual((first, rest, code), (b'R\n', b'', 0))
+        names = list(zell_providers.CLI_FILES)
+        first, rest, code, header, rows = self.run_helper(
+            [('S 9 40 20', 0.4), ('K6869', 0.2), ('A 0 ' + names[0], 0.2), ('Q', 0.0)], agents=names)
+        self.assertEqual((first, code), (b'R\n', 0))
+        # The agents found, what each pane runs, and why the agent was not
+        # typed: these stand-in panes have no terminal to be at a prompt in.
+        self.assertEqual(rest.decode().splitlines(),
+                         ['G %s %s' % (name, zell_providers.LABELS[name]) for name in names] +
+                         ['T 9 0 shell', 'T 9 1 shell', 'N 9 0 ' + panes.BUSY])
         magic, version, width, height, sequence, room = header
         self.assertEqual((magic, version, width, height, room), (b'ZPNE', 1, 320, 320, 9))
         self.assertTrue(sequence and not sequence & 1)
@@ -533,6 +771,12 @@ class HelperRunTests(unittest.TestCase):
         first, rest, code, header, rows = self.run_helper([('S 9 40 20', 0.3), ('H', 0.1), ('K6869', 0.3), ('Q', 0.0)])
         self.assertEqual(sum(row['event'] == 'render' for row in rows), 1)
         self.assertNotIn({'event': 'send', 'data': 'hi'}, rows)
+
+    def test_only_agents_that_can_run_are_offered(self):
+        names = list(zell_providers.CLI_FILES)
+        first, rest, code, header, rows = self.run_helper([('Q', 0.0)], agents=names[:1], not_runnable=names[1:])
+        self.assertEqual((first, code), (b'R\n', 0))
+        self.assertEqual(rest.decode().splitlines(), ['G %s %s' % (names[0], zell_providers.LABELS[names[0]])])
 
     def test_a_broken_display_says_so_without_terminal_text(self):
         first, rest, code, header, rows = self.run_helper([], broken=True)

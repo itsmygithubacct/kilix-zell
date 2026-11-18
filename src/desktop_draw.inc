@@ -548,27 +548,68 @@ static void desktop_chrome(const zell_scene *s,sr_canvas *c,int cx,int cy){
  zell_notice_show(s,c,hint);
  desktop_vitals(s,c);
 }
-/* A pane room is the panes and Kilix, edge to edge: no HUD, no status
- * strip, no border. The thin green line is the way back. */
+static void desktop_panes_button(sr_canvas *c,zell_rect r,const char *label,uint32_t fill,uint32_t edge,uint32_t ink){
+ sr_fill_rect(c,(float)r.x,(float)r.y,(float)r.w,(float)r.h,fill,1);
+ sr_stroke_rect(c,(float)r.x,(float)r.y,(float)r.w,(float)r.h,1,edge,1);
+ int tw=sr_text_width_in(SR_FONT_FIXED_8X16,label,1);
+ sr_text(c,(float)(r.x+(r.w-tw)/2),(float)(r.y+(r.h-16)/2),label,ink,1,1);
+}
+/* A pane room is the walkway, the panes' title bars and their cells, edge
+ * to edge: no HUD, no status strip, no border. The thin green line at the
+ * walkway's end is the way back. */
 static void desktop_panes_room(const zell_scene *s,sr_canvas *c){
- int w=0,h=0;
+ int w=0,h=0,count=zell_panes_count(s->room),focus=zell_panes_focus(s->room),zoom=zell_panes_zoom(s->room);
+ bool typing=zell_panes_keys_to_pane();
  const uint32_t *pixels=zell_panes_frame(s->room,&w,&h);
  sr_clear(c,0x0b1218u);
+ /* The walkway: a stone back wall with the buttons on it, then planks. Its
+  * edge is lit while Kilix has the keys. */
+ sr_fill_rect(c,0,0,(float)c->w,34,0x16222bu,1);
+ for(int x=0;x<c->w;x+=48)sr_fill_rect(c,(float)x,(float)((x/48)%2?0:17),1,17,0x0f181eu,1);
+ sr_fill_rect(c,0,17,(float)c->w,1,0x0f181eu,1);
+ sr_fill_rect(c,0,34,(float)c->w,(float)(ZELL_PANES_WALK_H-36),0x26343cu,1);
+ for(int x=0;x<c->w;x+=32)sr_fill_rect(c,(float)x,34,1,(float)(ZELL_PANES_WALK_H-36),0x1b272eu,1);
+ sr_fill_rect(c,0,(float)(ZELL_PANES_WALK_H-2),(float)c->w,2,typing?0x2a3a44u:0xd9ba79u,1);
+ for(int index=0;index<count;index++){
+  zell_rect bar;zell_panes_chrome_rect(s,index,&bar);
+  if(!bar.w)continue;
+  for(int agent=0;agent<zell_panes_agent_count();agent++){
+   zell_rect b;zell_panes_button_rect(s,index,agent,&b);
+   if(!b.w)break;
+   bool under=!typing&&s->x>=(float)b.x&&s->x<(float)(b.x+b.w);
+   desktop_panes_button(c,b,zell_panes_agent_label(agent),under?0x2f5a4cu:0x1f3444u,under?0x9ff0c8u:0x5f8faeu,0xe8f2f6u);
+  }
+  /* The title bar: brightest on the pane that has the keys. */
+  bool focused=index==focus,keys=focused&&typing;
+  sr_fill_rect(c,(float)bar.x,(float)bar.y,(float)bar.w,(float)bar.h,keys?0x2f5878u:focused?0x23394bu:0x18242eu,1);
+  if(keys)sr_fill_rect(c,(float)bar.x,(float)bar.y,3,(float)bar.h,0xd9ba79u,1);
+  zell_rect zoom_b,restart_b;
+  zell_panes_chrome_button(s,index,0,&zoom_b);zell_panes_chrome_button(s,index,1,&restart_b);
+  char text[64];const char *notice=zell_panes_notice(s->room,index),*title=zell_panes_title(s->room,index);
+  if(notice)snprintf(text,sizeof text,"%d %s",index+1,notice);
+  else snprintf(text,sizeof text,"%d %s",index+1,title[0]?title:"shell");
+  int room_for=(zoom_b.w?zoom_b.x:bar.x+bar.w)-bar.x-16;
+  desktop_text(c,bar.x+8,bar.y+2,text,notice?0xe5ad87u:keys?0xffffffu:0x9fb4c0u,room_for);
+  if(zoom_b.w)desktop_panes_button(c,zoom_b,zoom==index?"Unzoom":"Zoom",0x1f3444u,0x5f8faeu,0xd6e4ec);
+  if(restart_b.w){
+   bool sure=zell_panes_confirming(s->room,index);
+   desktop_panes_button(c,restart_b,sure?"Sure?":"Restart",sure?0x6a2c2cu:0x1f3444u,sure?0xe5ad87u:0x5f8faeu,0xd6e4ec);
+  }
+ }
  if(pixels){
   sr_canvas frame;sr_canvas_wrap(&frame,(uint32_t *)pixels,w,h);
-  if(c->w>1920||c->h>1920)sr_blit_scaled(c,&frame,0,0,c->w,c->h,1);
-  else sr_blit_scaled(c,&frame,0,0,w,h,1);
+  sr_blit_scaled(c,&frame,0,ZELL_PANES_CELLS_Y,w,h,1);
  }else{
   char text[200];const char *error=zell_panes_error();
   if(error[0])snprintf(text,sizeof text,"%s",error);
-  else snprintf(text,sizeof text,"Opening %d panes...",zell_panes_count(s->room));
-  desktop_label(c,c->w/2,c->h/2,text,error[0]?0xe5ad87u:0xb9f8dbu);
+  else snprintf(text,sizeof text,"Opening %d panes...",count);
+  desktop_label(c,c->w/2,ZELL_PANES_CELLS_Y+(c->h-ZELL_PANES_CELLS_Y)/2,text,error[0]?0xe5ad87u:0xb9f8dbu);
  }
  zell_rect exit;zell_panes_exit_rect(s,&exit);
  sr_fill_rect(c,(float)exit.x,(float)exit.y,(float)exit.w,(float)exit.h,ZELL_PANES_EXIT_RGB,1);
  zell_actor_pose pose=zell_desktop_pose(s,-1);
- sr_fill_ellipse(c,s->x,s->y,17.f,5.f,0x071719u,.45f);
- desktop_art(c,pose.art,(int)s->x+pose.offset_x,(int)s->y+pose.offset_y,84);
+ sr_fill_ellipse(c,s->x,s->y,12.f,4.f,0x071719u,.45f);
+ desktop_art(c,pose.art,(int)s->x+pose.offset_x,(int)s->y+pose.offset_y,ZELL_PANES_KILIX_H);
 }
 static void desktop_base(const zell_scene *s,sr_canvas *c){
  if(ZELL_ROOM_IS_PANES(s->room)){desktop_panes_room(s,c);return;}

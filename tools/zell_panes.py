@@ -2,18 +2,25 @@
 """Shells for Zell's pane rooms, painted by Neuronte into a shared map.
 
 Through the Command Center's top corners are two rooms that are a Kilix tab
-each: two panes side by side on the left, four on the right, filling the
-whole Zell pane with no border. Zell starts this helper beside itself the
-first time Kilix walks into one. A room's shells live until Zell closes;
-only the room Kilix is in is painted.
+each: two panes side by side on the left, four on the right, across the
+whole Zell pane. Zell draws the walkway and the panes' title bars; this
+helper paints the cells under them. Zell starts it beside itself the first
+time Kilix walks into one. A room's shells live until Zell closes; only the
+room Kilix is in is painted.
 
-Lines on stdin:
+Lines on stdin (INDEX is a pane of the shown room, from 0):
   S ROOM COLS ROWS  show a room at this size (its shells start the first time)
   H                 hide: the shells keep running, painting stops
-  C COL             focus the pane that column COL of the shown room is in
+  F INDEX           focus that pane: typing and the cursor go there
+  Z INDEX           zoom that pane over the whole room; Z -1 shows them all
+  A INDEX AGENT     type AGENT's command into that pane's idle shell
+  X INDEX           end that pane's shell and start a new one
   K<hex>            bytes for the focused pane of the shown room
   Q                 close every pane and stop
-On stdout: "R" once ready, "E <text>" when something failed.
+On stdout: "R" once ready, then "G AGENT LABEL" for each coding agent found
+on PATH; "T ROOM INDEX NAME" when what runs in front in a pane changes;
+"N ROOM INDEX TEXT" when a pane cannot do what was asked; "E <text>" when
+something failed.
 
 The map (its fd is in ZELL_PANES_FD) starts with 64 bytes of little-endian
 words: b"ZPNE", version 1, width, height, sequence (odd while a frame is
@@ -23,16 +30,18 @@ import mmap
 import os
 from pathlib import Path
 import select
+import shutil
 import signal
 import struct
 import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import zell_providers
 import zell_terminal
 
 HEADER = 64
-MAX_WIDTH = MAX_HEIGHT = 1920
+MAX_WIDTH, MAX_HEIGHT = 3840, 2160
 MAP_BYTES = HEADER + MAX_WIDTH * MAX_HEIGHT * 4
 CELL_WIDTH, CELL_HEIGHT = 8, 16
 FRAME_SECONDS = 0.05
@@ -40,6 +49,12 @@ PANES = {9: 2, 10: 4}
 SEPARATOR = 0x709BC5
 # A shell that will not stay up is started again at most this often.
 RESPAWN_SECONDS = 1.0
+# How often what runs in each pane is looked at.
+TITLE_SECONDS = 0.5
+BUSY = 'is busy. Finish what runs there, then press again.'
+# Ctrl-E then Ctrl-U: the agent's command replaces the whole half-typed
+# line, wherever the cursor was in it.
+CLEAR_LINE = b'\x05\x15'
 # Zell's own Kilix window. The shells are not in it, so an agent started in
 # one must not be found, or sent text, as that window.
 IDENTITY = ('KITTY_WINDOW_ID', 'WINDOWID', 'KITTY_PID', 'KITTY_LISTEN_ON', 'KITTY_PUBLIC_KEY',
@@ -55,26 +70,42 @@ def column_widths(cols, count):
     return [base + (index < extra) for index in range(count)]
 
 
-def pane_at(cols, count, column):
-    """The pane a column is in. A separator belongs to the pane on its left."""
-    x = 0
-    for index, width in enumerate(column_widths(cols, count)):
-        if column < x + width + 1:
-            return index
-        x += width + 1
-    return count - 1
-
-
 def valid_size(cols, rows, count):
     return (2 * count - 1 <= cols and 20 <= cols <= MAX_WIDTH // CELL_WIDTH
             and 8 <= rows <= MAX_HEIGHT // CELL_HEIGHT)
+
+
+def available_agents(which=shutil.which):
+    """The coding agents with a command on PATH, as (command, label)."""
+    return [(name, zell_providers.LABELS[name]) for name in zell_providers.CLI_FILES if which(name)]
+
+
+def foreground(pane):
+    """The process group in front in a pane's terminal and its name."""
+    if pane.fd is None:
+        return None, None
+    try:
+        group = os.tcgetpgrp(pane.fd)
+        name = Path(f'/proc/{group}/comm').read_text().strip()
+    except OSError:
+        return None, None
+    return group, name
+
+
+def title_text(name):
+    """A name Zell can show: printable ASCII, at most 31 characters."""
+    text = ''.join(ch for ch in (name or '') if 32 <= ord(ch) < 127).strip()[:31].strip()
+    return text or 'shell'
 
 
 def room_grid(display, workspace):
     cols, rows = workspace.cols, workspace.rows
     records = [(32, display.FG, display.BG, 0)] * (cols * rows)
     rectangles = workspace.layout()
-    for index, (pane, (x, _y, width, height)) in enumerate(zip(workspace.current['panes'], rectangles)):
+    for index, (pane, rectangle) in enumerate(zip(workspace.current['panes'], rectangles)):
+        if rectangle is None:
+            continue
+        x, _y, width, height = rectangle
         cells, cursor = pane.terminal.snapshot()
         for row in range(height):
             records[row * cols + x:row * cols + x + width] = cells[row * width:(row + 1) * width]
@@ -83,7 +114,7 @@ def room_grid(display, workspace):
             at = cy * cols + x + cx
             code, foreground, background, flags = records[at]
             records[at] = (code, foreground, background, flags ^ 16)
-        if index < len(rectangles) - 1:
+        if x + width < cols:
             for row in range(rows):
                 records[row * cols + x + width] = (0x2502, SEPARATOR, display.BG, 0)
     return records
@@ -92,10 +123,17 @@ def room_grid(display, workspace):
 def room_workspace(display, count, cols, rows, command):
     class PaneRoom(display.Workspace):
         """One tab of side-by-side panes and nothing else: no tab bar, no
-        help line, no pane titles."""
+        help line, no pane titles. A zoomed pane has every column and the
+        others are not shown; they keep their size until it is unzoomed."""
+        zoom = None
 
         def layout(self, tab=None):
             tab = self.current if tab is None else tab
+            if self.zoom is not None:
+                rectangles = [None] * len(tab['panes'])
+                tab['panes'][self.zoom].resize(self.cols, self.rows)
+                rectangles[self.zoom] = (0, 0, self.cols, self.rows)
+                return rectangles
             rectangles, x = [], 0
             for pane, width in zip(tab['panes'], column_widths(self.cols, len(tab['panes']))):
                 pane.resize(width, self.rows)
@@ -162,6 +200,15 @@ def drawable(cache, records, bad):
     return out
 
 
+def replace_pane(display, workspace, tab, index, command, now):
+    """End a pane's shell and start a new one of the same size there."""
+    pane = tab['panes'][index]
+    pane.close()
+    fresh = display.Pane(command, pane.cols, pane.rows, workspace.cw, workspace.ch, workspace.lib)
+    fresh.born = now
+    tab['panes'][index] = fresh
+
+
 def renew_exited(display, workspace, command, now):
     """Start a fresh shell where one has ended, so a room keeps its panes."""
     changed = False
@@ -171,10 +218,7 @@ def renew_exited(display, workspace, command, now):
                 continue
             if now - getattr(pane, 'born', 0.0) < RESPAWN_SECONDS:
                 continue
-            pane.close()
-            fresh = display.Pane(command, pane.cols, pane.rows, workspace.cw, workspace.ch, workspace.lib)
-            fresh.born = now
-            tab['panes'][index] = fresh
+            replace_pane(display, workspace, tab, index, command, now)
             changed = True
     if changed:
         workspace.layout()
@@ -202,9 +246,24 @@ class Rooms:
     """The pane rooms and which one is shown. Kept apart from the pipes and
     the renderer so the protocol can be tested without either."""
 
-    def __init__(self, display, command, make=room_workspace, wait=select.select):
+    def __init__(self, display, command, make=room_workspace, wait=select.select, front=foreground,
+                 agents=(), say=lambda text: None, clock=time.monotonic, hang_up=os.killpg):
         self.display, self.command, self.make, self.wait = display, command, make, wait
+        self.front, self.agents, self.say, self.clock = front, dict(agents), say, clock
+        self.hang_up = hang_up
         self.rooms, self.shown, self.dirty, self.quit = {}, None, False, False
+        self.titles, self.next_titles = {}, 0.0
+
+    def pane(self, word):
+        """The shown room and its pane numbered `word`, or None."""
+        workspace = self.rooms.get(self.shown)
+        try:
+            index = int(word)
+        except ValueError:
+            return None
+        if workspace is None or not 0 <= index < len(workspace.current['panes']):
+            return None
+        return workspace, index
 
     def line(self, text):
         if text.startswith('K'):
@@ -241,15 +300,56 @@ class Rooms:
             elif (workspace.cols, workspace.rows) != (cols, rows):
                 workspace.resize(cols, rows)
             self.shown, self.dirty = room, True
-        elif words[0] == 'C' and len(words) == 2:
+        elif words[0] == 'F' and len(words) == 2:
+            found = self.pane(words[1])
+            # Not a pane hidden by another one's zoom.
+            if found and found[0].zoom in (None, found[1]):
+                found[0].focus, self.dirty = found[1], True
+        elif words[0] == 'Z' and len(words) == 2:
             workspace = self.rooms.get(self.shown)
-            try:
-                column = int(words[1])
-            except ValueError:
-                return
-            if workspace is not None and 0 <= column < workspace.cols:
-                workspace.focus = pane_at(workspace.cols, len(workspace.current['panes']), column)
+            if workspace is not None and words[1] == '-1':
+                workspace.zoom = None
+            else:
+                found = self.pane(words[1])
+                if not found:
+                    return
+                workspace, index = found
+                workspace.zoom = workspace.focus = index
+            workspace.layout()
+            self.dirty = True
+        elif words[0] == 'X' and len(words) == 2:
+            found = self.pane(words[1])
+            if found:
+                workspace, index = found
+                # What runs in front has a group of its own: it is hung up as
+                # a closed terminal would hang it up, before the shell goes.
+                pane = workspace.current['panes'][index]
+                group = self.front(pane)[0]
+                if group is not None and group != pane.pid:
+                    try:
+                        self.hang_up(group, signal.SIGHUP)
+                    except OSError:
+                        pass
+                replace_pane(self.display, workspace, workspace.current, index, self.command, self.clock())
+                workspace.layout()
                 self.dirty = True
+        elif words[0] == 'A' and len(words) == 3:
+            found = self.pane(words[1])
+            if not found or words[2] not in self.agents:
+                return
+            workspace, index = found
+            pane = workspace.current['panes'][index]
+            group, name = self.front(pane)
+            # Typed only at the shell's own prompt, never into what it runs,
+            # nor into a program the shell has become (exec).
+            shell = getattr(pane, 'name', None)
+            if pane.fd is None or group is None or group != pane.pid or (shell and name != shell):
+                self.say(f'N {self.shown} {index} {BUSY}')
+                return
+            try:
+                pane.send(CLEAR_LINE + words[2].encode() + b'\r')
+            except PANE_ERRORS:
+                pass
 
     def poll(self, now):
         for room, workspace in self.rooms.items():
@@ -259,6 +359,14 @@ class Rooms:
             changed = renew_exited(self.display, workspace, self.command, now) or changed
             if room == self.shown and changed:
                 self.dirty = True
+        if now >= self.next_titles:
+            self.next_titles = now + TITLE_SECONDS
+            for room, workspace in self.rooms.items():
+                for index, pane in enumerate(workspace.current['panes']):
+                    title = title_text(self.front(pane)[1] or getattr(pane, 'name', None))
+                    if self.titles.get((room, index)) != title:
+                        self.titles[room, index] = title
+                        self.say(f'T {room} {index} {title}')
 
     def descriptors(self):
         return [pane.fd for workspace in self.rooms.values() for pane in workspace.panes() if pane.fd is not None]
@@ -304,9 +412,12 @@ def main():
         cache_dir = Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache')) / 'neuronte-display'
         cache = display.MaskCache(weights, library, cache_dir, CELL_WIDTH, CELL_HEIGHT)
         renderer = display.Renderer(cache)
-        rooms = Rooms(display, [os.environ.get('SHELL') or '/bin/sh'])
+        agents = available_agents()
+        rooms = Rooms(display, [os.environ.get('SHELL') or '/bin/sh'], agents=agents, say=say)
         rooms.quit = bool(stopping)
         say('R')
+        for name, label in agents:
+            say(f'G {name} {label}')
         while not rooms.quit:
             ready = select.select([stdin, *rooms.descriptors()], [], [], FRAME_SECONDS)[0]
             if stdin in ready:

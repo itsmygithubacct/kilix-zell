@@ -354,11 +354,17 @@ between the Command computer in the bottom left corner and the Key Master in
 the bottom right; nothing marks that edge. Up the strip beside the screens on
 either side wall is an opening in the top corner, and through it a room of
 panes: two side by side on the left, four on the right. A pane room is one
-Kilix tab filling the whole Zell pane, with no border. Click a pane to type
-into it. The plain arrow keys move Kilix; with Shift, Ctrl or Alt they go to
-the pane. The panes have no scrollback, mouse or paste yet.
-A thin green line in the top corner he came in by is the way back: walk into
-it beside the line. The shells are started by `tools/zell_panes.py` the first
+Kilix tab as wide and high as the Zell pane, past the 1600x1000 cap the other
+rooms keep. Along its top is a walkway Kilix walks on; over each pane it has
+a button for each coding agent found on PATH, which types that agent's
+command into the pane's shell if the shell is at its prompt, and gives the
+pane the keys. Under the walkway each pane has a title bar: what it runs,
+Zoom (the pane over the whole room, and back), and Restart (click twice for a
+new shell). Click a pane or its title bar and every key is the pane's; click
+the walkway and the keys are Kilix's again: the arrows walk him, and Enter or
+Space presses the button he stands on. The panes have no scrollback, mouse or
+paste yet. A thin green line at the walkway's end on the side he came in by
+is the way back: walk into it. The shells are started by `tools/zell_panes.py` the first
 time he enters and keep running, unpainted, while he is elsewhere, until Zell
 closes. They start in your home folder. They are Zell's own shells, not
 Kilix windows: Kilix does not list them, and they cannot be sent text as Zell's
