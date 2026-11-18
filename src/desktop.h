@@ -44,12 +44,15 @@ zell_actor_pose zell_desktop_pose(const zell_scene *s, int actor);
 extern const zell_station zell_stations[ZELL_STATIONS];
 void zell_desktop_camera(const zell_scene *s, int *x, int *y);
 void zell_desktop_init(zell_scene *s);
+void zell_desktop_enter_hall(zell_scene *s);
 int zell_desktop_tick(zell_scene *s,const zell_controls *c);
 int zell_desktop_near(const zell_scene *s);
 bool zell_desktop_station_visible(const zell_scene *s,int station);
 /* Walk-on stairs back to the cave, as fractions of the world. */
 #define ZELL_STAIRS_LEFT .44f
 #define ZELL_STAIRS_RIGHT .56f
+/* Where Kilix comes in when Zell starts: on the cave's steps, facing in. */
+#define ZELL_HALL_ENTRY_Y .94f
 #define ZELL_STAIRS_PAINTED_Y .935f
 #define ZELL_STAIRS_CUTOUT_Y .87f
 #define ZELL_ROOM_ENTRY_Y .78f

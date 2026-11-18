@@ -633,6 +633,11 @@ if __name__=='__main__':
     except (OSError,ValueError,subprocess.TimeoutExpired) as error:
         zell_debug.error('helper.failed')
         print(f'Could not complete the action: {error}')
+    except SystemExit as stop:
+        # Asked to stop (the vitals monitor on SIGTERM) or done with a code:
+        # an exit, not a crash.
+        zell_debug.log('helper.done' if stop.code in (0,None) else 'helper.exit',code=stop.code)
+        raise
     except BaseException:
         zell_debug.error('helper.crashed')
         raise

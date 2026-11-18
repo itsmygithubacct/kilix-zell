@@ -113,6 +113,7 @@ int zell_desktop_actions(int station){int n=0;
  while(n<16&&actions[station][n])n++;
  return n;}
 const char *zell_desktop_action(int station,int index){return index>=0&&index<zell_desktop_actions(station)?actions[station][index]:"";}
+void zell_desktop_enter_hall(zell_scene *s){s->room=0;s->x=(float)ZELL_WORLD_W*.50f;s->y=(float)ZELL_WORLD_H*ZELL_HALL_ENTRY_Y;s->direction=ZELL_DIR_UP;s->step=0;s->step_ticks=0;}
 void zell_desktop_init(zell_scene *s){s->desktop=true;s->x=(float)ZELL_WORLD_W*.51f;s->y=(float)ZELL_WORLD_H*.48f;s->station=0;s->desktop_launch=false;s->hp=100;s->max_hp=100;s->fatigue=100;s->mana=-1;s->update_age_days=-1;s->mana_age=-1;s->os_health=-1;s->dirty_files=0;}
 bool zell_desktop_station_visible(const zell_scene *s,int station){
  if(s->room==0)return station<ZELL_CAVE_STATIONS||station==32||station==37||station==38||(station>=42&&station<=45)||(station>=ZELL_GAME_HATCH&&station<=ZELL_LIBRARY_HATCH);

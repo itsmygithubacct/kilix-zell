@@ -3,6 +3,7 @@ import io
 import json
 import mmap
 import os
+import subprocess
 from pathlib import Path
 import pty
 import select
@@ -210,6 +211,30 @@ class UpdateTests(unittest.TestCase):
             self.assertEqual(len(opens), 2)
             self.assertEqual(len(closes), len(set(closes)), closes)
             self.assertEqual(len(closes), 1)
+
+    def test_the_vitals_monitor_stopped_is_logged_as_done_not_crashed(self):
+        helper = Path(__file__).resolve().parent.parent / 'tools' / 'desktop.py'
+        with tempfile.TemporaryDirectory() as directory:
+            where = Path(directory, 'log.jsonl')
+            env = dict(os.environ, KILIX_ZELL_DEBUG_LOG=str(where), KILIX_ZELL_STATE=directory)
+            child = subprocess.Popen([sys.executable, str(helper), '-1', '0', '--dialogue'], env=env,
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            try:
+                deadline = time.monotonic() + 20
+                while time.monotonic() < deadline and b'"vitals"' not in (where.read_bytes() if where.exists() else b''):
+                    time.sleep(0.1)
+                child.send_signal(signal.SIGTERM)
+                child.wait(timeout=20)
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait()
+                child.stdin.close()
+                child.stdout.close()
+            events = [json.loads(line)['event'] for line in where.read_text().splitlines()]
+            self.assertIn('vitals', events)
+            self.assertEqual(events[-1], 'helper.done', events)
+            self.assertNotIn('helper.crashed', events)
 
     def test_a_floating_terminal_that_fails_says_where_the_log_is(self):
         with tempfile.TemporaryDirectory() as directory:

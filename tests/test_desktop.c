@@ -245,6 +245,18 @@ static void test_room_fit(void){
     const int fitted[2][2]={{960,600},{640,400}};
     zell_scene_init(&s,800,500);
     zell_desktop_init(&s);
+    /* Zell starts with Kilix on the cave's entrance steps, in the stairs'
+     * gap below the south wall, facing in; from there he walks in. */
+    s.room=3;s.direction=ZELL_DIR_DOWN;
+    zell_desktop_enter_hall(&s);
+    assert(s.room==0&&s.direction==ZELL_DIR_UP&&s.x==(float)ZELL_WORLD_W*.5f);
+    assert(s.y>(float)ZELL_WORLD_H*.91f&&!zell_desktop_blocked(&s,s.x,s.y)&&!zell_desktop_on_stairs(&s));
+    {
+        float start=s.y;zell_controls up={0};up.move_y=-1;
+        for(int i=0;i<20;i++)zell_desktop_tick(&s,&up);
+        assert(s.room==0&&s.y<start-20.f&&s.y<(float)ZELL_WORLD_H*.91f);
+    }
+    zell_desktop_init(&s);
     s.room=1;
     x=s.x;y=s.y;room=s.room;
     zell_scene_resize(&s,1536,1000);
