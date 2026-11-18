@@ -424,6 +424,19 @@ class ViewTests(unittest.TestCase):
         self.view.paint(30, 5, [])
         self.assertEqual((self.view.oy, self.view.top), (1, (first + 1, 0)))
 
+    def test_a_full_screen_program_taller_than_the_view_follows_its_cursor(self):
+        # Held on the main screen, then a program on its alternate screen
+        # with more rows than the view: its cursor's row is shown.
+        self.term.screen = [f'row {n}' for n in range(6)]
+        self.term.cursor = (0, 5)
+        self.view.paint(30, 4, [])
+        self.view.pointer(64, 3, 3, False, 30, 4)
+        self.view.paint(30, 4, [])
+        self.assertEqual(self.view.top, (0, 0))
+        self.term.alternate, self.term.cursor = True, (0, 4)
+        self.view.paint(30, 4, [])
+        self.assertEqual((self.view.top, self.view.oy), (None, 2))
+
     def test_a_screen_that_fits_is_never_held(self):
         self.term.screen = ['one', 'two', '$ ']
         self.term.cursor = (2, 2)

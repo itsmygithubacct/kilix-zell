@@ -3282,6 +3282,8 @@ static void test_pane_io(void){
         zell_panes_hotkeys_show(true);
         zell_panes_hotkeys_scroll(&s,-5);assert(zell_panes_hotkeys_top(480)==0);
         zell_panes_hotkeys_scroll(&s,1000);assert(zell_panes_hotkeys_top(480)==zell_panes_hotkeys_lines-fit);
+        /* Shorter again, it is where it was left, not further. */
+        assert(zell_panes_hotkeys_top(300)==zell_panes_hotkeys_lines-fit);
         /* The wheel scrolls it, and nothing under it. */
         assert(zell_panes_pointer(&s,64u,500,300,false)&&zell_panes_hotkeys_top(480)==zell_panes_hotkeys_lines-fit-3);
         assert(zell_panes_pointer(&s,65u,500,300,false)&&zell_panes_hotkeys_top(480)==zell_panes_hotkeys_lines-fit);
