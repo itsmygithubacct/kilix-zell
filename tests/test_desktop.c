@@ -2328,7 +2328,7 @@ static void test_pane_rooms(void){
     assert(!zell_panes_keys_to_pane());
     /* Zoom pane 2 over the room, then back. */
     pane_click(&s,349,70);
-    strcat(want,"Z 1\nF 1\n");assert(!strcmp(zell_panes_pending(),want));
+    strcat(want,"Z 1\n");assert(!strcmp(zell_panes_pending(),want)&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==1);
     assert(zell_panes_zoom(ZELL_ROOM_PANES_RIGHT)==1&&zell_panes_zoom(ZELL_ROOM_PANES_LEFT)==-1&&zell_panes_keys_to_pane());
     {
         zell_rect r;
@@ -2391,6 +2391,13 @@ static void test_pane_rooms(void){
     {int i,w;assert(zell_panes_aim(&s,&i,&w)==ZELL_PANES_AIM_CHROME&&i==1&&w==ZELL_PANES_ZOOM);}
     assert(zell_panes_press(&s));
     strcat(want,"Z -1\n");assert(!strcmp(zell_panes_pending(),want)&&zell_panes_zoom(ZELL_ROOM_PANES_RIGHT)==-1);
+    /* The helper gave the pane it zoomed the focus, as Zell now has it: pane
+     * 0's plaque says so again, so keys typed then go to pane 0. */
+    assert(zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==1);
+    s.x=120.f;assert(zell_panes_press(&s));
+    zell_panes_key((const unsigned char *)"x",1);
+    strcat(want,"F 0\nK78\n");assert(!strcmp(zell_panes_pending(),want)&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==0);
+    pane_click(&s,959,10);
     /* Restart, pressed twice. */
     s.x=460.f;assert(zell_panes_press(&s));
     assert(!strcmp(zell_panes_pending(),want)&&zell_panes_confirming(ZELL_ROOM_PANES_RIGHT,1));
@@ -2446,7 +2453,7 @@ static void test_pane_rooms(void){
         assert(zell_panes_room_line(ZELL_ROOM_PANES_LEFT,50,9,line,sizeof line)>0&&!strcmp(line,"S 9 50 9\nF 0\nZ -1\n"));
         assert(zell_panes_room_line(0,120,32,line,sizeof line)==2&&!strcmp(line,"H\n"));
         pane_click(&s,830,70);
-        strcat(want,"Z 1\nF 1\nZ -1\n");assert(!strcmp(zell_panes_pending(),want));
+        strcat(want,"Z 1\nZ -1\n");assert(!strcmp(zell_panes_pending(),want));
         pane_click(&s,200,50);
     }
     /* A notice lasts four seconds, an armed Restart three. */
@@ -2949,6 +2956,23 @@ static void test_pane_io(void){
     /* A paste whose end never came: said. */
     assert(!zell_panes_paste(&s,NULL,ZELL_INPUT_PASTE_UNENDED));
     assert(!strcmp(zell_panes_notice(ZELL_ROOM_PANES_RIGHT,1),"The paste never ended and was not sent."));
+    /* An agent started while the lines waiting behind a paste have room for
+     * its line but not the pane's focus: neither is sent. */
+    zell_panes_test_reset();
+    place_room(&s,1,0,0);zell_panes_enter(&s,ZELL_ROOM_PANES_RIGHT);pane_click(&s,10,300);
+    zell_panes_test_line("G codex Codex");
+    assert(zell_panes_paste(&s,"ab",2));
+    for(int k=0;k<8189;k++)zell_panes_key((const unsigned char *)"x",1);
+    {
+        size_t left=zell_panes_paste_left();
+        zell_rect b;zell_panes_button_rect(&s,1,0,&b);
+        pane_click(&s,b.x+b.w/2,b.y+b.h/2);
+        assert(zell_panes_paste_left()==left&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==0);
+        zell_panes_test_drain();
+        pane_click(&s,b.x+b.w/2,b.y+b.h/2);
+        const char *p=zell_panes_pending();size_t n=strlen(p);
+        assert(n>14&&!strcmp(p+n-14,"A 1 codex\nF 1\n")&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==1);
+    }
     /* Input made while the lines waiting behind a paste are full is dropped,
      * and said; a room line made then is not taken as sent, so it is made
      * once they have gone. */

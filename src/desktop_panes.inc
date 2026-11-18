@@ -321,7 +321,7 @@ static bool pn_send(const char *text,size_t n){
     if(n==0)return false;
     if(pn.after_n+n>sizeof pn.after){
         /* Dropped: said on the pane the paste goes to. */
-        if(pn.paste_n)pn_notice(pn.paste_room,pn.paste_pane,"Input made while the paste is sent was dropped.");
+        if(pn.paste_room)pn_notice(pn.paste_room,pn.paste_pane,"Input made while the paste is sent was dropped.");
         return false;
     }
     memcpy(pn.after+pn.after_n,text,n);pn.after_n+=n;
@@ -350,10 +350,15 @@ static void pn_take(const zell_scene *s,int index){
     if(pn.focus[slot]!=index){pn_sendf(ok,"F %d\n",index);if(!ok)return;pn.focus[slot]=index;}
     pn.keys_pane=true;
 }
+/* The agent starts in pane index and the pane gets the keys: both lines are
+ * sent, or neither. */
 static void pn_start_agent(const zell_scene *s,int index,int agent){
-    bool ok;
-    pn_sendf(ok,"A %d %s\n",index,pn.agents[agent].id);
-    if(ok)pn_take(s,index);
+    int slot=pn_slot(s->room);
+    char line[160];
+    int n=pn.focus[slot]!=index?snprintf(line,sizeof line,"A %d %s\nF %d\n",index,pn.agents[agent].id,index)
+                                 :snprintf(line,sizeof line,"A %d %s\n",index,pn.agents[agent].id);
+    if(n<=0||(size_t)n>=sizeof line||!pn_send(line,(size_t)n))return;
+    pn.focus[slot]=index;pn.keys_pane=true;
 }
 /* A title-bar button of pane index, clicked or pressed by Kilix. False when
  * the helper could not be told. */
@@ -365,7 +370,8 @@ static bool pn_chrome(const zell_scene *s,int index,int button){
     }else if(button==ZELL_PANES_ZOOM){
         int zoomed=pn.zoom[slot]==index?-1:index;
         pn_sendf(ok,"Z %d\n",zoomed);
-        if(ok)pn.zoom[slot]=zoomed;
+        /* The helper gives a pane it zooms the focus too. */
+        if(ok){pn.zoom[slot]=zoomed;if(zoomed>=0)pn.focus[slot]=zoomed;}
     }else if(button==ZELL_PANES_RESTART){
         /* Once arms it; again within 3 seconds restarts the pane. */
         if(zell_panes_confirming(s->room,index)){pn_sendf(ok,"X %d\n",index);if(ok)pn.confirm_room=0;}
