@@ -564,7 +564,7 @@ class EndToEndTests(unittest.TestCase):
             seen = self.read_until(fd, b'pane says hi')
             self.assertIn(b'pane says hi', seen)
             self.assertIn(b'Kilix pane 7', seen)
-            self.assertIn(b'\x1b]2;Kilix 7: codex\x07', seen)
+            self.assertIn(b'\x1b]2;Kilix 7: agent\x07', seen)
             os.write(fd, b'ls\r')
             self.assertTrue(wait_for(lambda: self.log.exists() and b'send pane:7 6c730d' in self.log.read_bytes()))
             os.write(fd, b'\x1d')

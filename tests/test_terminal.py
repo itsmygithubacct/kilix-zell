@@ -153,7 +153,8 @@ class UpdateTests(unittest.TestCase):
 
     def test_the_log_is_kept_to_two_files(self):
         with tempfile.TemporaryDirectory() as directory:
-            where = Path(directory, 'log.jsonl')
+            # In folders not made yet: the log makes them.
+            where = Path(directory, 'not', 'yet', 'log.jsonl')
             with patch.dict(os.environ, KILIX_ZELL_DEBUG_LOG=str(where)), patch.object(debug, 'LOG_BYTES', 200):
                 for n in range(40):
                     debug.log('tick', n=n)
@@ -162,7 +163,8 @@ class UpdateTests(unittest.TestCase):
             self.assertLess(old.stat().st_size, 200 + 100)
             numbers = [json.loads(line)['n'] for path in (old, new) for line in path.read_text().splitlines()]
             self.assertEqual(numbers, list(range(numbers[0], 40)))
-            self.assertFalse(Path(directory, 'log.jsonl.2').exists())
+            self.assertFalse(Path(str(where) + '.2').exists())
+            self.assertEqual(where.parent.stat().st_mode & 0o777, 0o700)
 
     def test_a_floating_terminal_that_fails_says_where_the_log_is(self):
         with tempfile.TemporaryDirectory() as directory:
