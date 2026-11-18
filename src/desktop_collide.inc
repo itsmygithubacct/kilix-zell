@@ -67,13 +67,33 @@ static int spans_for(const zell_scene *s,zell_span *out,int cap){
  return n;
 }
 float zell_desktop_north(int room){
+ /* The Command Center's corner strips reach the openings; its block table
+  * keeps the old line between them. */
+ if(room==1)return (float)ZELL_COMMAND_OPENING_TOP;
  if(room==5)return 380.f;
  if(room==6)return 735.f;
  if(room==7||room==8)return 400.f;
  return (float)ZELL_WORLD_H*.32f;
 }
+/* The Command Center's walls. They are walls, not furniture, so they are
+ * not in the table or the debug overlay. Between the top corners of the
+ * worker screens the old north line holds. Beside the screens a strip runs
+ * up each side wall to its opening, and the opening runs out through the
+ * wall. Below the strips the walls stand on the old .135W/.865W lines, so
+ * the Command computer and the Key Master keep their corners. */
+static bool command_wall(float x,float y){
+ zell_rect left,right,display;
+ zell_monitor_layout(1,&left,&display);
+ zell_monitor_layout(2,&right,&display);
+ if(y<(float)ZELL_WORLD_H*.32f&&x>=(float)left.x&&x<(float)(right.x+right.w))return true;
+ if(y>=(float)ZELL_COMMAND_OPENING_BOTTOM&&y<(float)ZELL_COMMAND_STRIP_BOTTOM&&
+    (x<(float)ZELL_COMMAND_STRIP_LEFT||x>=(float)ZELL_COMMAND_STRIP_RIGHT))return true;
+ if(y>=(float)ZELL_COMMAND_STRIP_BOTTOM&&(x<(float)ZELL_WORLD_W*.135f||x>=(float)ZELL_WORLD_W*.865f))return true;
+ return false;
+}
 bool zell_desktop_blocked(const zell_scene *s,float x,float y){
  zell_span spans[ZELL_BLOCK_CAP];
+ if(s&&s->room==1&&command_wall(x,y))return true;
  int n=spans_for(s,spans,ZELL_BLOCK_CAP);
  for(int i=0;i<n;i++)if(span_has(x,y,spans[i].x0,spans[i].y0,spans[i].x1,spans[i].y1))return true;
  return false;

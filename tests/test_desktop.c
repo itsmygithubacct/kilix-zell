@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 
 /* Largest per-channel difference between two pixels. */
 static int pixel_gap(uint32_t a,uint32_t b){
@@ -1760,8 +1761,8 @@ static void test_command_center(void){
         assert(s.room_view.logical_x==(int)(0.135f*(float)ZELL_WORLD_W));
     }
     /* The Key Master's two lines: in the strip under the AGENTS panel, clear
-     * of it, of the screens, of the exit arrows, of the Key Master and of
-     * Kilix wherever Kilix stands beside him. */
+     * of it, of the screens, of the Key Master and of Kilix wherever Kilix
+     * stands beside him, and above the room's bottom edge. */
     {
         /* Both renderers advance 8 pixels per ASCII letter; a label box adds 6 a side. */
         int name_w=(int)strlen(key->name)*8+12,hint_w=(int)strlen(ZELL_KEY_MASTER_HINT)*8+12;
@@ -1772,10 +1773,6 @@ static void test_command_center(void){
         assert(!rects_meet(name,agents)&&!rects_meet(hint,agents));
         assert(name.y>=agents.y+agents.h&&hint.y+hint.h<(int)((float)ZELL_WORLD_H*.93f));
         for(int m=0;m<5;m++){zell_monitor_layout(m,&frame,&display);assert(!rects_meet(name,frame)&&!rects_meet(hint,frame));}
-        for(int k=0;k<ZELL_COMMAND_EXIT_ARROWS;k++){
-            zell_rect arrow={(int)zell_command_exit_arrow_x(k)-16,(int)((float)ZELL_WORLD_H*.93f),32,24};
-            assert(!rects_meet(name,arrow)&&!rects_meet(hint,arrow));
-        }
         /* His figure is 128 high and about 70 wide. */
         keeper=(zell_rect){(int)(key->x*(float)ZELL_WORLD_W)-40,(int)(key->y*(float)ZELL_WORLD_H)-128,80,128};
         assert(!rects_meet(name,keeper)&&!rects_meet(hint,keeper));
@@ -1920,19 +1917,336 @@ static void test_command_center(void){
             s.mode=ZELL_MODE_WALK;s.service_phase=0;s.terminal_private=false;
             free(pixels);sr_canvas_free(&other);
         }
-        /* With the room empty of stairs, a row of arrows marks the way out. */
+        /* Nothing marks the bottom edge as a way out: the bottom quarter of
+         * the floor, beside and under the floor panels, is the painting
+         * alone, with no arrow's gold or dark plate, though walking off it
+         * still leaves (test_obstacles). */
         s.x=(float)ZELL_WORLD_W*.50f;s.y=(float)ZELL_WORLD_H*.50f;
         zell_draw(&s,&canvas);
-        for(int k=0;k<ZELL_COMMAND_EXIT_ARROWS;k++){
-            float ax=zell_command_exit_arrow_x(k);
-            assert(ax>(float)ZELL_WORLD_W*.20f&&ax<(float)ZELL_WORLD_W*.80f);
-            if(k)assert(ax>zell_command_exit_arrow_x(k-1)+100.f);
-            zell_world_to_screen(&s,ax,(float)ZELL_WORLD_H*.93f,&sx,&sy);
-            zell_rect arrow={(int)sx-16,(int)sy,32,24};
-            assert(ink_count(&canvas,arrow,0xd7b56au,40)>=40);
+        {
+            const zell_art *room=zell_art_get(ZELL_ART_COMMAND_ROOM);
+            int checked=0,differ=0;
+            assert(room&&room->width==ZELL_WORLD_W&&room->height==ZELL_WORLD_H);
+            for(int py=0;py<canvas.h-ZELL_ROOM_STATUS_STRIP;py++)for(int px=0;px<canvas.w;px++){
+                float wx,wy;
+                zell_screen_to_world(&s,(float)px,(float)py,&wx,&wy);
+                int ix=(int)floorf(wx),iy=(int)floorf(wy);
+                if(iy<(int)((float)ZELL_WORLD_H*.75f)||iy>=ZELL_WORLD_H||ix<(int)((float)ZELL_WORLD_W*.18f)||ix>=(int)((float)ZELL_WORLD_W*.82f))continue;
+                {
+                    bool on_panel=false;
+                    for(int panel=0;panel<3;panel++){
+                        zell_rect plate;zell_floor_panel_layout(panel,&plate,NULL);
+                        if(ix>=plate.x-8&&ix<plate.x+plate.w+8&&iy>=plate.y-8&&iy<plate.y+plate.h+8)on_panel=true;
+                    }
+                    if(on_panel)continue;
+                }
+                checked++;
+                if((canvas.px[(size_t)py*(size_t)canvas.w+(size_t)px]&0xffffffu)!=(room->pixels[(size_t)iy*ZELL_WORLD_W+(size_t)ix]&0xffffffu))differ++;
+            }
+            if(differ)fprintf(stderr,"%d of %d bottom-edge pixels are not the painting\n",differ,checked);
+            assert(checked>2000&&differ==0);
         }
         sr_canvas_free(&canvas);
     }
+}
+/* Up the strip beside the screens on either side, into the opening in the
+ * top corner, and through it to the pane room on that side. */
+static void test_command_openings(void){
+    zell_scene s;
+    zell_controls west={.move_x=-1},east={.move_x=1},north={.move_y=-1},south={.move_y=1};
+    zell_rect frame,display;
+    for(int side=-1;side<=1;side+=2){
+        float mirror_x;
+        #define SIDE_X(x) (side<0?(x):(float)ZELL_WORLD_W-(x))
+        zell_controls out=side<0?west:east,in=side<0?east:west;
+        /* From the floor under the screens, to the wall. */
+        place_room(&s,1,SIDE_X(300.f),740.f);
+        assert(!zell_desktop_blocked(&s,s.x,s.y));
+        for(int tick=0;tick<120;tick++)zell_scene_tick(&s,&out);
+        mirror_x=side<0?s.x:(float)ZELL_WORLD_W-s.x;
+        if(!(s.room==1&&mirror_x>=(float)ZELL_COMMAND_STRIP_LEFT&&mirror_x<(float)ZELL_COMMAND_STRIP_LEFT+ZELL_WALK_SPEED+.05f))
+            fprintf(stderr,"side %d stopped at %.2f %.2f\n",side,s.x,s.y);
+        assert(s.room==1&&mirror_x>=(float)ZELL_COMMAND_STRIP_LEFT&&mirror_x<(float)ZELL_COMMAND_STRIP_LEFT+ZELL_WALK_SPEED+.05f);
+        /* Up past both screens on that side, to the opening's floor. */
+        float x=s.x;
+        for(int tick=0;tick<200;tick++)zell_scene_tick(&s,&north);
+        assert(s.room==1&&s.x==x&&s.y>=(float)ZELL_COMMAND_OPENING_TOP&&s.y<(float)ZELL_COMMAND_OPENING_TOP+ZELL_WALK_SPEED+.05f);
+        for(int m=1;m<5;m++){
+            zell_monitor_layout(m,&frame,&display);
+            if((side<0)!=(frame.x<ZELL_WORLD_W/2))continue;
+            /* The strip is outside the screens and he passed beside both. */
+            assert(side<0?x<(float)frame.x:x>=(float)(frame.x+frame.w));
+            assert(s.y<(float)(frame.y+frame.h));
+        }
+        /* The strip ends at the screens: into the room he is stopped. */
+        {
+            zell_scene beside=s;beside.y=600.f;
+            for(int tick=0;tick<40;tick++)zell_scene_tick(&beside,&in);
+            zell_monitor_layout(side<0?3:4,&frame,&display);
+            assert(beside.room==1&&(side<0?beside.x<(float)frame.x:beside.x>=(float)(frame.x+frame.w)));
+        }
+        /* Between the screens and above them is still wall. */
+        {
+            zell_scene behind=s;
+            for(int tick=0;tick<120;tick++)zell_scene_tick(&behind,&in);
+            assert(behind.room==1&&behind.y<(float)ZELL_WORLD_H*.32f);
+            zell_monitor_layout(side<0?1:2,&frame,&display);
+            assert(side<0?behind.x<(float)frame.x:behind.x>=(float)(frame.x+frame.w));
+        }
+        /* Out through the opening, into the pane room on that side. */
+        {
+            int ticks=0;
+            while(s.room==1&&ticks<200){zell_scene_tick(&s,&out);ticks++;}
+            assert(s.room==(side<0?ZELL_ROOM_PANES_LEFT:ZELL_ROOM_PANES_RIGHT)&&!s.leave&&ticks<60);
+            assert(s.mode==ZELL_MODE_WALK&&s.direction==(side<0?2:3));
+            assert(zell_panes_exit_side(s.room)==-side);
+        }
+        /* The wall below the opening and beside the strip, and the old
+         * corner walls below the strips. */
+        place_room(&s,1,0,0);
+        assert(!zell_desktop_blocked(&s,SIDE_X(100.f),280.f));
+        assert(zell_desktop_blocked(&s,SIDE_X(100.f),(float)ZELL_COMMAND_OPENING_BOTTOM+1.f));
+        assert(zell_desktop_blocked(&s,SIDE_X(100.f),600.f));
+        assert(!zell_desktop_blocked(&s,SIDE_X(150.f),600.f));
+        assert(zell_desktop_blocked(&s,SIDE_X(150.f),(float)ZELL_COMMAND_STRIP_BOTTOM+1.f));
+        assert(!zell_desktop_blocked(&s,SIDE_X(150.f),(float)ZELL_COMMAND_STRIP_BOTTOM-1.f));
+        assert(!zell_desktop_blocked(&s,SIDE_X(210.f),900.f));
+        assert(zell_desktop_blocked(&s,SIDE_X(205.f),900.f));
+        #undef SIDE_X
+    }
+    /* The walls are walls, not furniture: the table and overlay keep six. */
+    place_room(&s,1,(float)ZELL_WORLD_W*.50f,(float)ZELL_WORLD_H*.80f);
+    assert(zell_desktop_block_count(&s)==6);
+    assert(zell_desktop_north(1)==(float)ZELL_COMMAND_OPENING_TOP);
+    /* Up the gap between the controller and worker 2 he still stops at the
+     * old line. */
+    zell_monitor_layout(0,&frame,&display);
+    {
+        zell_rect worker2;zell_monitor_layout(2,&worker2,&display);
+        assert(frame.x+frame.w<1012&&worker2.x>1012);
+    }
+    s.x=1012.f;s.y=(float)ZELL_WORLD_H*.80f;
+    for(int tick=0;tick<300;tick++)zell_scene_tick(&s,&north);
+    assert(s.room==1&&s.x==1012.f&&s.y>=(float)ZELL_WORLD_H*.32f&&s.y<(float)ZELL_WORLD_H*.32f+ZELL_WALK_SPEED+.05f);
+    /* And the bottom edge is still a way out. */
+    place_room(&s,1,(float)ZELL_WORLD_W*.40f,(float)ZELL_WORLD_H*.95f);
+    for(int tick=0;tick<40&&s.room==1;tick++)zell_scene_tick(&s,&south);
+    assert(s.room==0&&!s.leave);
+}
+/* Rooms of panes: two through the left opening, four through the right. */
+static void test_pane_rooms(void){
+    zell_scene s;
+    zell_controls none={0},west={.move_x=-1},east={.move_x=1},north={.move_y=-1},south={.move_y=1};
+    sr_canvas canvas;
+    assert(zell_panes_count(ZELL_ROOM_PANES_LEFT)==2&&zell_panes_count(ZELL_ROOM_PANES_RIGHT)==4);
+    for(int room=0;room<9;room++)assert(zell_panes_count(room)==0&&zell_panes_exit_side(room)==0&&!ZELL_ROOM_IS_PANES(room));
+    assert(zell_panes_exit_side(ZELL_ROOM_PANES_LEFT)==1&&zell_panes_exit_side(ZELL_ROOM_PANES_RIGHT)==-1);
+    zell_panes_test_reset();
+    assert(sr_canvas_init(&canvas,960,600));
+    for(int room=ZELL_ROOM_PANES_LEFT;room<=ZELL_ROOM_PANES_RIGHT;room++){
+        int side=zell_panes_exit_side(room);
+        zell_controls toward=side>0?east:west,away=side>0?west:east;
+        float x0=(float)ZELL_PANES_SIDE,x1=(float)(960-ZELL_PANES_SIDE);
+        place_room(&s,1,0,0);
+        zell_panes_enter(&s,room);
+        /* In beside the line he came by, facing into the room. */
+        assert(s.room==room&&s.mode==ZELL_MODE_WALK);
+        assert(side>0?(s.x==x1-48.f&&s.direction==2):(s.x==x0+48.f&&s.direction==3));
+        assert(s.y>(float)ZELL_PANES_TOP&&s.y<(float)(ZELL_PANES_TOP+ZELL_PANES_EXIT_H));
+        /* Nothing in it is a station, the way back included. */
+        for(int i=0;i<ZELL_STATIONS;i++)assert(!zell_desktop_station_visible(&s,i));
+        assert(zell_desktop_near(&s)==-1);
+        /* Tab, Enter and Esc are the panes' keys: Kilix stays where he is. */
+        {
+            zell_controls keys={.launcher=true,.confirm=true,.cancel=true,.run=true};
+            float x=s.x,y=s.y;
+            zell_scene_tick(&s,&keys);
+            assert(s.room==room&&s.mode==ZELL_MODE_WALK&&s.x==x&&s.y==y&&!s.running&&!s.desktop_launch);
+        }
+        /* Standing still at the line is not leaving. */
+        {
+            zell_scene at=s;at.x=side>0?x1:x0;
+            for(int tick=0;tick<10;tick++)zell_scene_tick(&at,&none);
+            assert(at.room==room);
+        }
+        /* Away from the line he walks to the far side and stays. */
+        {
+            zell_scene far=s;
+            for(int tick=0;tick<400;tick++)zell_scene_tick(&far,&away);
+            assert(far.room==room&&far.x==(side>0?x0:x1));
+            /* Up and down he stays inside the canvas. */
+            for(int tick=0;tick<400;tick++)zell_scene_tick(&far,&south);
+            assert(far.room==room&&far.y==(float)(600-ZELL_PANES_BOTTOM));
+            /* At the line's side but below it, he does not leave. */
+            for(int tick=0;tick<400;tick++)zell_scene_tick(&far,&toward);
+            assert(far.room==room&&far.x==(side>0?x1:x0));
+            for(int tick=0;tick<400;tick++)zell_scene_tick(&far,&north);
+            assert(far.room==room&&far.y==(float)ZELL_PANES_TOP);
+            /* Up beside it, walking into it, he does. */
+            zell_scene_tick(&far,&toward);
+            assert(far.room==1);
+        }
+        /* A smaller pane keeps him inside it. */
+        {
+            zell_scene small=s;
+            small.x=900.f;small.y=590.f;
+            zell_scene_resize(&small,400,300);
+            zell_scene_tick(&small,&none);
+            assert(small.room==room&&small.x<=400.f-(float)ZELL_PANES_SIDE&&small.y<=300.f-(float)ZELL_PANES_BOTTOM);
+        }
+        /* Drawn edge to edge: the line on his side only, no HUD. */
+        zell_draw(&s,&canvas);
+        {
+            zell_rect line,other={side>0?0:960-ZELL_PANES_EXIT_W,0,ZELL_PANES_EXIT_W,ZELL_PANES_EXIT_H};
+            zell_panes_exit_rect(&s,&line);
+            assert(line.w==ZELL_PANES_EXIT_W&&line.h==ZELL_PANES_EXIT_H&&line.y==0&&line.x==(side>0?960-ZELL_PANES_EXIT_W:0));
+            assert(ink_count(&canvas,line,ZELL_PANES_EXIT_RGB,0)==line.w*line.h);
+            assert(ink_count(&canvas,other,ZELL_PANES_EXIT_RGB,40)==0);
+            zell_rect below={line.x,line.y+line.h,line.w,600-line.h};
+            assert(ink_count(&canvas,below,ZELL_PANES_EXIT_RGB,40)==0);
+            /* No title bar, vitals or status strip. */
+            assert(ink_count(&canvas,(zell_rect){0,0,420,30},0xf0d69bu,30)==0);
+            assert(ink_count(&canvas,(zell_rect){0,600-ZELL_ROOM_STATUS_STRIP,600,ZELL_ROOM_STATUS_STRIP},0xc7d8dau,30)==0);
+            /* Kilix is drawn where he stands, and only there. */
+            {
+                sr_canvas moved;zell_scene there=s;
+                assert(sr_canvas_init(&moved,960,600));
+                there.x=480.f;there.y=500.f;zell_draw(&there,&moved);
+                zell_rect body={(int)s.x-40,(int)s.y-92,80,100},moved_body={440,408,80,100};
+                assert(!rects_meet(body,moved_body));
+                assert(region_diffs(&canvas,&moved,body)>600);
+                assert(region_diffs(&canvas,&moved,(zell_rect){0,0,960,600})==region_diffs(&canvas,&moved,body)+region_diffs(&canvas,&moved,moved_body));
+                sr_canvas_free(&moved);
+            }
+            /* Before the helper paints, the room says it is opening. */
+            assert(ink_count(&canvas,(zell_rect){330,280,300,40},0xb9f8dbu,40)>40);
+        }
+        /* Back in the Command Center, in the opening, facing the room. */
+        {
+            int ticks=0;
+            while(s.room==room&&ticks<400){zell_scene_tick(&s,&toward);ticks++;}
+            assert(s.room==1&&ticks<30);
+            assert(s.x==(side>0?70.f:(float)(ZELL_WORLD_W-70))&&s.direction==(side>0?3:2));
+            assert(s.y>(float)ZELL_COMMAND_OPENING_TOP&&s.y<(float)ZELL_COMMAND_OPENING_BOTTOM);
+            assert(!zell_desktop_blocked(&s,s.x,s.y));
+            /* Into the room, then back the way he came. */
+            zell_controls into=side>0?east:west,back=side>0?west:east;
+            for(int tick=0;tick<4;tick++)zell_scene_tick(&s,&into);
+            assert(s.room==1);
+            ticks=0;
+            while(s.room==1&&ticks<200){zell_scene_tick(&s,&back);ticks++;}
+            assert(s.room==room);
+        }
+    }
+    /* Typing and clicking become lines for the helper. */
+    zell_panes_test_reset();
+    assert(!strcmp(zell_panes_pending(),""));
+    {
+        const unsigned char typed[]={'l','s','\r'};
+        zell_panes_key(typed,sizeof typed);
+        assert(!strcmp(zell_panes_pending(),"K6c730d\n"));
+        zell_panes_key(typed,0);
+        assert(!strcmp(zell_panes_pending(),"K6c730d\n"));
+    }
+    place_room(&s,1,0,0);
+    zell_panes_enter(&s,ZELL_ROOM_PANES_RIGHT);
+    s.mouse_valid=true;s.mouse_click=true;s.mouse_x=8*37+3;s.mouse_y=200;
+    assert(zell_desktop_click(&s)&&!s.mouse_click);
+    assert(!strcmp(zell_panes_pending(),"K6c730d\nC 37\n"));
+    /* Elsewhere a click is not the panes'. */
+    zell_panes_test_reset();
+    place_room(&s,1,(float)ZELL_WORLD_W*.5f,(float)ZELL_WORLD_H*.6f);
+    s.mouse_valid=true;s.mouse_click=true;s.mouse_x=10;s.mouse_y=10;
+    zell_desktop_click(&s);
+    assert(!strcmp(zell_panes_pending(),""));
+    /* Cells are 8x16, 1:1 from the top left; a pane past the largest frame
+     * stretches it, and a click lands in the stretched column. */
+    {
+        int cols,rows;
+        zell_panes_cells(1536,1000,&cols,&rows);assert(cols==192&&rows==62);
+        zell_panes_cells(100,50,&cols,&rows);assert(cols==20&&rows==8);
+        zell_panes_cells(4000,4000,&cols,&rows);assert(cols==240&&rows==120);
+        place_room(&s,1,0,0);zell_panes_enter(&s,ZELL_ROOM_PANES_LEFT);
+        assert(zell_panes_column(&s,0)==0&&zell_panes_column(&s,7)==0&&zell_panes_column(&s,8)==1&&zell_panes_column(&s,959)==119);
+        /* Under the largest frame the cells stay 1:1 even when the pane is
+         * not a whole number of them across. */
+        zell_scene_resize(&s,1007,600);
+        assert(zell_panes_column(&s,480)==60&&zell_panes_column(&s,999)==124&&zell_panes_column(&s,1006)==124);
+        zell_scene_resize(&s,3840,2160);
+        assert(zell_panes_column(&s,16)==1&&zell_panes_column(&s,1920)==120&&zell_panes_column(&s,3839)==239);
+    }
+    /* Plain arrows walk; with a modifier they are the pane's. */
+    assert(zell_panes_walks(true,0)&&zell_panes_walks(true,64)&&zell_panes_walks(true,128));
+    for(unsigned bit=0;bit<6;bit++)assert(!zell_panes_walks(true,1u<<bit));
+    assert(!zell_panes_walks(false,0));
+    /* A frame in the map is taken only when whole, for a pane room, and is
+     * drawn 1:1 from the top left; a click lands in the column drawn there. */
+    zell_panes_test_reset();
+    {
+        size_t bytes=zell_panes_map_bytes();
+        unsigned char *map=mmap(NULL,bytes,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_ANONYMOUS,-1,0);
+        uint32_t *px=(uint32_t *)(void *)(map+64);
+        int fw=0,fh=0;
+        assert(map!=MAP_FAILED&&bytes==64u+1920u*1920u*4u);
+        place_room(&s,1,0,0);zell_scene_resize(&s,960,600);zell_panes_enter(&s,ZELL_ROOM_PANES_LEFT);
+        int cols,rows;zell_panes_cells(960,600,&cols,&rows);
+        int w=cols*8,h=rows*16;
+        uint32_t header[6]={0,1,(uint32_t)w,(uint32_t)h,3,ZELL_ROOM_PANES_LEFT};
+        memcpy(map,"ZPNE",4);memcpy(map+4,header+1,20);
+        for(int y=0;y<h;y++)for(int x=0;x<w;x++)px[y*w+x]=0xff000000u|(uint32_t)((x/8)<<8)|(uint32_t)(y/16);
+        /* Odd: still being written. */
+        zell_panes_test_copy(map);
+        assert(!zell_panes_frame(ZELL_ROOM_PANES_LEFT,&fw,&fh));
+        header[4]=4;memcpy(map+16,&header[4],4);
+        zell_panes_test_copy(map);
+        assert(zell_panes_frame(ZELL_ROOM_PANES_LEFT,&fw,&fh)&&fw==w&&fh==h);
+        assert(!zell_panes_frame(ZELL_ROOM_PANES_RIGHT,&fw,&fh));
+        /* Another room's number, a bad size or a bad mark is not taken. */
+        {
+            uint32_t bad_room=3,big=1921,seq=6;
+            memcpy(map+16,&seq,4);memcpy(map+20,&bad_room,4);
+            zell_panes_test_copy(map);
+            assert(zell_panes_frame(ZELL_ROOM_PANES_LEFT,&fw,&fh));
+            bad_room=ZELL_ROOM_PANES_RIGHT;memcpy(map+20,&bad_room,4);memcpy(map+8,&big,4);
+            zell_panes_test_copy(map);
+            assert(zell_panes_frame(ZELL_ROOM_PANES_LEFT,&fw,&fh)&&!zell_panes_frame(ZELL_ROOM_PANES_RIGHT,&fw,&fh));
+            memcpy(map+8,&header[2],4);map[0]='X';
+            zell_panes_test_copy(map);
+            assert(!zell_panes_frame(ZELL_ROOM_PANES_RIGHT,&fw,&fh));
+            map[0]='Z';bad_room=ZELL_ROOM_PANES_LEFT;memcpy(map+20,&bad_room,4);
+        }
+        zell_draw(&s,&canvas);
+        int matched=0;
+        for(int y=2;y<h;y+=37)for(int x=4;x<w;x+=53){
+            if(x>=w-ZELL_PANES_EXIT_W-2&&y<ZELL_PANES_EXIT_H+2)continue;
+            if(x>=(int)s.x-40&&x<(int)s.x+40&&y>=(int)s.y-92&&y<(int)s.y+8)continue;
+            assert((canvas.px[(size_t)y*960u+(size_t)x]&0xffffffu)==(px[y*w+x]&0xffffffu));
+            assert(zell_panes_column(&s,x)==(int)((px[y*w+x]>>8)&255u));
+            matched++;
+        }
+        assert(matched>100);
+        /* Below and right of the cells the room is its plain ground. */
+        if(w<960)assert((canvas.px[300u*960u+959u]&0xffffffu)==0x0b1218u);
+        if(h<600)assert((canvas.px[599u*960u+100u]&0xffffffu)==0x0b1218u);
+        /* A minimised terminal is not drawn over the panes. */
+        {
+            sr_canvas tab;zell_scene with=s;
+            assert(sr_canvas_init(&tab,960,600));
+            with.terminal_minimized=true;with.service_phase=5;
+            zell_draw(&with,&tab);
+            assert(!memcmp(tab.px,canvas.px,(size_t)960*600*4));
+            sr_canvas_free(&tab);
+        }
+        /* When the helper fails its last picture goes and the room says so. */
+        zell_panes_test_fail("The panes stopped.");
+        assert(!zell_panes_frame(ZELL_ROOM_PANES_LEFT,&fw,&fh)&&!strcmp(zell_panes_error(),"The panes stopped."));
+        zell_draw(&s,&canvas);
+        assert(ink_count(&canvas,(zell_rect){330,280,300,40},0xe5ad87u,40)>40);
+        assert(ink_count(&canvas,(zell_rect){330,280,300,40},0xb9f8dbu,40)==0);
+        zell_panes_test_reset();
+        assert(!zell_panes_error()[0]);
+    }
+    sr_canvas_free(&canvas);
 }
 int main(void) {
     zell_scene s;
@@ -2359,6 +2673,8 @@ int main(void) {
     test_theater();
     test_names_show_only_beside_kilix();
     test_command_center();
+    test_command_openings();
+    test_pane_rooms();
     puts("desktop world, camera, alpha, idle/walk animation, launcher and voice: ok");
     return 0;
 }

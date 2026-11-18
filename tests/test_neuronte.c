@@ -222,7 +222,8 @@ static int like(uint32_t p, uint32_t rgb)
 /* The stair marker downstairs is the net's down-pointing triangle, fitted
  * to the box the raster build's triangle has: 28 wide at a level top two
  * pixels under the band's top edge, 20 high, coming to a point below the
- * middle of the stairs. At the world's own size the room is not moved. */
+ * middle of the stairs. At the world's own size the room is not moved. The
+ * Command Center's bottom edge still leads out but carries no marker. */
 static void test_stair_marker_is_a_triangle(void)
 {
     enum { W = ZELL_WORLD_W, H = ZELL_WORLD_H, ROWS = 32, REACH = 24 };
@@ -270,6 +271,10 @@ static void test_stair_marker_is_a_triangle(void)
                 first = first < 0 ? row : first;
                 last = row;
             }
+        }
+        if (room == 1) {
+            expect(first < 0 && total == 0, "the Command Center's way out is unmarked");
+            continue;
         }
         expect(first >= 0, "the marker is drawn");
         if (first < 0) {

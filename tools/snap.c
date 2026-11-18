@@ -210,6 +210,13 @@ int main(int argc, char **argv)
         /* The two bottom corners: Kilix beside the Key Master, then beside the computer. */
         scene.x=ZELL_WORLD_W*.865f;scene.y=ZELL_WORLD_H*.94f;failed+=shot(&scene,&canvas,argv[1],"command-key-master");
         scene.x=ZELL_WORLD_W*.16f;scene.y=ZELL_WORLD_H*.95f;failed+=shot(&scene,&canvas,argv[1],"command-computer");
+        /* Up the strip beside the left screens, then in the opening above them. */
+        scene.x=150.f;scene.y=600.f;scene.direction=ZELL_DIR_UP;failed+=shot(&scene,&canvas,argv[1],"command-strip");
+        scene.x=80.f;scene.y=278.f;scene.direction=ZELL_DIR_LEFT;failed+=shot(&scene,&canvas,argv[1],"command-opening");
+        /* The two pane rooms before their helper has painted anything. */
+        zell_panes_enter(&scene,ZELL_ROOM_PANES_LEFT);failed+=shot(&scene,&canvas,argv[1],"panes-left");
+        zell_panes_enter(&scene,ZELL_ROOM_PANES_RIGHT);failed+=shot(&scene,&canvas,argv[1],"panes-right");
+        scene.room=1;scene.direction=ZELL_DIR_RIGHT;
         scene.x=ZELL_WORLD_W*.50f;scene.y=ZELL_WORLD_H*.55f;
         scene.room=0;scene.hp=57;scene.os_health=70;scene.dirty_files=13;scene.update_age_days=3;
         scene.mouse_valid=true;scene.mouse_x=32;scene.mouse_y=50;

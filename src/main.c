@@ -851,6 +851,27 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
         (kittykb_input_key_down(&keyboard.input, KITTYKB_KEY_LEFT_SHIFT) ||
          kittykb_input_key_down(&keyboard.input, KITTYKB_KEY_RIGHT_SHIFT));
 
+    /* In a pane room the plain arrow keys walk Kilix and every other key,
+     * modified arrows included, goes to the pane last clicked. */
+    if(scene->desktop&&ZELL_ROOM_IS_PANES(scene->room)){
+        static const uint32_t held_mods[]={KITTYKB_KEY_LEFT_SHIFT,KITTYKB_KEY_RIGHT_SHIFT,KITTYKB_KEY_LEFT_CONTROL,KITTYKB_KEY_RIGHT_CONTROL,
+                                           KITTYKB_KEY_LEFT_ALT,KITTYKB_KEY_RIGHT_ALT,KITTYKB_KEY_LEFT_SUPER,KITTYKB_KEY_RIGHT_SUPER};
+        unsigned held=0;
+        for(size_t i=0;i<sizeof held_mods/sizeof held_mods[0];i++)if(kittykb_input_key_down(&keyboard.input,held_mods[i]))held|=1u;
+        controls->run=false;
+        controls->move_x=controls->move_y=0;
+        if(zell_panes_walks(true,held)){
+            controls->move_x=(kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_RIGHT)?1:0)-(kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_LEFT)?1:0);
+            controls->move_y=(kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_DOWN)?1:0)-(kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_UP)?1:0);
+        }
+        while(kittykb_input_next(&keyboard.input,&event)){
+            bool arrow=event.key==KITTYKB_KEY_UP||event.key==KITTYKB_KEY_DOWN||event.key==KITTYKB_KEY_LEFT||event.key==KITTYKB_KEY_RIGHT;
+            if(zell_panes_walks(arrow,event.modifiers))continue;
+            unsigned char bytes[TERMINAL_KEY_BYTES];size_t length=terminal_key_bytes(&event,bytes);
+            if(length)zell_panes_key(bytes,length);
+        }
+        return;
+    }
     if(scene->mode==ZELL_MODE_SERVICE&&scene->service_phase==5){
         size_t at=scene->service_send?strlen(scene->service_reply):0;
         if(at&&scene->service_reply[at-1]=='\n')at--;
@@ -1071,6 +1092,7 @@ static int run_scene(void)
                 scene.theater_install_code=-1;
             }
         }
+        if(scene.desktop)zell_panes_pump(&scene);
         /* service_frame ignores a job frame whose window generation does not match. */
         service_pump(&vitals,&scene);
         service_pump(&service,&scene);
@@ -1111,6 +1133,7 @@ static int run_scene(void)
 
     dictation_stop(&dictation);
     zell_theater_shutdown();
+    zell_panes_shutdown();
     service_stop(&vitals);
     service_stop(&service);
     free(scene.terminal_pixels);

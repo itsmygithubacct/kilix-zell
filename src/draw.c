@@ -751,7 +751,8 @@ void zell_draw(const zell_scene *scene, sr_canvas *canvas)
         if (scene->zoom_ticks > 0) desktop_zoom(scene, canvas);
         else if (scene->mode == ZELL_MODE_DESK || scene->mode == ZELL_MODE_LAUNCHER) desktop_panel(scene, canvas);
         else if (scene->mode != ZELL_MODE_WALK) desktop_dialogue(scene, canvas);
-        desktop_terminal_tab(scene, canvas);
+        /* A pane room is the whole pane: no minimised terminal over it. */
+        if (!ZELL_ROOM_IS_PANES(scene->room)) desktop_terminal_tab(scene, canvas);
         return;
     } else {
     sr_clear(canvas, 0x100e14u);

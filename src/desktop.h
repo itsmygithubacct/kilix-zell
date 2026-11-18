@@ -73,18 +73,69 @@ void zell_mana_console_layout(zell_rect *frame,zell_rect *display);
 void zell_command_computer_layout(zell_rect *frame,zell_rect *display);
 /* The computer's case ends this far right of its station point. */
 #define ZELL_COMMAND_COMPUTER_REACH 20
-/* The Key Master's name is drawn this far above his feet. */
 /* The Key Master's two lines, shown while Kilix is beside him. He stands in
  * the bottom right corner, with the AGENTS panel above him and the wall to
- * his right, so his lines go in the strip under that panel and above the
- * exit arrows, ending left of where Kilix can stand beside him. World
- * pixels: the right edge of both boxes and the top of the first. */
+ * his right, so his lines go in the strip under that panel, ending left of
+ * where Kilix can stand beside him. World pixels: the right edge of both
+ * boxes and the top of the first. */
 #define ZELL_KEY_MASTER_LABEL_RIGHT 1256
 #define ZELL_KEY_MASTER_LABEL_TOP 903
 #define ZELL_KEY_MASTER_HINT "Enter: encrypted secret vault"
-/* Arrows along the Command Center's open bottom edge, in world pixels. */
-#define ZELL_COMMAND_EXIT_ARROWS 5
-float zell_command_exit_arrow_x(int index);
+/* The Command Center's walls, world pixels. Its bottom edge is open and
+ * unmarked. Beside the screens a strip runs up each side wall to an opening
+ * in the top corner; the tunnel floor is OPENING_TOP..OPENING_BOTTOM, and
+ * Kilix goes through when his feet are OPENING_DEPTH from the world edge.
+ * Below STRIP_BOTTOM the walls stand where they always did. */
+#define ZELL_COMMAND_STRIP_LEFT 132
+#define ZELL_COMMAND_STRIP_RIGHT 1404
+#define ZELL_COMMAND_STRIP_BOTTOM 760
+#define ZELL_COMMAND_OPENING_TOP 226
+#define ZELL_COMMAND_OPENING_BOTTOM 330
+#define ZELL_COMMAND_OPENING_DEPTH 40
+/* Rooms through the Command Center's openings: a Kilix tab of two panes on
+ * the left, of four on the right, side by side, filling the whole pane. Kilix
+ * walks over them in canvas pixels. The way back is a thin green line down
+ * the top of the side he came in by. */
+#define ZELL_ROOM_PANES_LEFT 9
+#define ZELL_ROOM_PANES_RIGHT 10
+#define ZELL_ROOM_IS_PANES(room) ((room)==ZELL_ROOM_PANES_LEFT||(room)==ZELL_ROOM_PANES_RIGHT)
+#define ZELL_PANES_EXIT_H 112
+#define ZELL_PANES_EXIT_W 3
+#define ZELL_PANES_EXIT_RGB 0x3ee07cu
+/* Kilix's feet stay this far inside the canvas: SIDE from either side, TOP
+ * from the top (his picture is 84 high), BOTTOM from the bottom. */
+#define ZELL_PANES_SIDE 24
+#define ZELL_PANES_TOP 88
+#define ZELL_PANES_BOTTOM 2
+int zell_panes_count(int room);
+/* Side the exit line is on: -1 left, 1 right, 0 not a pane room. */
+int zell_panes_exit_side(int room);
+void zell_panes_exit_rect(const zell_scene *s,zell_rect *r);
+/* Walk in, walk back out. Both place Kilix just inside the room. */
+void zell_panes_enter(zell_scene *s,int room);
+void zell_panes_leave(zell_scene *s);
+int zell_panes_tick(zell_scene *s,const zell_controls *c);
+/* The helper process: started by the pump while a pane room is shown. */
+void zell_panes_pump(zell_scene *s);
+void zell_panes_shutdown(void);
+/* Bytes typed in a pane room, for the pane last clicked. */
+void zell_panes_key(const unsigned char *bytes,size_t count);
+bool zell_panes_click(zell_scene *s);
+/* The latest picture of the shown room, or NULL. */
+const uint32_t *zell_panes_frame(int room,int *width,int *height);
+/* Why there is no picture, or "". */
+const char *zell_panes_error(void);
+/* Terminal cells for a canvas: 8x16 pixels, at most 240x120. */
+void zell_panes_cells(int width,int height,int *cols,int *rows);
+/* Pane-protocol lines, for tests: what the pump would send next, and the
+ * column a click at canvas x lands in. */
+const char *zell_panes_pending(void);
+int zell_panes_column(const zell_scene *s,int x);
+void zell_panes_test_reset(void);
+void zell_panes_test_copy(void *map);
+void zell_panes_test_fail(const char *text);
+size_t zell_panes_map_bytes(void);
+bool zell_panes_walks(bool arrow,unsigned modifiers);
 void zell_command_switch_layout(int index,zell_rect *frame);
 /* World frame and glass for floor panel 0 (YOLO), 1 (agents), or 2 (spare).
  * Panels 0 and 1 use the command-switch rectangles. glass may be NULL. */

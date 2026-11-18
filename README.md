@@ -351,7 +351,18 @@ Four floor hatches lead to the **Command Center**, **Laundry**, **Vault**, and
 the downstairs stair hatch returns to the cave. The Command Center has no
 stairs: Kilix leaves it by walking off the bottom of its floor, anywhere
 between the Command computer in the bottom left corner and the Key Master in
-the bottom right. Tab lists the current room's
+the bottom right; nothing marks that edge. Up the strip beside the screens on
+either side wall is an opening in the top corner, and through it a room of
+panes: two side by side on the left, four on the right. A pane room is one
+Kilix tab filling the whole Zell pane, with no border. Click a pane to type
+into it. The plain arrow keys move Kilix; with Shift, Ctrl or Alt they go to
+the pane. The panes have no scrollback, mouse or paste yet.
+A thin green line in the top corner he came in by is the way back: walk into
+it beside the line. The shells are started by `tools/zell_panes.py` the first
+time he enters and keep running, unpainted, while he is elsewhere, until Zell
+closes. They start in your home folder. They are Zell's own shells, not
+Kilix windows: Kilix does not list them, and they cannot be sent text as Zell's
+window. Tab lists the current room's
 stations. Five command-center screens bind to real Kilix coding tabs, with exact
 broker identities saved after successful creation. Interacting opens/focuses the
 session. The larger screens show bounded text previews of their assigned Codex

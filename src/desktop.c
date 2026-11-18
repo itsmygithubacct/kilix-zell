@@ -116,6 +116,8 @@ const char *zell_desktop_action(int station,int index){return index>=0&&index<ze
 void zell_desktop_init(zell_scene *s){s->desktop=true;s->x=(float)ZELL_WORLD_W*.51f;s->y=(float)ZELL_WORLD_H*.48f;s->station=0;s->desktop_launch=false;s->hp=100;s->max_hp=100;s->fatigue=100;s->mana=-1;s->update_age_days=-1;s->mana_age=-1;s->os_health=-1;s->dirty_files=0;}
 bool zell_desktop_station_visible(const zell_scene *s,int station){
  if(s->room==0)return station<ZELL_CAVE_STATIONS||station==32||station==37||station==38||(station>=42&&station<=45)||(station>=ZELL_GAME_HATCH&&station<=ZELL_LIBRARY_HATCH);
+ /* A pane room is all terminal: nothing in it is a station. */
+ if(ZELL_ROOM_IS_PANES(s->room))return false;
  if(station==28)return true;
  if(s->room==1)return (station>=15&&station<=19)||(station>=29&&station<=31)||(station>=46&&station<=48)||station==ZELL_FLOOR_PANEL||station==ZELL_COMMAND_COMPUTER;
  if(s->room==2)return (station>=20&&station<20+s->disk_count)||station==34||station==35;
@@ -405,6 +407,7 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
  /* Pumps the theater helper. A consumed key, including fullscreen Escape, wins. */
  if(zell_theater_input(s,c))return 1;
  if(s->zoom_ticks>0){if(++s->zoom_ticks>ZELL_ZOOM_TICKS){s->zoom_ticks=0;s->desktop_launch=true;}return 1;}
+ if(ZELL_ROOM_IS_PANES(s->room))return zell_panes_tick(s,c);
  if(!c->run){s->running=false;s->run_charge=0;s->run_blocked=false;}
  if(s->mode!=ZELL_MODE_WALK){s->running=false;s->run_charge=0;s->run_bump=0;s->run_blocked=c->run;}
  workshop_on_frame(s);
@@ -466,8 +469,10 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
     float oldx=s->x,oldy=s->y;
     s->x+=dx/d*speed/(float)steps;s->y+=dy/d*speed/(float)steps;
     float nx=s->x/(float)ZELL_WORLD_W,ny=s->y/(float)ZELL_WORLD_H;
-    if(nx<.135f){s->x=(float)ZELL_WORLD_W*.135f;blocked=true;}
-    if(nx>.865f){s->x=(float)ZELL_WORLD_W*.865f;blocked=true;}
+    /* The Command Center's walls are rectangles in the block table, so its
+     * side strips and openings can run past the .135W/.865W line. */
+    if(s->room!=1&&nx<.135f){s->x=(float)ZELL_WORLD_W*.135f;blocked=true;}
+    if(s->room!=1&&nx>.865f){s->x=(float)ZELL_WORLD_W*.865f;blocked=true;}
     {
      float north=zell_desktop_north(s->room);
      if(s->y<north){s->y=north;blocked=true;}
@@ -486,6 +491,11 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
      if(!zell_desktop_station_visible(s,i)||i==28||i==46||i==47||i==ZELL_WORKSHOP_COMPUTER||i==ZELL_COMMAND_COMPUTER||i==ZELL_FLOOR_PANEL||(s->room==0&&i>=6&&!(i>=32&&i<=41)))continue;
      float ax=s->x-zell_stations[i].x*ZELL_WORLD_W,ay=s->y-zell_stations[i].y*ZELL_WORLD_H;
      if(ax*ax+ay*ay<26*26){s->x=oldx;s->y=oldy;blocked=true;break;}
+    }
+    /* Through an opening in the Command Center's top corners. */
+    if(s->room==1&&(s->x<(float)ZELL_COMMAND_OPENING_DEPTH||s->x>(float)(ZELL_WORLD_W-ZELL_COMMAND_OPENING_DEPTH))){
+     zell_panes_enter(s,s->x<(float)ZELL_WORLD_W*.5f?ZELL_ROOM_PANES_LEFT:ZELL_ROOM_PANES_RIGHT);
+     return 1;
     }
     /* The Command Center's open bottom is a way out on a blocked step too:
      * sliding down a side wall leaves the room, never the world. */
@@ -646,11 +656,6 @@ void zell_command_computer_layout(zell_rect *frame,zell_rect *display){
  *frame=(zell_rect){(int)(station->x*ZELL_WORLD_W)+ZELL_COMMAND_COMPUTER_REACH-w,(int)(station->y*ZELL_WORLD_H)-h,w,h};
  *display=(zell_rect){frame->x+w*11/100,frame->y+h*15/100,w*78/100,h*62/100};
 }
-float zell_command_exit_arrow_x(int index){
- if(index<0)index=0;
- if(index>=ZELL_COMMAND_EXIT_ARROWS)index=ZELL_COMMAND_EXIT_ARROWS-1;
- return (.26f+.12f*(float)index)*(float)ZELL_WORLD_W;
-}
 void zell_command_switch_layout(int index,zell_rect *frame){
  if(index<0||index>1){*frame=(zell_rect){0};return;}
  const zell_station *station=&zell_stations[46+index];
@@ -676,6 +681,8 @@ bool zell_desktop_click(zell_scene *s){
  /* Screen-space theater hits consume the click before any world conversion. */
  if(zell_theater_click(s))return true;
  if(!s->desktop||!s->mouse_valid||!s->mouse_click||s->mode!=ZELL_MODE_WALK)return false;
+ /* A click in a pane room picks the pane that typing goes to. */
+ if(ZELL_ROOM_IS_PANES(s->room))return zell_panes_click(s);
  /* One inverse for every room. Hits are world rectangles, never the camera. */
  float wx,wy;zell_screen_to_world(s,(float)s->mouse_x,(float)s->mouse_y,&wx,&wy);
  int ix=(int)floorf(wx),iy=(int)floorf(wy);
@@ -1040,3 +1047,4 @@ void zell_notice_apply(zell_scene *s,const char *text){
 }
 
 #include "desktop_theater.inc"
+#include "desktop_panes.inc"

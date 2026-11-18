@@ -338,16 +338,8 @@ static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
   sr_fill_rect(c,x0,y,x1-x0,16,0x14201cu,.88f);
   desktop_down_arrow(c,mid,14.f,y+2.f,y+22.f,0xd7b56au,.95f);
  }
- /* The Command Center is left by walking off the bottom of its floor,
-  * anywhere between the two corners. A row of arrows says so. */
- if(!front&&s->room==1){
-  float y=0.93f*(float)ZELL_WORLD_H-(float)cy;
-  for(int k=0;k<ZELL_COMMAND_EXIT_ARROWS;k++){
-   float mid=zell_command_exit_arrow_x(k)-(float)cx;
-   sr_fill_rect(c,mid-24.f,y,48.f,16,0x14201cu,.88f);
-   desktop_down_arrow(c,mid,14.f,y+2.f,y+22.f,0xd7b56au,.95f);
-  }
- }
+ /* The Command Center is still left by walking off the bottom of its
+  * floor, but nothing marks it: its marked ways out are the openings. */
  if(front&&s->room==1)desktop_fleet_board(s,c,cx,cy);
 }
 static void desktop_vitals(const zell_scene *s,sr_canvas *c){
@@ -556,7 +548,30 @@ static void desktop_chrome(const zell_scene *s,sr_canvas *c,int cx,int cy){
  zell_notice_show(s,c,hint);
  desktop_vitals(s,c);
 }
+/* A pane room is the panes and Kilix, edge to edge: no HUD, no status
+ * strip, no border. The thin green line is the way back. */
+static void desktop_panes_room(const zell_scene *s,sr_canvas *c){
+ int w=0,h=0;
+ const uint32_t *pixels=zell_panes_frame(s->room,&w,&h);
+ sr_clear(c,0x0b1218u);
+ if(pixels){
+  sr_canvas frame;sr_canvas_wrap(&frame,(uint32_t *)pixels,w,h);
+  if(c->w>1920||c->h>1920)sr_blit_scaled(c,&frame,0,0,c->w,c->h,1);
+  else sr_blit_scaled(c,&frame,0,0,w,h,1);
+ }else{
+  char text[200];const char *error=zell_panes_error();
+  if(error[0])snprintf(text,sizeof text,"%s",error);
+  else snprintf(text,sizeof text,"Opening %d panes...",zell_panes_count(s->room));
+  desktop_label(c,c->w/2,c->h/2,text,error[0]?0xe5ad87u:0xb9f8dbu);
+ }
+ zell_rect exit;zell_panes_exit_rect(s,&exit);
+ sr_fill_rect(c,(float)exit.x,(float)exit.y,(float)exit.w,(float)exit.h,ZELL_PANES_EXIT_RGB,1);
+ zell_actor_pose pose=zell_desktop_pose(s,-1);
+ sr_fill_ellipse(c,s->x,s->y,17.f,5.f,0x071719u,.45f);
+ desktop_art(c,pose.art,(int)s->x+pose.offset_x,(int)s->y+pose.offset_y,84);
+}
 static void desktop_base(const zell_scene *s,sr_canvas *c){
+ if(ZELL_ROOM_IS_PANES(s->room)){desktop_panes_room(s,c);return;}
  int cx,cy;zell_desktop_camera(s,&cx,&cy);
  static sr_canvas world;
  if(!world.px&&!sr_canvas_init(&world,ZELL_WORLD_W,ZELL_WORLD_H)){
