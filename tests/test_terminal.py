@@ -17,6 +17,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'tools'))
+import zell_debug as debug
 import zell_terminal as terminal
 import zell_update as update
 from zell_dialogue import Dialogue
@@ -37,7 +38,7 @@ class UpdateTests(unittest.TestCase):
             self.assertLess(abs(json.loads(path.read_text())['completed_at'] - time.time()), 5)
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual({p.name for p in Path(directory).iterdir()},
-                             {'os-update.json','os-jobs.json','notices.json','.os.lock'})
+                             {'os-update.json','os-jobs.json','notices.json','.os.lock','zell-log.jsonl'})
             jobs=json.loads((Path(directory)/'os-jobs.json').read_text())
             self.assertEqual(next(iter(jobs.values()))['status'],'completed')
 
@@ -126,21 +127,54 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(status, 130, text)
         self.assertNotIn('process(es) running', text)
 
-    def test_debug_log_is_off_by_default_and_records_the_run_when_asked(self):
+    def test_the_log_is_on_by_default_and_off_when_asked(self):
         with tempfile.TemporaryDirectory() as directory:
-            log = Path(directory, 'debug.jsonl')
-            for enabled in (False, True):
-                env = dict(KILIX_ZELL_STATE=directory, **({'KILIX_ZELL_DEBUG_LOG': str(log)} if enabled else {}))
+            default = Path(directory, 'state', 'zell-log.jsonl')
+            named = Path(directory, 'named.jsonl')
+            state = str(Path(directory, 'state'))
+            for setting, written in ((None, default), ('off', None), ('OFF', None), (str(named), named)):
+                env = dict(KILIX_ZELL_STATE=state)
                 with patch.dict(os.environ, env), patch.object(update, 'COMMAND', 'exit 3'), \
                         patch('builtins.input', return_value='hunter2'), contextlib.redirect_stdout(io.StringIO()):
-                    os.environ.pop('KILIX_ZELL_DEBUG_LOG', None) if not enabled else None
+                    os.environ.pop('KILIX_ZELL_DEBUG_LOG', None)
+                    if setting is not None:
+                        os.environ['KILIX_ZELL_DEBUG_LOG'] = setting
+                    self.assertEqual(debug.path(), written and str(written))
+                    sizes = {p: p.stat().st_size for p in (default, named) if p.exists()}
                     self.assertEqual(update.main(), 3)
-                self.assertEqual(log.exists(), enabled)
-            events = [json.loads(line) for line in log.read_text().splitlines()]
+                for p in (default, named):
+                    grew = p.exists() and p.stat().st_size > sizes.get(p, 0)
+                    self.assertEqual(grew, p == written, (setting, p))
+            events = [json.loads(line) for line in default.read_text().splitlines()]
             self.assertEqual([e['event'] for e in events], ['update.started', 'update.shell_exited', 'update.finished'])
             self.assertEqual(events[1]['status'], 3)
-            self.assertEqual(log.stat().st_mode & 0o777, 0o600)
-            self.assertNotIn('hunter2', log.read_text())  # typed input is never logged
+            self.assertEqual(default.stat().st_mode & 0o777, 0o600)
+            self.assertNotIn('hunter2', default.read_text() + named.read_text())  # typed input is never logged
+
+    def test_the_log_is_kept_to_two_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            where = Path(directory, 'log.jsonl')
+            with patch.dict(os.environ, KILIX_ZELL_DEBUG_LOG=str(where)), patch.object(debug, 'LOG_BYTES', 200):
+                for n in range(40):
+                    debug.log('tick', n=n)
+            old, new = Path(str(where) + '.1'), where
+            self.assertLess(new.stat().st_size, 200 + 100)
+            self.assertLess(old.stat().st_size, 200 + 100)
+            numbers = [json.loads(line)['n'] for path in (old, new) for line in path.read_text().splitlines()]
+            self.assertEqual(numbers, list(range(numbers[0], 40)))
+            self.assertFalse(Path(directory, 'log.jsonl.2').exists())
+
+    def test_a_floating_terminal_that_fails_says_where_the_log_is(self):
+        with tempfile.TemporaryDirectory() as directory:
+            where = Path(directory, 'log.jsonl')
+            ui = SimpleNamespace(DIALOGUE=SimpleNamespace(), page_text=Mock())
+            with patch.dict(os.environ, KILIX_ZELL_DEBUG_LOG=str(where)):
+                os.environ.pop('ZELL_TERMINAL_FD', None)
+                self.assertIsNone(terminal.terminal_loop(ui, ['true'], title='t'))
+                self.assertIn(f'What went wrong is in {where}.', ui.page_text.call_args.args[0])
+                self.assertIn("KeyError('ZELL_TERMINAL_FD')", where.read_text())
+                self.assertIsNone(terminal.terminal_loop(ui, ['true'], title='t', sensitive=True))
+                self.assertNotIn('What went wrong', ui.page_text.call_args.args[0])
 
     def test_confirm_or_cancel(self):
         ui = SimpleNamespace(choose=Mock(return_value=None))

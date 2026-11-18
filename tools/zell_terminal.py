@@ -171,8 +171,10 @@ def terminal_loop(ui, command, title=None, sensitive=False):
             workspace.close()
             workspace = None
         # Never include arbitrary terminal data or input in the dialogue protocol.
+        where = None if sensitive else zell_debug.path()
         ui.page_text('Could not open or continue the floating Neuronte terminal. '
-                     'Check the Neuronte display library, weights, and shared surface configuration.')
+                     'Check the Neuronte display library, weights, and shared surface configuration.'
+                     + (f' What went wrong is in {where}.' if where else ''))
         return None
     finally:
         if workspace is not None:
