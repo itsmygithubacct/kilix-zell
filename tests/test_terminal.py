@@ -29,9 +29,11 @@ class UpdateTests(unittest.TestCase):
         quiet.start();self.addCleanup(quiet.stop)
 
     def test_success_exact_command_private_atomic_stamp(self):
+        # The log on, as it is by default: it is in the state folder too.
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, KILIX_ZELL_STATE=directory), \
                 patch.object(update, 'run_to_completion', return_value=0) as run, \
                 patch('builtins.input', return_value=''), contextlib.redirect_stdout(io.StringIO()):
+            os.environ.pop('KILIX_ZELL_DEBUG_LOG', None)
             self.assertEqual(update.main(), 0)
             run.assert_called_once_with('sudo apt update && sudo apt -y upgrade')
             path = Path(directory)/'os-update.json'
@@ -165,6 +167,27 @@ class UpdateTests(unittest.TestCase):
             self.assertEqual(numbers, list(range(numbers[0], 40)))
             self.assertFalse(Path(str(where) + '.2').exists())
             self.assertEqual(where.parent.stat().st_mode & 0o777, 0o700)
+
+    def test_a_rotation_waits_for_another_and_keeps_its_file(self):
+        # Helper B finds the log full and waits for the lock while helper A
+        # moves it aside and starts a new one: B then writes to the new one
+        # and does not move it over the full one A kept.
+        with tempfile.TemporaryDirectory() as directory:
+            where = Path(directory, 'log.jsonl')
+            where.write_text(''.join(json.dumps({'event': 'old', 'n': n}) + '\n' for n in range(60)))
+            real, state = debug.fcntl.flock, {'inside': False}
+
+            def flock(fd, how):
+                if not state['inside']:
+                    state['inside'] = True
+                    debug.log('from A')
+                real(fd, how)
+            with patch.dict(os.environ, KILIX_ZELL_DEBUG_LOG=str(where)), patch.object(debug, 'LOG_BYTES', 1000), \
+                    patch.object(debug.fcntl, 'flock', flock):
+                debug.log('from B')
+            old = [json.loads(line)['event'] for line in Path(str(where) + '.1').read_text().splitlines()]
+            new = [json.loads(line)['event'] for line in where.read_text().splitlines()]
+            self.assertEqual((old, new), (['old'] * 60, ['from A', 'from B']))
 
     def test_a_floating_terminal_that_fails_says_where_the_log_is(self):
         with tempfile.TemporaryDirectory() as directory:

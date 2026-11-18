@@ -7,6 +7,7 @@ twice that. Events are what the helpers did and how they ended. Keyboard
 input and terminal contents are never passed here: the floating terminal
 carries a sudo password.
 """
+import fcntl
 import json
 import os
 import sys
@@ -31,6 +32,10 @@ def enabled():
     return path() is not None
 
 
+def _open(where):
+    return os.open(where, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+
+
 def log(event, **fields):
     where = path()
     if not where:
@@ -39,14 +44,22 @@ def log(event, **fields):
                   src=os.path.basename(sys.argv[0] or '?'), event=event, **fields)
     try:
         os.makedirs(os.path.dirname(where) or '.', mode=0o700, exist_ok=True)
+        fd = _open(where)
         try:
-            if os.stat(where).st_size >= LOG_BYTES:
-                os.replace(where, where + '.1')
-        except FileNotFoundError:
-            pass
-        # One O_APPEND write per line keeps concurrent helpers from interleaving.
-        fd = os.open(where, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
-        try:
+            if os.fstat(fd).st_size >= LOG_BYTES:
+                # Moved aside under a lock on the full file, and only while
+                # it is still the one at the path: a helper that waited for
+                # the lock finds the new file there and leaves .1 alone.
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                try:
+                    if os.stat(where).st_ino == os.fstat(fd).st_ino:
+                        os.replace(where, where + '.1')
+                except FileNotFoundError:
+                    pass
+                os.close(fd)
+                fd = _open(where)
+            # One O_APPEND write per line keeps concurrent helpers from
+            # interleaving.
             os.write(fd, (json.dumps(record, default=str) + '\n').encode())
         finally:
             os.close(fd)

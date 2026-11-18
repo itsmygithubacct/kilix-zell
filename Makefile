@@ -14,6 +14,9 @@ NSDK_DIR ?= $(MODULES)/neuronte-sdk
 NSDK_CANVAS_C := $(NSDK_DIR)/src/neuronte_sdk_canvas.c
 NSDK_CANVAS_H := $(NSDK_DIR)/include/neuronte_sdk_canvas.h
 BUILD := $(ROOT)/build
+# What make runs of Zell is its tests: they keep no log in the user's state
+# directory unless KILIX_ZELL_DEBUG_LOG names one.
+export KILIX_ZELL_DEBUG_LOG ?= off
 
 CC ?= cc
 CFLAGS ?= -O2 -g

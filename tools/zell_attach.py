@@ -323,8 +323,11 @@ class View:
         self.process = kilix.observe(pane.broker_session)
         os.set_blocking(self.process.stdout.fileno(), False)
         self.sender = Sender(kilix, pane.id)
-        self.oy = 0
+        self.ox = self.oy = 0
         self.lines = []  # (row, start, width) of each row drawn
+        # Wrapped lines past the drawn ones, and how many of them the wheel
+        # has gone up through at the oldest row kept.
+        self.spare = self.extra = 0
         self.named = ''
         self.next_size = clock() + SIZE_SECONDS
         self.ended = False
@@ -395,16 +398,30 @@ class View:
         kept, first, shown = terminal.scrollbar()
         live = first + shown >= kept
         lines, at = [], None
-        for row in range(trows):
-            on_row = cx if row == cy else None
-            for start, width in wrap_row(texts[row] if row < len(texts) else [], cols, tcols, on_row):
-                if on_row is not None and start <= cx < start + max(1, width):
-                    at = (len(lines), cx - start)
-                lines.append((row, start, width))
-        if live and at is not None:
+        if terminal.alternate_screen():
+            # A full-screen program is laid out for its own width: not
+            # wrapped, but shown a window's width at a time from its cursor.
+            self.ox = follow(self.ox, cx, cols, tcols)
+            lines = [(row, self.ox, max(0, min(cols, tcols - self.ox))) for row in range(trows)]
+            if cy < trows:
+                at = (cy, cx - self.ox)
+        else:
+            self.ox = 0
+            for row in range(trows):
+                on_row = cx if row == cy else None
+                for start, width in wrap_row(texts[row] if row < len(texts) else [], cols, tcols, on_row):
+                    if on_row is not None and start <= cx < start + max(1, width):
+                        at = (len(lines), cx - start)
+                    lines.append((row, start, width))
+        # Live, the cursor is followed; scrolled back, the lines nearest the
+        # live ones are shown, so each wheel step brings new rows in; at the
+        # oldest row kept, the wheel goes on up through the wrapped lines.
+        self.spare = max(0, len(lines) - area)
+        self.extra = min(self.extra, self.spare)
+        if live and not self.extra and at is not None:
             self.oy = follow(self.oy, at[0], area, len(lines))
         else:
-            self.oy = 0
+            self.oy = self.spare - self.extra
         self.lines = lines[self.oy:self.oy + area]
         drawn = []
         for y in range(area):
@@ -423,6 +440,8 @@ class View:
             parts.append(f'not sent: {error}')
         if back:
             parts.append(f'{back} lines back')
+        if self.ox:
+            parts.append(f'from column {self.ox + 1}')
         parts += ['Ctrl-] leaves', self.title, f'{tcols}x{trows}']
         status = fit(' ' + ' / '.join(parts) + ' ', cols)
         drawn.append('\x1b[0;7m' + status + '\x1b[0m')
@@ -434,7 +453,8 @@ class View:
         for y, line in enumerate(drawn):
             if y >= len(previous) or previous[y] != line:
                 out.append(f'\x1b[{y + 1};1H' + line)
-        visible = live and at is not None and terminal.mode(25) and self.oy <= at[0] < self.oy + area
+        visible = (live and at is not None and terminal.mode(25) and self.oy <= at[0] < self.oy + area
+                   and 0 <= at[1] < cols)
         if visible:
             out.append(f'\x1b[{at[0] - self.oy + 1};{at[1] + 1}H\x1b[?25h')
         else:
@@ -462,12 +482,13 @@ class View:
         """One pointer report from this terminal (cells counted from one)."""
         if y > rows - 1 or x < 1 or y < 1:
             return
-        # The cell under it, through the wrapping: none past a row's piece.
+        # The cell under it, through the wrapping; past a piece's end, its
+        # last cell, so a release there still reaches the program.
         row = column = None
         if y <= len(self.lines):
             row, start, width = self.lines[y - 1]
-            if x <= width:
-                column = start + x - 1
+            if width > 0:
+                column = start + min(x, width) - 1
         terminal = self.terminal
         low = buttons & 3
         wheel, motion = bool(buttons & 64), bool(buttons & 32)
@@ -487,12 +508,20 @@ class View:
                 letter = b'A' if low == 0 else b'B'
                 self.send(((b'\x1bO' if terminal.mode(1) else b'\x1b[') + letter) * WHEEL_ROWS)
             return
-        terminal.scroll(-WHEEL_ROWS if low == 0 else WHEEL_ROWS)
+        up = low == 0
+        _kept, first, _shown = terminal.scrollbar()
+        if up and first == 0 and self.oy > 0:
+            self.extra = min(self.spare, self.spare - self.oy + WHEEL_ROWS)
+        elif not up and self.extra:
+            self.extra = max(0, self.extra - WHEEL_ROWS)
+        else:
+            terminal.scroll(-WHEEL_ROWS if up else WHEEL_ROWS)
 
     def send(self, data, live=True):
         if not data:
             return
         if live:
+            self.extra = 0
             kept, first, shown = self.terminal.scrollbar()
             if first + shown < kept:
                 self.terminal.scroll_bottom()

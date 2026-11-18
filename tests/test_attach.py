@@ -338,10 +338,63 @@ class ViewTests(unittest.TestCase):
         self.assertEqual([re.sub('\x1b\\[[0-9;]*[A-Za-z]', '', line).rstrip() for line in drawn[:5]],
                          ['the quick', 'brown fox', 'jumps over', 'x', ''])
 
+    def test_a_full_screen_program_is_not_wrapped(self):
+        # On the alternate screen rows keep the program's width: a window of
+        # it from the cursor, as before wrapping, every row its own line.
+        self.term.alternate, self.term.cols = True, 60
+        self.term.screen = ['row0 ' + 'w' * 50, 'row1', 'row2', 'row3', 'row4', '-- INSERT -- notes.txt']
+        self.term.cursor = (55, 0)
+        _text, drawn = self.view.paint(50, 8, [])
+        self.assertEqual(self.view.ox, 6)
+        self.assertEqual(self.view.lines, [(row, 6, 50) for row in range(6)])
+        self.assertIn('from column 7', drawn[-1])
+        self.assertIn('notes.txt', drawn[5])
+        self.view.pointer(0, 3, 6, False, 50, 8)
+        self.term.modes.add(1000)
+        self.view.pointer(0, 3, 6, False, 50, 8)
+        self.assertEqual(self.term.mice, [(0, 1, 0, 8 * 8, 5 * 16)])
+        # Back on the main screen, rows wrap again from column 1.
+        self.term.alternate = False
+        _text, drawn = self.view.paint(50, 8, [])
+        self.assertEqual((self.view.ox, self.view.lines[:2]), (0, [(0, 0, 5), (0, 5, 50)]))
+
+    def test_the_wheel_reaches_every_wrapped_line(self):
+        # Six rows that wrap to two lines each, shown six lines at a time.
+        self.term.cols = 60
+        self.term.screen = [f'{row}' + 'x' * 50 for row in range(6)]
+        self.term.cursor = (0, 5)
+        self.view.paint(30, 7, [])
+        self.assertEqual((self.view.oy, self.view.spare), (5, 6))
+        # No rows kept above: the wheel goes up through the wrapped lines,
+        # to the first, and back down to the cursor's.
+        tops = []
+        for _ in range(4):
+            self.view.pointer(64, 3, 3, False, 30, 7)
+            self.view.paint(30, 7, [])
+            tops.append(self.view.oy)
+        self.assertEqual(tops, [2, 0, 0, 0])
+        self.assertEqual(self.term.back, 0)
+        for _ in range(3):
+            self.view.pointer(65, 3, 3, False, 30, 7)
+            self.view.paint(30, 7, [])
+            tops.append(self.view.oy)
+        self.assertEqual(tops[4:], [3, 5, 5])
+        # Typing goes back to the cursor's lines.
+        self.view.pointer(64, 3, 3, False, 30, 7)
+        self.view.send(b'x')
+        self.view.paint(30, 7, [])
+        self.assertEqual(self.view.oy, 5)
+        # With rows kept above, the wheel scrolls them in first, the lines
+        # nearest the live ones shown.
+        self.term.kept_above = 40
+        self.view.pointer(64, 3, 3, False, 30, 7)
+        self.view.paint(30, 7, [])
+        self.assertEqual((self.term.back, self.view.oy), (3, 6))
+
     def test_scrolled_back_it_shows_from_the_top_and_says_so(self):
         self.term.kept_above, self.term.back = 40, 12
         _text, drawn = self.view.paint(30, 8, [])
-        self.assertEqual(self.view.oy, 0)
+        self.assertEqual(self.view.oy, 0)  # six rows fit in seven
         self.assertIn('12 lines back', drawn[-1])
         # Typing goes back to the live rows.
         self.view.send(b'x')
@@ -378,18 +431,19 @@ class ViewTests(unittest.TestCase):
         self.assertEqual(self.term.back, 3)
         self.term.back = 0
         # The status line is not the pane's, even over a pane taller than
-        # here; nor what is past a piece's end.
+        # here; past a piece's end is its last cell, so a release made there
+        # still reaches the program.
         self.term.rows = 40
         self.view.pointer(0, 3, 8, False, 30, 8)
+        self.assertEqual(len(self.term.mice), 5)
         self.term.screen[1] = 'aaaa bbbb'
         self.term.cols = 12
         self.term.screen[0] = 'aaaa bbbb cc'
         self.view.paint(8, 8, [])
         self.assertEqual(self.view.lines[:2], [(0, 0, 5), (0, 5, 7)])
-        self.view.pointer(0, 6, 1, False, 8, 8)
-        self.assertEqual(len(self.term.mice), 5)
-        self.view.pointer(0, 5, 1, False, 8, 8)
-        self.assertEqual(self.term.mice[-1], (0, 1, 0, 32, 0))
+        self.view.pointer(0, 2, 1, False, 8, 8)
+        self.view.pointer(0, 7, 1, True, 8, 8)
+        self.assertEqual(self.term.mice[-2:], [(0, 1, 0, 8, 0), (1, 1, 0, 32, 0)])
         self.assertTrue(wait_for(lambda: len(b''.join(data for _id, data in self.kilix.sent)) > 0))
 
     def test_the_wheel_on_an_alternate_screen_is_arrows_when_asked(self):
@@ -487,6 +541,42 @@ class RealDisplayTests(unittest.TestCase):
         self.assertTrue(wait_for(lambda: kilix.sent))
         # 1000 without 1006: the reports it asked for are X10's.
         self.assertEqual(kilix.sent[0][1], b'\x1b[M' + bytes([32 + 64, 32 + 2, 32 + 7]))
+
+
+class RealScrollTests(RealDisplayTests):
+    def view_of(self, columns, lines):
+        kilix = FakeKilix(output=b'')
+        view = attach.View(self.display, kilix, kilix_pane(columns=columns, lines=lines), clock=time.monotonic)
+        self.addCleanup(os.unlink, kilix.path)
+        self.addCleanup(view.close)
+        return view
+
+    def shown(self, view, cols, rows):
+        text = re.sub('\x1b\\[[0-9;?]*[A-Za-z]|\x1b\\][^\x07]*\x07', '', view.paint(cols, rows, [])[0])
+        return set(int(n) for n in re.findall(r'L(\d{3})', text))
+
+    def test_the_wheel_reaches_every_wrapped_row(self):
+        view = self.view_of(60, 10)
+        view.terminal.feed(b''.join(b'L%03d ' % n + b'x' * 51 + b'\r\n' for n in range(200)))
+        seen = self.shown(view, 30, 11)
+        for _ in range(80):
+            view.pointer(64, 3, 3, False, 30, 11)
+            seen |= self.shown(view, 30, 11)
+        for _ in range(80):
+            view.pointer(65, 3, 3, False, 30, 11)
+            seen |= self.shown(view, 30, 11)
+        # Every row still kept is reached.
+        kept = view.terminal.scrollbar()[0]
+        self.assertGreater(kept, 100)
+        self.assertEqual(set(range(max(0, 201 - kept), 200)) - seen, set())
+
+    def test_a_full_screen_program_keeps_every_row(self):
+        view = self.view_of(60, 10)
+        screen = b'\x1b[?1049h\x1b[H' + b''.join(b'%d word word word word word word word word word word\r\n' % n for n in range(9))
+        view.terminal.feed(screen + b'\x1b[7m-- INSERT -- notes.txt\x1b[0m\x1b[1;1H')
+        text = view.paint(30, 11, [])[0]
+        self.assertIn('INSERT', text)
+        self.assertEqual(len(view.lines), 10)
 
 
 class EndToEndTests(unittest.TestCase):
