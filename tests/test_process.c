@@ -935,9 +935,12 @@ static void test_paste_question(void){
             desktop_input_feed(&scene,"\033[F",3);
             read_controls(&scene,&controls);
             assert(zell_panes_hotkeys_top(480)==zell_panes_hotkeys_lines-fit);
-            desktop_input_feed(&scene,"\033[6~\033[5~",8);
+            desktop_input_feed(&scene,"\033[5~",4);
             read_controls(&scene,&controls);
             assert(zell_panes_hotkeys_top(480)==zell_panes_hotkeys_lines-fit-(fit-1));
+            desktop_input_feed(&scene,"\033[6~",4);
+            read_controls(&scene,&controls);
+            assert(zell_panes_hotkeys_top(480)==zell_panes_hotkeys_lines-fit);
             desktop_input_feed(&scene,"\033[H",3);
             read_controls(&scene,&controls);
             assert(zell_panes_hotkeys_top(480)==0&&zell_panes_hotkeys_open());

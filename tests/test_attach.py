@@ -413,6 +413,26 @@ class ViewTests(unittest.TestCase):
         self.view.paint(30, 7, [])
         self.assertEqual((self.view.oy, self.view.top), (5, None))
 
+    def test_a_top_line_scrolled_above_the_rows_counts_a_line_a_row(self):
+        # The parser moved down past the kept top line, two rows: those two
+        # rows are at least a line each, so a step of three down lands on
+        # the third line here, not three lines past the first.
+        self.assertEqual(self.term.rows, 6)
+        self.term.kept_above, self.term.back = 40, 10
+        _kept, first, _shown = self.term.scrollbar()
+        self.view.top, self.view.move = (first - 2, 0), 3
+        self.view.paint(30, 5, [])
+        self.assertEqual((self.view.oy, self.view.top), (1, (first + 1, 0)))
+
+    def test_a_screen_that_fits_is_never_held(self):
+        self.term.screen = ['one', 'two', '$ ']
+        self.term.cursor = (2, 2)
+        self.view.paint(30, 11, [])
+        self.view.pointer(64, 3, 3, False, 30, 11)
+        _text, drawn = self.view.paint(30, 11, [])
+        self.assertIsNone(self.view.top)
+        self.assertNotIn('held', drawn[-1])
+
     def test_scrolled_back_it_shows_from_the_top_and_says_so(self):
         self.term.kept_above, self.term.back = 40, 12
         _text, drawn = self.view.paint(30, 8, [])

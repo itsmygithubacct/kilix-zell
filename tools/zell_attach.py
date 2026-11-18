@@ -437,7 +437,8 @@ class View:
             self.oy = min(max(0, at_top + self.move), last)
             back_down = self.move > 0 and live and self.oy == last
             self.move = 0
-            if back_down or not lines:
+            # All of a live screen fits: there is nothing to hold.
+            if back_down or not lines or (live and last == 0):
                 self.top = None
             else:
                 self.top = (lines[self.oy][0] + first, lines[self.oy][1])

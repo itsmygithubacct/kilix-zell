@@ -3385,8 +3385,23 @@ static void test_pane_io(void){
             zell_panes_hotkeys_show(true);zell_draw(&s,&canvas);
             assert(ink_count(&canvas,inside,0x5a4a24u,0)==inside.w*inside.h);
             assert(ink_count(&canvas,edge,0xd9ba79u,0)>=820&&ink_count(&canvas,keys,0xffffffu,0)>20);
+            /* 600 tall: a line says there are more; scrolled to its end, its
+             * last line, the closing note, is on the last row drawn, and the
+             * same scrolled from a shorter Zell. */
+            int fit=zell_panes_hotkeys_fit(600),last=zell_panes_hotkeys_lines-fit;
+            zell_rect note={wx+14,wy+34+fit*ZELL_PANES_HOTKEYS_LINE_H,400,16};
+            zell_rect bottom={wx+14,wy+34+(fit-1)*ZELL_PANES_HOTKEYS_LINE_H,400,16};
+            assert(fit<zell_panes_hotkeys_lines&&!strchr(zell_panes_hotkeys_text[fit-1],'#')&&strchr(zell_panes_hotkeys_text[fit-1],'|'));
+            assert(!strchr(zell_panes_hotkeys_text[zell_panes_hotkeys_lines-1],'|'));
+            assert(ink_count(&canvas,note,0xd9ba79u,0)>20&&!ink_count(&canvas,bottom,0x9fb4c0u,0));
+            int height=s.height;
+            s.height=600;zell_panes_hotkeys_scroll(&s,1000);zell_draw(&s,&canvas);
+            assert(zell_panes_hotkeys_top(600)==last&&ink_count(&canvas,bottom,0x9fb4c0u,0)>20);
+            zell_panes_hotkeys_show(true);s.height=480;zell_panes_hotkeys_scroll(&s,1000);zell_draw(&s,&canvas);
+            assert(ink_count(&canvas,bottom,0x9fb4c0u,0)>20);
+            s.height=height;
             zell_panes_hotkeys_show(false);zell_draw(&s,&canvas);
-            assert(!ink_count(&canvas,edge,0xd9ba79u,0));
+            assert(!ink_count(&canvas,edge,0xd9ba79u,0)&&!ink_count(&canvas,note,0xd9ba79u,0));
         }
         sr_canvas_free(&canvas);
         /* The reset unmaps the map the copy was handed. */
