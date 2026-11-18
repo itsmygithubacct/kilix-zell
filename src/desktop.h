@@ -224,6 +224,7 @@ int zell_panes_zoom(int room);
 const char *zell_panes_pending(void);
 int zell_panes_room_line(int room,int cols,int rows,char *out,size_t capacity);
 void zell_panes_test_line(const char *line);
+void zell_panes_test_room(zell_scene *s);
 void zell_panes_test_read(int fd);
 /* Paste lines still to go to the helper; tests drain them as a pump would. */
 size_t zell_panes_paste_left(void);

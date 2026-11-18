@@ -2421,6 +2421,19 @@ static void test_pane_rooms(void){
         in.x-=1.f;
         assert(zell_panes_aim(&in,&i,&w)==ZELL_PANES_AIM_CHROME&&i==1&&w==ZELL_PANES_RESTART);
     }
+    /* The room grows a frame after he walks in, and he moves with its edge:
+     * still nothing is aimed at until he moves. */
+    {
+        zell_scene g;zell_controls still={0};int i,w;
+        place_room(&g,1,0,0);
+        zell_panes_enter(&g,ZELL_ROOM_PANES_LEFT);
+        assert(g.x==888.f);
+        zell_scene_resize(&g,1920,1080);zell_scene_tick(&g,&still);
+        assert(g.x==1848.f);
+        assert(zell_panes_aim(&g,&i,&w)==ZELL_PANES_AIM_NONE&&!zell_panes_press(&g));
+        g.x+=1.f;
+        assert(zell_panes_aim(&g,&i,&w)==ZELL_PANES_AIM_CHROME&&i==1&&w==ZELL_PANES_RESTART);
+    }
     /* Walking in again, Kilix has the keys. */
     zell_panes_enter(&s,ZELL_ROOM_PANES_RIGHT);
     assert(!zell_panes_keys_to_pane());
@@ -2936,6 +2949,31 @@ static void test_pane_io(void){
     /* A paste whose end never came: said. */
     assert(!zell_panes_paste(&s,NULL,ZELL_INPUT_PASTE_UNENDED));
     assert(!strcmp(zell_panes_notice(ZELL_ROOM_PANES_RIGHT,1),"The paste never ended and was not sent."));
+    /* Input made while the lines waiting behind a paste are full is dropped,
+     * and said; a room line made then is not taken as sent, so it is made
+     * once they have gone. */
+    zell_panes_test_reset();
+    place_room(&s,1,0,0);zell_panes_enter(&s,ZELL_ROOM_PANES_RIGHT);pane_click(&s,10,300);
+    assert(zell_panes_paste(&s,"ab",2));
+    {
+        size_t before,keys=0;
+        do{before=zell_panes_paste_left();zell_panes_key((const unsigned char *)"x",1);keys++;}while(zell_panes_paste_left()>before);
+        assert(keys==8193);
+        assert(!strcmp(zell_panes_notice(ZELL_ROOM_PANES_RIGHT,0),"Input made while the paste is sent was dropped."));
+        char line[80];int cols,rows;
+        zell_scene_resize(&s,1200,700);
+        zell_panes_cells(1200,700,&cols,&rows);
+        assert(zell_panes_room_line(ZELL_ROOM_PANES_RIGHT,cols,rows,line,sizeof line)>0&&!strcmp(line,"S 10 150 38\nF 0\nZ -1\n"));
+        zell_panes_test_room(&s);
+        assert(!strstr(zell_panes_pending(),"S 10 150 38"));
+        zell_panes_test_drain();
+        assert(!zell_panes_paste_left()&&!strstr(zell_panes_pending(),"S 10 150 38"));
+        zell_panes_test_room(&s);
+        const char *p=zell_panes_pending();size_t n=strlen(p);
+        assert(n>strlen(line)&&!strcmp(p+n-strlen(line),line));
+        zell_panes_test_room(&s);
+        assert(strlen(zell_panes_pending())==n);
+    }
     zell_panes_test_reset();
     place_room(&s,1,0,0);zell_panes_enter(&s,ZELL_ROOM_PANES_RIGHT);pane_click(&s,10,300);
     assert(zell_panes_paste(&s,"ab",2));

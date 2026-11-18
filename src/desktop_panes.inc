@@ -24,7 +24,8 @@
 /* Pasted bytes per line to the helper (twice that in hex). */
 #define PN_PASTE_CHUNK 2048
 /* Typed while a paste goes at most, in K lines. */
-#define PN_AFTER_MAX 8192
+/* Under PN_QUEUE, so what waits always fits the queue once it drains. */
+#define PN_AFTER_MAX 32768
 /* Base64 of one copy, at most. */
 #define PN_COPY_MAX (1u<<20)
 #define PN_COPY_HEAD "\033]52;c;"
@@ -144,6 +145,7 @@ static void pn_stand(zell_scene *s){
     s->step=0;s->step_ticks=0;s->desktop_launch=false;
 }
 static void pn_place(zell_scene *s){
+    float before=s->x;
     float x0,x1;
     pn_bounds(s,&x0,&x1);
     /* Just inside, beside the line he came in by, facing into the room. */
@@ -152,6 +154,9 @@ static void pn_place(zell_scene *s){
     if(s->x<x0)s->x=x0;
     if(s->x>x1)s->x=x1;
     s->y=(float)ZELL_PANES_FEET_Y;
+    /* Placed again as the room grows while he walks in: where he stands is
+     * still where he walked in. */
+    if(pn.rest_room==s->room&&before==pn.rest_x)pn.rest_x=s->x;
 }
 void zell_panes_enter(zell_scene *s,int room){
     if(!zell_panes_count(room))return;
@@ -301,6 +306,7 @@ void zell_panes_button_rect(const zell_scene *s,int index,int agent,zell_rect *r
     }
 }
 static bool pn_inside(zell_rect r,int x,int y){return r.w>0&&x>=r.x&&x<r.x+r.w&&y>=r.y&&y<r.y+r.h;}
+static void pn_notice(int room,int index,const char *text);
 static bool pn_send_now(const char *text,size_t n){
     if(n==0||pn.queued+n>=sizeof pn.queue)return false;
     memcpy(pn.queue+pn.queued,text,n);pn.queued+=n;pn.queue[pn.queued]=0;
@@ -312,7 +318,12 @@ static bool pn_send_now(const char *text,size_t n){
  * were typed). False when it could not be queued. */
 static bool pn_send(const char *text,size_t n){
     if(!pn.paste_n&&!pn.after_n)return pn_send_now(text,n);
-    if(n==0||pn.after_n+n>sizeof pn.after)return false;
+    if(n==0)return false;
+    if(pn.after_n+n>sizeof pn.after){
+        /* Dropped: said on the pane the paste goes to. */
+        if(pn.paste_n)pn_notice(pn.paste_room,pn.paste_pane,"Input made while the paste is sent was dropped.");
+        return false;
+    }
     memcpy(pn.after+pn.after_n,text,n);pn.after_n+=n;
     return true;
 }
@@ -821,6 +832,7 @@ int zell_panes_room_line(int room,int cols,int rows,char *out,size_t capacity){
     if(slot<0)return snprintf(out,capacity,"H\n");
     return snprintf(out,capacity,"S %d %d %d\nF %d\nZ %d\n",room,cols,rows,pn.focus[slot],pn.zoom[slot]);
 }
+static void pn_room_send(zell_scene *s);
 void zell_panes_pump(zell_scene *s){
     bool shown=ZELL_ROOM_IS_PANES(s->room);
     /* A failed helper is tried again on the next walk in. */
@@ -828,6 +840,17 @@ void zell_panes_pump(zell_scene *s){
     if(shown&&pn.pid<=0&&!pn.failed){pn.queued=0;pn_start();}
     if(pn.pid<=0)return;
     pn_read();
+    pn_room_send(s);
+    pn_paste_drain();
+    pn_flush();
+    pn_copy();
+    pn_reap();
+}
+/* The helper is told the room shown and its size once each changes; a line
+ * not queued (the queue or the lines waiting behind a paste are full) is
+ * made again next time. */
+static void pn_room_send(zell_scene *s){
+    bool shown=ZELL_ROOM_IS_PANES(s->room);
     int room=shown?s->room:0,cols=0,rows=0;
     if(shown)zell_panes_cells(s->width,s->height,&cols,&rows);
     if(room!=pn.sent_room||cols!=pn.sent_cols||rows!=pn.sent_rows){
@@ -835,15 +858,10 @@ void zell_panes_pump(zell_scene *s){
         int n=zell_panes_room_line(room,cols,rows,line,sizeof line);
         /* After the lines already queued, which may be half written and
          * belong to the room he was in; until it fits it is tried again. */
-        if(n>0&&(size_t)n<sizeof line&&pn.queued+(size_t)n<sizeof pn.queue){
-            pn_send(line,(size_t)n);
+        if(n>0&&(size_t)n<sizeof line&&pn.queued+(size_t)n<sizeof pn.queue&&pn_send(line,(size_t)n)){
             pn.sent_room=room;pn.sent_cols=cols;pn.sent_rows=rows;
         }
     }
-    pn_paste_drain();
-    pn_flush();
-    pn_copy();
-    pn_reap();
 }
 const uint32_t *zell_panes_frame(int room,int *width,int *height){
     if(!pn.shown||pn.frame_room!=room||pn.frame_w<1||pn.frame_h<1)return NULL;
@@ -884,6 +902,7 @@ void zell_panes_shutdown(void){
  * starting one. */
 void zell_panes_test_copy(void *map){if(!pn.map)pn.map=map;pn_copy();}
 void zell_panes_test_line(const char *line){pn_line(line);}
+void zell_panes_test_room(zell_scene *s){pn_room_send(s);}
 /* Lines from a descriptor of the test's, as from the helper's pipe. */
 void zell_panes_test_read(int fd){int old=pn.out_fd;pn.out_fd=fd;pn_read();pn.out_fd=old;}
 void zell_panes_test_fail(const char *text){pn_fail(text);pn.frame_room=0;}
