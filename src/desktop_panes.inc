@@ -28,6 +28,11 @@
 #define PN_AFTER_MAX 32768
 /* Base64 of one copy, at most. */
 #define PN_COPY_MAX (1u<<20)
+/* The helper's pipe to Zell holds a whole copy (its base64 and line ends),
+ * and Zell reads what is there each frame up to PN_READ_MAX: a large copy
+ * neither stalls the helper, and so every pane, nor takes many frames. */
+#define PN_PIPE_BYTES (2u<<20)
+#define PN_READ_MAX (4u<<20)
 #define PN_COPY_HEAD "\033]52;c;"
 /* The kitty keyboard protocol's numbers (kitty_keyboard.h): Shift, the
  * lock modifiers, and the keys that scroll. */
@@ -307,6 +312,7 @@ void zell_panes_button_rect(const zell_scene *s,int index,int agent,zell_rect *r
 }
 static bool pn_inside(zell_rect r,int x,int y){return r.w>0&&x>=r.x&&x<r.x+r.w&&y>=r.y&&y<r.y+r.h;}
 static void pn_notice(int room,int index,const char *text);
+static int pn_grow_pipe(int fd);
 static bool pn_send_now(const char *text,size_t n){
     if(n==0||pn.queued+n>=sizeof pn.queue)return false;
     memcpy(pn.queue+pn.queued,text,n);pn.queued+=n;pn.queue[pn.queued]=0;
@@ -538,6 +544,11 @@ static void pn_notice(int room,int index,const char *text){
     snprintf(pn.notice,sizeof pn.notice,"%s",text);
     pn.notice_room=room;pn.notice_pane=index;pn.notice_until=zell_notice_clock_ms()+PN_NOTICE_MS;
 }
+void zell_panes_tell(const zell_scene *s,const char *text,int64_t ms){
+    if(!ZELL_ROOM_IS_PANES(s->room))return;
+    pn_notice(s->room,pn.focus[pn_slot(s->room)],text);
+    pn.notice_until=zell_notice_clock_ms()+ms;
+}
 bool zell_panes_paste(const zell_scene *s,const char *bytes,size_t count){
     if(!ZELL_ROOM_IS_PANES(s->room)||!pn.keys_pane)return false;
     int slot=pn_slot(s->room),index=pn.focus[slot];
@@ -719,6 +730,7 @@ static bool pn_start(void){
     if(!th_script(script,sizeof script,"zell_panes.py")){pn_fail("The panes need tools/zell_panes.py beside Zell.");return false;}
     if(pipe(to_child)!=0){pn_fail("Could not start the panes.");return false;}
     if(pipe(from_child)!=0){close(to_child[0]);close(to_child[1]);pn_fail("Could not start the panes.");return false;}
+    (void)pn_grow_pipe(from_child[0]);
     pn.frame_fd=(int)syscall(SYS_memfd_create,"zell-panes",0);
     if(pn.frame_fd<0||ftruncate(pn.frame_fd,(off_t)PN_MAP_BYTES)!=0){
         close(to_child[0]);close(to_child[1]);close(from_child[0]);close(from_child[1]);
@@ -777,12 +789,13 @@ static void pn_flush(void){
     }
 }
 static void pn_read(void){
+    static char bytes[65536];
     if(pn.out_fd<0)return;
-    for(int batch=0;batch<8;batch++){
-        char bytes[512];
+    for(size_t taken=0;taken<PN_READ_MAX;){
         ssize_t count=read(pn.out_fd,bytes,sizeof bytes);
         if(count<0&&errno==EINTR)continue;
         if(count<=0)return;
+        taken+=(size_t)count;
         for(ssize_t i=0;i<count;i++){
             if(bytes[i]!='\n'){
                 if(pn.line_n+1<sizeof pn.line)pn.line[pn.line_n++]=bytes[i];
@@ -840,6 +853,20 @@ int zell_panes_room_line(int room,int cols,int rows,char *out,size_t capacity){
      * that reached the room shown before) is undone first, so the focus,
      * which the helper refuses for a pane hidden by a zoom, is taken. */
     return snprintf(out,capacity,"S %d %d %d\nZ %d\nF %d\n",room,cols,rows,pn.zoom[slot],pn.focus[slot]);
+}
+/* Linux grows a pipe to its pipe-max-size, 1 MiB by default; elsewhere,
+ * or refused, the pipe stays as it is. The size it has is returned. */
+static int pn_grow_pipe(int fd){
+#if defined(__linux__)
+#ifndef F_SETPIPE_SZ
+#define F_SETPIPE_SZ 1031
+#define F_GETPIPE_SZ 1032
+#endif
+    for(unsigned bytes=PN_PIPE_BYTES;bytes>=(64u<<10);bytes/=2)if(fcntl(fd,F_SETPIPE_SZ,(int)bytes)>=0)break;
+    return fcntl(fd,F_GETPIPE_SZ);
+#else
+    (void)fd;return 0;
+#endif
 }
 static void pn_room_send(zell_scene *s);
 void zell_panes_pump(zell_scene *s){
@@ -912,6 +939,7 @@ void zell_panes_shutdown(void){
 void zell_panes_test_copy(void *map){if(!pn.map)pn.map=map;pn_copy();}
 void zell_panes_test_line(const char *line){pn_line(line);}
 void zell_panes_test_room(zell_scene *s){pn_room_send(s);}
+int zell_panes_test_grow_pipe(int fd){return pn_grow_pipe(fd);}
 /* Lines from a descriptor of the test's, as from the helper's pipe. */
 void zell_panes_test_read(int fd){int old=pn.out_fd;pn.out_fd=fd;pn_read();pn.out_fd=old;}
 void zell_panes_test_fail(const char *text){pn_fail(text);pn.frame_room=0;}

@@ -842,6 +842,9 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
     kittykb_event event;
 
     memset(controls, 0, sizeof *controls);
+    /* A paste of more than one line waits for its answer: nothing else
+     * moves meanwhile. */
+    if(paste_answer(scene))return;
     bool page_keys = zell_theater_wants_keys(scene);
     bool typing = scene->mode == ZELL_MODE_QUESTION || scene->mode == ZELL_MODE_TYPE || scene->mode==ZELL_MODE_LAUNCHER ||
                   (scene->mode == ZELL_MODE_SERVICE && scene->service_phase == 1) ||

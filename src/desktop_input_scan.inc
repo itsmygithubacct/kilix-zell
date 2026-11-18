@@ -86,4 +86,14 @@ void zell_input_idle(zell_input *in,const zell_input_sinks *sinks,int64_t now){
     }
 }
 bool zell_input_pasting(const zell_input *in){return in->pasting;}
+size_t zell_paste_lines(const char *bytes,size_t count){
+    size_t breaks=0;
+    for(size_t i=0;i<count;i++){
+        if(bytes[i]=='\n')breaks++;
+        else if(bytes[i]=='\r'){breaks++;if(i+1<count&&bytes[i+1]=='\n')i++;}
+    }
+    if(!breaks)return 0;
+    char last=bytes[count-1];
+    return breaks+(last!='\n'&&last!='\r');
+}
 void zell_input_free(zell_input *in){free(in->paste);*in=(zell_input){0};}

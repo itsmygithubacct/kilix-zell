@@ -225,6 +225,7 @@ const char *zell_panes_pending(void);
 int zell_panes_room_line(int room,int cols,int rows,char *out,size_t capacity);
 void zell_panes_test_line(const char *line);
 void zell_panes_test_room(zell_scene *s);
+int zell_panes_test_grow_pipe(int fd);
 void zell_panes_test_read(int fd);
 /* Paste lines still to go to the helper; tests drain them as a pump would. */
 size_t zell_panes_paste_left(void);
@@ -325,6 +326,13 @@ int zell_theater_present(const void *map,size_t map_bytes);
 #define ZELL_INPUT_PASTE_IDLE_MS 5000
 /* The count given with no bytes for a paste whose end never came. */
 #define ZELL_INPUT_PASTE_UNENDED ((size_t)-1)
+/* Lines a paste would make: 0 with no line break in it (CR, LF or CR LF),
+ * else the breaks, and one more for text after the last. */
+size_t zell_paste_lines(const char *bytes,size_t count);
+/* How long a paste of more than one line waits to be let through. */
+#define ZELL_PASTE_ASK_MS 8000
+/* A notice on the pane with the keys in the room shown, for ms. */
+void zell_panes_tell(const zell_scene *s,const char *text,int64_t ms);
 typedef struct {
     void (*keys)(void *user,const char *bytes,size_t count);
     void (*pointer)(void *user,unsigned buttons,int x,int y,bool release);

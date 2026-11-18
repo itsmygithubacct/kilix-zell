@@ -3125,6 +3125,29 @@ static void test_pane_io(void){
         const char *seq=zell_panes_copy_sequence(&n);
         assert(seq&&n==12&&!memcmp(seq,"\033]52;c;eA==\a",12));
     }
+    /* A copy of a full 4K pane, about 360 KB of base64, arrives in one read
+     * of the helper's pipe, which holds it whole. */
+    zell_panes_test_reset();
+    {
+        int fds[2];
+        size_t n=0;
+        static char piece[3003];
+        assert(pipe(fds)==0);
+        assert(zell_panes_test_grow_pipe(fds[0])>=(1<<20));
+        assert(fcntl(fds[0],F_SETFL,O_NONBLOCK)==0&&fcntl(fds[1],F_SETFL,O_NONBLOCK)==0);
+        memset(piece,'A',sizeof piece);piece[0]='Y';piece[1]=' ';piece[sizeof piece-1]='\n';
+        for(int i=0;i<120;i++)assert(write(fds[1],piece,sizeof piece)==(ssize_t)sizeof piece);
+        assert(write(fds[1],"Y .\n",4)==4);
+        zell_panes_test_read(fds[0]);
+        const char *seq=zell_panes_copy_sequence(&n);
+        assert(seq&&n==7+120u*3000u+1);
+        close(fds[0]);close(fds[1]);
+    }
+    /* Lines a paste would make: none without a break; CR LF is one break. */
+    assert(zell_paste_lines("ls",2)==0&&zell_paste_lines("",0)==0);
+    assert(zell_paste_lines("ls\n",3)==1&&zell_paste_lines("ls\r",3)==1&&zell_paste_lines("ls\r\n",4)==1);
+    assert(zell_paste_lines("a\nb",3)==2&&zell_paste_lines("a\r\nb\r\n",6)==2&&zell_paste_lines("a\rb\nc",5)==3);
+    assert(zell_paste_lines("\n\n",2)==2&&zell_paste_lines("\r\r\n",3)==2);
     /* Drawn: the End button and lines back in the title, the scrollbar over
      * the cells while scrolled back, brighter under the pointer. */
     zell_panes_test_reset();
