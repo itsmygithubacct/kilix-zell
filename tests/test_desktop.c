@@ -2973,6 +2973,22 @@ static void test_pane_io(void){
         const char *p=zell_panes_pending();size_t n=strlen(p);
         assert(n>14&&!strcmp(p+n-14,"A 1 codex\nF 1\n")&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==1);
     }
+    /* The paste has gone out but the lines behind it still wait for room in
+     * the queue: a drop then is said too. */
+    zell_panes_test_reset();
+    place_room(&s,1,0,0);zell_panes_enter(&s,ZELL_ROOM_PANES_RIGHT);pane_click(&s,10,300);
+    {
+        static char big[31000];memset(big,'a',sizeof big);
+        assert(zell_panes_paste(&s,big,sizeof big));
+        for(int k=0;k<1000;k++)zell_panes_key((const unsigned char *)"x",1);
+        zell_panes_test_drain();
+        assert(zell_panes_paste_left()==4000&&strlen(zell_panes_pending())>60000);
+        assert(zell_panes_notice(ZELL_ROOM_PANES_RIGHT,0)==NULL);
+        int keys=0;size_t before;
+        do{before=zell_panes_paste_left();zell_panes_key((const unsigned char *)"x",1);keys++;}while(zell_panes_paste_left()>before);
+        assert(keys==7193);
+        assert(!strcmp(zell_panes_notice(ZELL_ROOM_PANES_RIGHT,0),"Input made while the paste is sent was dropped."));
+    }
     /* Input made while the lines waiting behind a paste are full is dropped,
      * and said; a room line made then is not taken as sent, so it is made
      * once they have gone. */
