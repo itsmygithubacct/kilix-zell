@@ -7,12 +7,20 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import uuid
 
 from zell_paths import archive_only_root
+import zell_providers
 
 STATE = 'rooms.json'
 MODEL = 'gpt-6-astra'
+# What a screen starts: (agent, label), the coding agents zell_providers
+# knows. Codex is given MODEL; the others start with their own default model.
+SCREEN_AGENTS = tuple((name, zell_providers.LABELS[name]) for name in zell_providers.CLI_FILES)
+PREVIEWED = {name for name, _label in SCREEN_AGENTS}
+AGENT_LABELS = ', '.join(label for _name, label in SCREEN_AGENTS[:-1]) + ' or ' + SCREEN_AGENTS[-1][1]
+ATTACH = Path(__file__).resolve().with_name('zell_attach.py')
 PROMPT_LIMIT = 1024  # kilix agent-control: 1-1024 UTF-8 bytes, one line
 
 
@@ -54,7 +62,7 @@ def previews(ui):
             if not pane:
                 rows[i] = dict(status='Session closed', text='Click to start a new session')
                 continue
-            if pane.get('agent') != 'codex':
+            if pane.get('agent') not in PREVIEWED:
                 rows[i] = dict(status='Client not verified', text='Focus the tab to inspect it')
                 continue
             try:
@@ -69,7 +77,7 @@ def previews(ui):
             raise ValueError('Invalid session snapshot')
         for i, pane, text in captured:
             current = _live(pane, fresh)
-            if current and current.get('agent') == 'codex':
+            if current and current.get('agent') in PREVIEWED:
                 rows[i] = dict(status=f"Tab {pane['tab_id']} / live screen", text=text)
             else:
                 rows[i] = dict(status='Session changed', text='Refresh before opening this session')
@@ -151,12 +159,15 @@ def _launch_args(anchor, cwd, role, launch):
     return args
 
 
-def _create(ui, state, snapshot, cwd, index=None, role='Coding session', prompt=None, launch=None):
+def _create(ui, state, snapshot, cwd, index=None, role='Coding session', prompt=None, launch=None, agent='codex'):
     anchor = _anchor(snapshot)
     if launch is None:
-        args = ['new-tab', anchor['pane_id'], '--expect-broker', anchor['broker'],
-                '--agent', 'codex', '--model', MODEL, '--own-tab', '--cwd', cwd,
-                '--title', f'Zell / {role} / {cwd.name}', '--coding-yolo']
+        if agent not in {name for name, _label in SCREEN_AGENTS}:
+            raise ValueError(f'Choose {AGENT_LABELS}.')
+        args = ['new-tab', anchor['pane_id'], '--expect-broker', anchor['broker'], '--agent', agent]
+        if agent == 'codex':
+            args += ['--model', MODEL]
+        args += ['--own-tab', '--cwd', cwd, '--title', f'Zell / {role} / {cwd.name}', '--coding-yolo']
         if prompt:
             _check_prompt(prompt)
             args += ['--prompt', prompt]
@@ -215,9 +226,10 @@ def _role_prompt(role, cwd, workers=None):
     return prompt + listed
 
 
-def _created_text(panes):
+def _created_text(panes, agent='codex'):
+    client = f'codex --no-daemon --model {MODEL}' if agent == 'codex' else agent
     return ('Created ' + ', '.join(f"tab {p['tab_id']} / pane {p['pane_id']}" for p in panes)
-            + f'.\ncodex --no-daemon --model {MODEL}\n'
+            + f'.\n{client}\n'
             'Client startup is not yet verified. Focus the tabs to finish any startup prompts.')
 
 
@@ -231,13 +243,21 @@ def _replace(ui, state, indexes, snapshot):
                      [('Reassign screens', True), ('Cancel', False)]) is True
 
 
-def _start(ui, index, state, snapshot):
+def _start(ui, index, state, snapshot, agent='codex'):
     _anchor(snapshot)
     cwd = _project_path(input('Project directory (Enter = home): ').strip() or Path.home())
     if not _replace(ui, state, [index], snapshot):
         return
-    pane = _create(ui, state, snapshot, cwd, index, 'Controller' if index == 0 else f'Worker {index}')
-    ui.page_text(_created_text([pane]))
+    pane = _create(ui, state, snapshot, cwd, index, 'Controller' if index == 0 else f'Worker {index}', agent=agent)
+    ui.page_text(_created_text([pane], agent))
+
+
+def _view(ui, pane_id=None):
+    """A Kilix pane shown in this screen's terminal and used from it: the
+    one given, or one chosen from the list there."""
+    from zell_terminal import terminal_loop
+    argv = [sys.executable, str(ATTACH)] + (['--pane', str(int(pane_id))] if pane_id is not None else [])
+    return terminal_loop(ui, argv, title='Kilix pane / keyboard goes to it / Ctrl-] leaves')
 
 
 def project_session(ui, projectpath, screen=None):
@@ -336,13 +356,23 @@ def screen(ui, index):
         title = 'Controller' if index == 0 else f'Worker {index}'
         status = (f"tab {pane['tab_id']}, pane {pane['pane_id']}; client: {pane.get('agent') or 'not verified'}"
                   if pane else 'No live assigned session')
-        options = [('Focus session', 'focus')] if pane else [('Start Codex session', 'start')]
-        options += [('Session status', 'status')]
+        if pane:
+            options = [('Show the session here', 'show'), ('Focus session', 'focus')]
+        else:
+            options = [(f'Start {label} session', 'start:' + name) for name, label in SCREEN_AGENTS]
+        options += [('Show another Kilix pane here', 'view'), ('Session status', 'status')]
         if index == 0:
             options += [('List four workers', 'workers'), ('Send a task to a worker', 'dispatch'), ('Task board', 'tasks')]
         action = ui.choose(f'{title} — {status}', options)
-        if action == 'start':
-            _start(ui, index, state, snapshot)
+        if isinstance(action, str) and action.startswith('start:'):
+            _start(ui, index, state, snapshot, action[len('start:'):])
+        elif action == 'show':
+            current = _live(pane, _snapshot())
+            if not current:
+                raise ValueError('Session identity changed; refresh this screen.')
+            _view(ui, current['pane_id'])
+        elif action == 'view':
+            _view(ui)
         elif action == 'focus':
             current = _live(pane, _snapshot())
             if not current:
@@ -430,8 +460,9 @@ def laundry(ui, index):
 
 
 def room_help(ui, room):
-    ui.page_text('Command Center: five screens open real Codex tabs. Screen one is the controller; '
-                 'use its task menu to send a deliberate task to a verified worker. Walk back to return upstairs.'
+    ui.page_text(f'Command Center: five screens open real {AGENT_LABELS} tabs, and show any Kilix '
+                 'pane in the screen to use it there. Screen one is the controller; use its task menu to send '
+                 'a deliberate task to a verified worker. Walk back to return upstairs.'
                  if room in {'command', 'command_center', 1} else
                  'Laundry: each labeled bin represents a mounted filesystem. Fill level shows disk usage. '
                  'Select a bin to inspect capacity and browse files without deleting anything.')

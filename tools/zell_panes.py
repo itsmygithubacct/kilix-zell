@@ -13,7 +13,10 @@ Lines on stdin (INDEX is a pane of the shown room, from 0):
   H                 hide: the shells keep running, painting stops
   F INDEX           focus that pane: typing and the cursor go there
   Z INDEX           zoom that pane over the whole room; Z -1 shows them all
-  A INDEX AGENT     type AGENT's command into that pane's idle shell
+  A INDEX AGENT     type AGENT's command into that pane's idle shell; AGENT
+                    kilix shows the Kilix panes there instead (zell_attach.py)
+                    over its shell, which keeps running; leaving them (Ctrl-]
+                    then q) or Restart shows the shell again
   X INDEX           end that pane's shell and start a new one
   K<hex>            bytes for the focused pane of the shown room
   M INDEX ACTION BUTTON MODS X Y
@@ -29,7 +32,8 @@ Lines on stdin (INDEX is a pane of the shown room, from 0):
   P ROOM INDEX HEX  part of a paste for that pane; P ROOM INDEX . ends it
   Q                 close every pane and stop
 On stdout: "R" once ready, then "G AGENT LABEL" for each coding agent found
-on PATH; "T ROOM INDEX NAME" when what runs in front in a pane changes;
+(on PATH or where it installs itself) and "G kilix Kilix" when Kilix panes
+can be shown; "T ROOM INDEX NAME" when what runs in front in a pane changes;
 "N ROOM INDEX TEXT" when a pane cannot do what was asked or text was copied;
 "B ROOM INDEX KEPT FIRST SHOWN FLAGS" when a shown pane's scrollback
 changes (rows kept, the first shown, how many; FLAGS 1 if its program wants
@@ -45,6 +49,7 @@ import mmap
 import os
 from pathlib import Path
 import select
+import shlex
 import shutil
 import signal
 import struct
@@ -67,6 +72,17 @@ RESPAWN_SECONDS = 1.0
 # How often what runs in each pane is looked at.
 TITLE_SECONDS = 0.5
 BUSY = 'is busy. Finish what runs there, then press again.'
+VIEWING = 'shows Kilix panes. Ctrl-] then q goes back to its shell.'
+NO_VIEW = 'could not show the Kilix panes.'
+# What runs a pane shows over its shell to show Kilix panes, and its title.
+ATTACH = Path(__file__).resolve().with_name('zell_attach.py')
+VIEW_TITLE = 'Kilix panes'
+# The coding agents offered, in zell_providers' order; where they install
+# themselves under the home folder when not on PATH: the shared folders,
+# then the agent's own (.NAME/bin, .NAME/local).
+AGENT_ORDER = tuple(zell_providers.CLI_FILES)
+AGENT_FOLDERS = ('.local/bin', '.npm-global/bin', '.bun/bin', 'bin')
+OWN_FOLDERS = ('bin', 'local')
 # Ctrl-E then Ctrl-U: the agent's command replaces the whole half-typed
 # line, wherever the cursor was in it.
 CLEAR_LINE = b'\x05\x15'
@@ -106,9 +122,31 @@ def valid_size(cols, rows, count):
             and 8 <= rows <= MAX_HEIGHT // CELL_HEIGHT)
 
 
-def available_agents(which=shutil.which):
-    """The coding agents with a command on PATH, as (command, label)."""
-    return [(name, zell_providers.LABELS[name]) for name in zell_providers.CLI_FILES if which(name)]
+def available_agents(which=shutil.which, home=None):
+    """The coding agents that can run, as (name, label, what to type): on
+    PATH by name, else where it installs itself under the home folder by its
+    whole path, as the pane's shell may not have that folder on PATH."""
+    home = Path(home) if home is not None else Path.home()
+    out = []
+    for name in AGENT_ORDER:
+        if which(name):
+            out.append((name, zell_providers.LABELS[name], name))
+            continue
+        folders = [home / folder for folder in AGENT_FOLDERS] + [home / f'.{name}' / own for own in OWN_FOLDERS]
+        for folder in folders:
+            path = folder / name
+            if path.is_file() and os.access(path, os.X_OK):
+                out.append((name, zell_providers.LABELS[name], shlex.quote(str(path))))
+                break
+    return out
+
+
+def attach_ready(environ):
+    """Whether Kilix panes can be shown: inside a Kilix window, with its
+    pane broker, and the viewer here."""
+    executable = environ.get('KITTY_PTY_BROKER_EXECUTABLE') or ''
+    return bool(environ.get('KITTY_LISTEN_ON') and os.path.isfile(executable) and os.access(executable, os.X_OK)
+                and os.path.isabs(environ.get('KITTY_PTY_BROKER_RUNTIME') or '') and ATTACH.is_file())
 
 
 def foreground(pane):
@@ -395,9 +433,13 @@ class Rooms:
     the renderer so the protocol can be tested without either."""
 
     def __init__(self, display, command, make=room_workspace, wait=select.select, front=foreground,
-                 agents=(), say=lambda text: None, clock=time.monotonic, hang_up=os.killpg):
+                 agents=(), say=lambda text: None, clock=time.monotonic, hang_up=os.killpg, viewer=None):
         self.display, self.command, self.make, self.wait = display, command, make, wait
-        self.front, self.agents, self.say, self.clock = front, dict(agents), say, clock
+        # Agent name -> what is typed to start it; kilix -> None (the viewer).
+        self.agents = {name: typed for name, _label, typed in agents}
+        self.front, self.say, self.clock = front, say, clock
+        # viewer(workspace, cols, rows): a pane showing the Kilix panes.
+        self.viewer = viewer
         self.hang_up = hang_up
         self.rooms, self.shown, self.dirty, self.quit = {}, None, False, False
         self.titles, self.next_titles = {}, 0.0
@@ -481,9 +523,15 @@ class Rooms:
             found = self.pane(words[1])
             if found:
                 workspace, index = found
+                pane = workspace.current['panes'][index]
+                # Over a shell, the Kilix panes go and the shell is shown.
+                if getattr(pane, 'shell', None) is not None:
+                    self.unview(workspace.current, index)
+                    workspace.layout()
+                    self.dirty = True
+                    return
                 # What runs in front has a group of its own: it is hung up as
                 # a closed terminal would hang it up, before the shell goes.
-                pane = workspace.current['panes'][index]
                 group = self.front(pane)[0]
                 if group is not None and group != pane.pid:
                     try:
@@ -519,6 +567,12 @@ class Rooms:
                 return
             workspace, index = found
             pane = workspace.current['panes'][index]
+            if getattr(pane, 'shell', None) is not None:
+                self.say(f'N {self.shown} {index} {VIEWING}')
+                return
+            if words[2] == 'kilix':
+                self.view(workspace, index)
+                return
             group, name = self.front(pane)
             # Typed only at the shell's own prompt, never into what it runs,
             # nor into a program the shell has become (exec).
@@ -527,9 +581,40 @@ class Rooms:
                 self.say(f'N {self.shown} {index} {BUSY}')
                 return
             try:
-                pane.send(CLEAR_LINE + words[2].encode() + b'\r')
+                pane.send(CLEAR_LINE + self.agents[words[2]].encode() + b'\r')
             except PANE_ERRORS:
                 pass
+
+    def view(self, workspace, index):
+        """The Kilix panes shown in pane `index`, over its shell."""
+        pane = workspace.current['panes'][index]
+        if self.viewer is None:
+            return
+        try:
+            view = self.viewer(workspace, pane.cols, pane.rows)
+        except PANE_ERRORS:
+            self.say(f'N {self.shown} {index} {NO_VIEW}')
+            return
+        view.born, view.shell = self.clock(), pane
+        workspace.current['panes'][index] = view
+        workspace.layout()
+        self.dirty = True
+
+    def unview(self, tab, index):
+        """Pane `index` of `tab` shows its shell again."""
+        view = tab['panes'][index]
+        tab['panes'][index] = view.shell
+        view.shell = None
+        self.backlog.pop(view, None)
+        try:
+            view.close()
+        except PANE_ERRORS:
+            pass
+
+    def hidden(self):
+        """The shells under the Kilix panes, still running."""
+        return [pane.shell for workspace in self.rooms.values() for pane in workspace.panes()
+                if getattr(pane, 'shell', None) is not None]
 
     def to_live(self, pane):
         """Back to the live rows, with no selection."""
@@ -697,6 +782,24 @@ class Rooms:
             changed = False
             for pane in workspace.panes():
                 changed = poll_pane(pane, self.wait) or changed
+                shell = getattr(pane, 'shell', None)
+                if shell is not None:
+                    poll_pane(shell, self.wait)
+            # The Kilix panes were left: the shell is shown again.
+            restored = False
+            for tab in workspace.tabs:
+                for index, pane in enumerate(tab['panes']):
+                    if getattr(pane, 'shell', None) is not None and pane.exit_status is not None and pane.fd is None:
+                        # Ended with an error (it could not start): its words
+                        # went with it, so the pane says so.
+                        failed = pane.exit_status != 0
+                        self.unview(tab, index)
+                        restored = True
+                        if failed:
+                            self.say(f'N {room} {index} {NO_VIEW}')
+            if restored:
+                workspace.layout()
+                changed = True
             changed = renew_exited(self.display, workspace, self.command, now) or changed
             if room == self.shown and changed:
                 self.dirty = True
@@ -705,15 +808,24 @@ class Rooms:
             self.next_titles = now + TITLE_SECONDS
             for room, workspace in self.rooms.items():
                 for index, pane in enumerate(workspace.current['panes']):
-                    title = title_text(self.front(pane)[1] or getattr(pane, 'name', None))
+                    if getattr(pane, 'shell', None) is not None:
+                        title = VIEW_TITLE
+                    else:
+                        title = title_text(self.front(pane)[1] or getattr(pane, 'name', None))
                     if self.titles.get((room, index)) != title:
                         self.titles[room, index] = title
                         self.say(f'T {room} {index} {title}')
 
     def descriptors(self):
-        return [pane.fd for workspace in self.rooms.values() for pane in workspace.panes() if pane.fd is not None]
+        return [pane.fd for workspace in self.rooms.values() for pane in workspace.panes() if pane.fd is not None] + \
+            [shell.fd for shell in self.hidden() if shell.fd is not None]
 
     def close(self):
+        for shell in self.hidden():
+            try:
+                shell.close()
+            except PANE_ERRORS:
+                pass
         for workspace in self.rooms.values():
             workspace.close()
         self.rooms = {}
@@ -726,6 +838,9 @@ def say(text):
 
 def main():
     fd = int(os.environ.pop('ZELL_PANES_FD'))
+    # The viewer of Kilix panes is Zell's, in Zell's Kilix window: it keeps
+    # that window's identity, which kilix_sdk checks.
+    kilix_env = dict(os.environ)
     # The shells are in these panes, not in the Kilix window Zell runs in.
     for name in IDENTITY:
         os.environ.pop(name, None)
@@ -758,10 +873,17 @@ def main():
         cache = display.MaskCache(weights, library, cache_dir, CELL_WIDTH, CELL_HEIGHT)
         renderer = display.Renderer(cache)
         agents = available_agents()
-        rooms = Rooms(display, [os.environ.get('SHELL') or '/bin/sh'], agents=agents, say=say)
+        viewer = None
+        if attach_ready(kilix_env):
+            agents.append(('kilix', 'Kilix', None))
+
+            def viewer(workspace, cols, rows):
+                return display.Pane([sys.executable, str(ATTACH)], cols, rows, workspace.cw, workspace.ch,
+                                    workspace.lib, env=kilix_env)
+        rooms = Rooms(display, [os.environ.get('SHELL') or '/bin/sh'], agents=agents, say=say, viewer=viewer)
         rooms.quit = bool(stopping)
         say('R')
-        for name, label in agents:
+        for name, label, _typed in agents:
             say(f'G {name} {label}')
         while not rooms.quit:
             ready = select.select([stdin, *rooms.descriptors()], [], [], FRAME_SECONDS)[0]

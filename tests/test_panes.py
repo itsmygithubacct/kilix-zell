@@ -95,8 +95,8 @@ class Terminal:
 class Pane:
     made = []
 
-    def __init__(self, command, cols, rows, cw, ch, lib):
-        self.command, self.cols, self.rows = command, cols, rows
+    def __init__(self, command, cols, rows, cw, ch, lib, env=None):
+        self.command, self.cols, self.rows, self.env = command, cols, rows, env
         self.sent, self.closed, self.exit_status, self.fd = [], False, None, 1000 + len(Pane.made)
         self.letter, self.cursor = ord('A') + len(Pane.made) % 26, (0, 0)
         # What front() reports: by default the shell itself, at its prompt.
@@ -289,7 +289,7 @@ class ProtocolTests(unittest.TestCase):
     def setUp(self):
         Pane.made.clear()
         self.said = []
-        self.rooms = panes.Rooms(DISPLAY, ['/bin/sh'], wait=ready, front=front, agents=[('codex', 'Codex')],
+        self.rooms = panes.Rooms(DISPLAY, ['/bin/sh'], wait=ready, front=front, agents=[('codex', 'Codex', 'codex')],
                                  say=self.said.append, clock=lambda: 50.0)
 
     def test_a_room_starts_once_and_keeps_its_shells_while_hidden(self):
@@ -496,6 +496,111 @@ class ProtocolTests(unittest.TestCase):
         self.rooms.line('A 1 codex')
         self.assertEqual(second.sent, [b'\x05\x15codex\r'] * 2)
 
+    def viewing(self):
+        """Rooms with the Kilix button, its viewer a fake pane."""
+        made = []
+
+        def viewer(workspace, cols, rows):
+            if getattr(self, 'refuse', False):
+                raise OSError('no pty')
+            pane = Pane(['zell_attach.py'], cols, rows, 8, 16, None)
+            made.append(pane)
+            return pane
+        self.rooms.viewer = viewer
+        self.rooms.agents['kilix'] = None
+        self.rooms.line('S 10 40 20')
+        return self.rooms.rooms[10], made
+
+    def test_kilix_panes_are_shown_over_a_shell_that_keeps_running(self):
+        room, made = self.viewing()
+        shells = list(room.current['panes'])
+        self.rooms.dirty = False
+        self.rooms.line('A 2 kilix')
+        view = room.current['panes'][2]
+        self.assertEqual(made, [view])
+        self.assertIs(view.shell, shells[2])
+        self.assertEqual((view.born, self.rooms.dirty, shells[2].closed), (50.0, True, False))
+        self.assertEqual((view.cols, view.rows), (shells[2].cols, shells[2].rows))
+        # Nothing is typed into the shell; it is still read, and its
+        # descriptor still waited on.
+        self.assertEqual(shells[2].sent, [])
+        self.assertEqual(self.rooms.hidden(), [shells[2]])
+        self.assertIn(shells[2].fd, self.rooms.descriptors())
+        self.assertIn(view.fd, self.rooms.descriptors())
+        shells[2].output = True
+        self.rooms.poll(51.0)
+        self.assertFalse(shells[2].output)
+        # Keys go to the viewer.
+        self.rooms.line('F 2')
+        self.rooms.line('K6869')
+        self.assertEqual((view.sent[-1], shells[2].sent), (b'hi', []))
+        # Its title says what it is; an agent or a second Kilix is refused.
+        self.rooms.poll(100.0)
+        self.assertIn('T 10 2 ' + panes.VIEW_TITLE, self.said)
+        self.rooms.line('A 2 codex')
+        self.rooms.line('A 2 kilix')
+        self.assertEqual(self.said[-2:], ['N 10 2 ' + panes.VIEWING] * 2)
+        self.assertEqual((len(made), view.sent[-1]), (1, b'hi'))
+        # Leaving it (it ends) shows the same shell again, not a new one.
+        said = len(self.said)
+        view.exit_status, view.fd = 0, None
+        self.rooms.poll(200.0)
+        self.assertNotIn('N 10 2 ' + panes.NO_VIEW, self.said[said:])
+        self.assertIs(room.current['panes'][2], shells[2])
+        self.assertTrue(view.closed and view.shell is None and not shells[2].closed)
+        self.assertEqual(self.rooms.hidden(), [])
+        self.assertEqual(shells[2].resizes[-1], (shells[2].cols, shells[2].rows))
+
+    def test_restart_on_a_viewer_closes_it_and_keeps_the_shell(self):
+        room, made = self.viewing()
+        shell = room.current['panes'][1]
+        shell.group = shell.pid + 3
+        hung = []
+        self.rooms.hang_up = lambda group, sig: hung.append(group)
+        self.rooms.line('A 1 kilix')
+        view = room.current['panes'][1]
+        # What still waited to be sent to it goes with it.
+        self.rooms.backlog[view] = bytearray(b'rest of a paste')
+        self.rooms.line('X 1')
+        self.assertNotIn(view, self.rooms.backlog)
+        self.assertIs(room.current['panes'][1], shell)
+        self.assertTrue(view.closed and not shell.closed)
+        self.assertEqual(hung, [])
+        # Restart again restarts the shell.
+        self.rooms.line('X 1')
+        self.assertTrue(shell.closed)
+        self.assertEqual(hung, [shell.pid + 3])
+
+    def test_a_viewer_that_cannot_start_is_said_and_the_shell_stays(self):
+        room, made = self.viewing()
+        shell = room.current['panes'][0]
+        self.refuse = True
+        self.rooms.line('A 0 kilix')
+        self.assertIs(room.current['panes'][0], shell)
+        self.assertEqual(self.said[-1], 'N 10 0 ' + panes.NO_VIEW)
+        # With no viewer at all, the word does nothing.
+        self.rooms.viewer = None
+        self.rooms.line('A 0 kilix')
+        self.assertIs(room.current['panes'][0], shell)
+        self.assertEqual(shell.sent, [])
+
+    def test_a_viewer_that_ends_in_an_error_is_said(self):
+        room, made = self.viewing()
+        shell = room.current['panes'][1]
+        self.rooms.line('A 1 kilix')
+        made[0].exit_status, made[0].fd = 1, None
+        self.rooms.poll(60.0)
+        self.assertIs(room.current['panes'][1], shell)
+        self.assertIn('N 10 1 ' + panes.NO_VIEW, self.said)
+
+    def test_closing_the_rooms_closes_the_shells_under_viewers(self):
+        room, made = self.viewing()
+        shell = room.current['panes'][3]
+        self.rooms.line('A 3 kilix')
+        self.rooms.close()
+        # The viewer goes with its room (the workspace closes its panes).
+        self.assertTrue(shell.closed and room.closed)
+
     def test_what_each_pane_runs_is_said_when_it_changes(self):
         self.rooms.line('S 9 40 20')
         self.rooms.line('S 10 40 20')
@@ -522,14 +627,45 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(panes.title_text('tmux: server'), 'tmux: server')
         self.assertEqual(panes.title_text('x' * 40), 'x' * 31)
 
-    def test_agents_are_the_ones_on_path(self):
+    def test_agents_are_found_on_path_or_where_they_install_themselves(self):
         names = list(zell_providers.CLI_FILES)
-        self.assertGreaterEqual(len(names), 2)
-        found = panes.available_agents(which=lambda name: name == names[1])
-        self.assertEqual(found, [(names[1], zell_providers.LABELS[names[1]])])
-        self.assertEqual(panes.available_agents(which=lambda name: True),
-                         [(name, zell_providers.LABELS[name]) for name in names])
-        self.assertEqual(panes.available_agents(which=lambda name: None), [])
+        self.assertEqual(panes.AGENT_ORDER, tuple(names))
+        self.assertGreaterEqual(len(names), 3)
+        first, second, third = names[:3]
+        label = zell_providers.LABELS
+        with tempfile.TemporaryDirectory() as home:
+            self.assertEqual(panes.available_agents(which=lambda name: name == second, home=home),
+                             [(second, label[second], second)])
+            self.assertEqual(panes.available_agents(which=lambda name: True, home=home),
+                             [(name, label[name], name) for name in names])
+            self.assertEqual(panes.available_agents(which=lambda name: None, home=home), [])
+            # Off PATH: in its own folder or a shared one, typed by its whole
+            # path, quoted; a file that is not a command is not offered.
+            own = Path(home, '.' + third, 'bin', third)
+            spaced = Path(home, 'my place', '.' + second, 'local', second)
+            shared = Path(home, 'my place', '.npm-global', 'bin', first)
+            for path in (own, spaced, shared):
+                path.parent.mkdir(parents=True)
+                path.write_text('#!/bin/sh\n')
+                path.chmod(0o755)
+            Path(home, '.local', 'bin').mkdir(parents=True)
+            Path(home, '.local', 'bin', second).write_text('not a command')
+            self.assertEqual(panes.available_agents(which=lambda name: None, home=home),
+                             [(third, label[third], str(own))])
+            self.assertEqual(panes.available_agents(which=lambda name: None, home=Path(home, 'my place')),
+                             [(first, label[first], "'%s'" % shared), (second, label[second], "'%s'" % spaced)])
+            # On PATH wins over an install folder.
+            self.assertEqual(panes.available_agents(which=lambda name: name == third, home=home),
+                             [(third, label[third], third)])
+
+    def test_kilix_panes_can_be_shown_only_inside_kilix_with_its_broker(self):
+        good = {'KITTY_LISTEN_ON': 'unix:@k', 'KITTY_PTY_BROKER_EXECUTABLE': '/bin/true',
+                'KITTY_PTY_BROKER_RUNTIME': '/run/user/1/kilix-pty-broker'}
+        self.assertTrue(panes.attach_ready(good))
+        for key, value in (('KITTY_LISTEN_ON', ''), ('KITTY_PTY_BROKER_EXECUTABLE', '/nonexistent'),
+                           ('KITTY_PTY_BROKER_EXECUTABLE', '/etc/passwd'), ('KITTY_PTY_BROKER_RUNTIME', 'run')):
+            self.assertFalse(panes.attach_ready(dict(good, **{key: value})), key)
+        self.assertTrue(panes.ATTACH.is_file())
 
     def test_the_front_of_a_real_terminal(self):
         pid, fd = pty.fork()
@@ -1076,7 +1212,7 @@ class Terminal:
     def alternate_screen(self): return False
     def scroll_bottom(self): pass
 class Pane:
-    def __init__(self, command, cols, rows, cw, ch, lib):
+    def __init__(self, command, cols, rows, cw, ch, lib, env=None):
         self.cols, self.rows, self.exit_status, self.fd = cols, rows, None, None
         # The second pane shows a character the renderer cannot draw.
         Pane.count = getattr(Pane, 'count', 0) + 1
@@ -1085,7 +1221,7 @@ class Pane:
         ignored = int(next(line for line in open('/proc/self/status') if line.startswith('SigIgn:')).split()[1], 16)
         note(event='pane', cwd=os.getcwd(), window=os.environ.get('KITTY_WINDOW_ID'),
              fd=os.environ.get('ZELL_PANES_FD'), command=command, ignored=ignored,
-             kitty=sorted(k for k in os.environ if k.startswith('KITTY') or k == 'WINDOWID'))
+             kitty=sorted(k for k in (os.environ if env is None else env) if k.startswith('KITTY') or k == 'WINDOWID'))
     def resize(self, cols, rows): self.cols, self.rows = cols, rows
     def send(self, data): note(event='send', data=data.decode())
     def reap(self): pass
@@ -1129,7 +1265,7 @@ class HelperRunTests(unittest.TestCase):
     """tools/zell_panes.py as Zell runs it: fd in the environment, lines on
     stdin, "R"/"E" on stdout, frames in the map."""
 
-    def run_helper(self, lines, broken=False, agents=(), not_runnable=(), old=False):
+    def run_helper(self, lines, broken=False, agents=(), not_runnable=(), old=False, kilix=False):
         folder = Path(self.temp.name)
         # PATH is a folder with a command for each agent given, and files
         # that are not commands for the rest.
@@ -1156,6 +1292,8 @@ class HelperRunTests(unittest.TestCase):
                    KITTY_PTY_BROKER_SESSION='s', KITTY_INSTALLATION_DIR='/opt/kilix', PATH=str(commands))
         if broken:
             env['PANES_TEST_BROKEN'] = '1'
+        if kilix:
+            env.update(KITTY_PTY_BROKER_EXECUTABLE='/bin/true', KITTY_PTY_BROKER_RUNTIME='/run/user/1/kilix-pty-broker')
         child = subprocess.Popen([sys.executable, str(TOOLS / 'zell_panes.py')], stdin=subprocess.PIPE,
                                  stdout=subprocess.PIPE, pass_fds=(fd,), env=env, cwd='/')
         first = child.stdout.readline()
@@ -1185,7 +1323,7 @@ class HelperRunTests(unittest.TestCase):
         # The agents found, what each pane runs, and why the agent was not
         # typed: these stand-in panes have no terminal to be at a prompt in.
         self.assertEqual(rest.decode().splitlines(),
-                         ['G %s %s' % (name, zell_providers.LABELS[name]) for name in names] +
+                         ['G %s %s' % (name, zell_providers.LABELS[name]) for name in panes.AGENT_ORDER if name in names] +
                          ['B 9 0 20 0 20 0', 'B 9 1 20 0 20 0', 'T 9 0 shell', 'T 9 1 shell',
                           'N 9 0 ' + panes.BUSY])
         magic, version, width, height, sequence, room = header
@@ -1221,6 +1359,31 @@ class HelperRunTests(unittest.TestCase):
         first, rest, code, header, rows = self.run_helper([('Q', 0.0)], agents=names[:1], not_runnable=names[1:])
         self.assertEqual((first, code), (b'R\n', 0))
         self.assertEqual(rest.decode().splitlines(), ['G %s %s' % (names[0], zell_providers.LABELS[names[0]])])
+
+    def test_the_kilix_button_runs_the_viewer_in_zells_kilix_window(self):
+        first, rest, code, header, rows = self.run_helper(
+            [('S 9 40 20', 0.4), ('A 1 kilix', 0.4), ('Q', 0.0)], kilix=True)
+        self.assertEqual((first, code), (b'R\n', 0))
+        lines = rest.decode().splitlines()
+        self.assertEqual(lines[0], 'G kilix Kilix')
+        self.assertIn('T 9 1 ' + panes.VIEW_TITLE, lines)
+        made = [row for row in rows if row['event'] == 'pane']
+        self.assertEqual(len(made), 3)
+        # The shells lose the Kilix window's identity; the viewer keeps it,
+        # for kilix_sdk and the broker.
+        self.assertEqual(made[0]['kitty'], ['KITTY_INSTALLATION_DIR', 'KITTY_PTY_BROKER_EXECUTABLE',
+                                            'KITTY_PTY_BROKER_RUNTIME'])
+        self.assertEqual(made[2]['command'], [sys.executable, str(panes.ATTACH)])
+        self.assertEqual(made[2]['kitty'], ['KITTY_INSTALLATION_DIR', 'KITTY_LISTEN_ON', 'KITTY_PID',
+                                            'KITTY_PTY_BROKER_EXECUTABLE', 'KITTY_PTY_BROKER_RUNTIME',
+                                            'KITTY_PTY_BROKER_SESSION', 'KITTY_PUBLIC_KEY', 'KITTY_WINDOW_ID',
+                                            'WINDOWID'])
+        # The shell under it and the viewer are both closed at the end.
+        self.assertEqual(sum(row['event'] == 'close' for row in rows), 3)
+
+    def test_no_kilix_button_without_the_broker(self):
+        first, rest, code, header, rows = self.run_helper([('A 0 kilix', 0.1), ('Q', 0.0)])
+        self.assertNotIn(b'G kilix', rest)
 
     def test_a_display_from_before_scrollback_is_refused(self):
         first, rest, code, header, rows = self.run_helper([('S 9 40 20', 0.2)], old=True)
