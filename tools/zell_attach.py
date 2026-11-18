@@ -51,6 +51,8 @@ ESCAPE_SECONDS = 0.03
 FRAME_SECONDS = 1 / 30
 SIZE_SECONDS = 2.0
 LIST_SECONDS = 2.0
+# This window's title over the list; over a pane, its name (View.name).
+LIST_TITLE = 'Kilix panes'
 WHEEL_ROWS = 3
 CELL_W, CELL_H = 8, 16
 SESSION = re.compile(r'[A-Za-z0-9_.-]{1,64}')
@@ -232,6 +234,33 @@ def follow(offset, at, shown, total):
     return min(max(0, offset), total - shown)
 
 
+def wrap_row(texts, cols, tcols, cursor=None):
+    """A row of `tcols` cells as pieces (start, width) of at most `cols`:
+    broken after a space where one is, never inside a wide character; the
+    blank cells at its end are not wrapped, except up to `cursor`, its
+    column when the cursor is on this row. The last piece runs to the row's
+    end where it fits, so a coloured background is kept."""
+    used = 0
+    for column in range(min(len(texts), tcols) - 1, -1, -1):
+        if texts[column] not in (' ', ''):
+            used = column + 1
+            break
+    if cursor is not None:
+        used = max(used, min(cursor + 1, tcols))
+    cols = max(1, cols)
+    pieces, start = [], 0
+    while True:
+        if used - start <= cols:
+            pieces.append((start, min(cols, tcols - start)))
+            return pieces
+        end = start + cols
+        cut = next((k for k in range(end, start, -1) if k - 1 < len(texts) and texts[k - 1] == ' '), end)
+        if cut < len(texts) and texts[cut] == '' and cut - 1 > start:
+            cut -= 1  # the second half of a wide character goes with its first
+        pieces.append((start, cut - start))
+        start = cut
+
+
 def fit(text, cols):
     """`text` cut to `cols` cells and padded to them: wide characters take
     two, combining marks none, so it never wraps the last row."""
@@ -294,7 +323,9 @@ class View:
         self.process = kilix.observe(pane.broker_session)
         os.set_blocking(self.process.stdout.fileno(), False)
         self.sender = Sender(kilix, pane.id)
-        self.ox = self.oy = 0
+        self.oy = 0
+        self.lines = []  # (row, start, width) of each row drawn
+        self.named = ''
         self.next_size = clock() + SIZE_SECONDS
         self.ended = False
 
@@ -342,10 +373,20 @@ class View:
                 pass
         self.terminal.close()
 
+    def name(self):
+        """What the pane is called here: its number and the title its
+        program set, else its own."""
+        title = ''
+        try:
+            title = self.terminal.title()
+        except (AttributeError, ValueError):
+            pass
+        return f'Kilix {self.pane.id}: {title.strip() or self.title}'
+
     def paint(self, cols, rows, previous):
         """Escape sequences that draw the pane in cols x rows (the last row is
-        the status line), the rows that changed since `previous` only; and
-        the rows now drawn."""
+        the status line), its rows wrapped to cols, the rows that changed
+        since `previous` only; and the rows now drawn."""
         terminal = self.terminal
         area = max(1, rows - 1)
         cells, (cx, cy) = terminal.snapshot()
@@ -353,18 +394,24 @@ class View:
         tcols, trows = terminal.cols, terminal.rows
         kept, first, shown = terminal.scrollbar()
         live = first + shown >= kept
-        if live:
-            self.ox = follow(self.ox, cx, cols, tcols)
-            self.oy = follow(self.oy, cy, area, trows)
+        lines, at = [], None
+        for row in range(trows):
+            on_row = cx if row == cy else None
+            for start, width in wrap_row(texts[row] if row < len(texts) else [], cols, tcols, on_row):
+                if on_row is not None and start <= cx < start + max(1, width):
+                    at = (len(lines), cx - start)
+                lines.append((row, start, width))
+        if live and at is not None:
+            self.oy = follow(self.oy, at[0], area, len(lines))
         else:
             self.oy = 0
+        self.lines = lines[self.oy:self.oy + area]
         drawn = []
         for y in range(area):
-            row = self.oy + y
-            if row < trows:
-                width = min(cols, tcols - self.ox)
-                start = row * tcols + self.ox
-                line = row_text(cells[start:start + width], texts[row], self.ox, width) if width > 0 else ''
+            if y < len(self.lines):
+                row, start, width = self.lines[y]
+                at_cell = row * tcols + start
+                line = row_text(cells[at_cell:at_cell + width], texts[row], start, width) if width > 0 else ''
             else:
                 line = ''
             drawn.append(line + '\x1b[0m\x1b[K')
@@ -376,18 +423,20 @@ class View:
             parts.append(f'not sent: {error}')
         if back:
             parts.append(f'{back} lines back')
-        if self.ox:
-            parts.append(f'from column {self.ox + 1}')
         parts += ['Ctrl-] leaves', self.title, f'{tcols}x{trows}']
         status = fit(' ' + ' / '.join(parts) + ' ', cols)
         drawn.append('\x1b[0;7m' + status + '\x1b[0m')
         out = []
+        name = self.name()
+        if name != self.named:
+            self.named = name
+            out.append(f'\x1b]2;{fit(name, 200).rstrip()}\x07')
         for y, line in enumerate(drawn):
             if y >= len(previous) or previous[y] != line:
                 out.append(f'\x1b[{y + 1};1H' + line)
-        visible = live and terminal.mode(25) and self.ox <= cx < self.ox + cols and self.oy <= cy < self.oy + area
+        visible = live and at is not None and terminal.mode(25) and self.oy <= at[0] < self.oy + area
         if visible:
-            out.append(f'\x1b[{cy - self.oy + 1};{cx - self.ox + 1}H\x1b[?25h')
+            out.append(f'\x1b[{at[0] - self.oy + 1};{at[1] + 1}H\x1b[?25h')
         else:
             out.append('\x1b[?25l')
         return ''.join(out), drawn
@@ -413,13 +462,18 @@ class View:
         """One pointer report from this terminal (cells counted from one)."""
         if y > rows - 1 or x < 1 or y < 1:
             return
-        column, row = x - 1 + self.ox, y - 1 + self.oy
+        # The cell under it, through the wrapping: none past a row's piece.
+        row = column = None
+        if y <= len(self.lines):
+            row, start, width = self.lines[y - 1]
+            if x <= width:
+                column = start + x - 1
         terminal = self.terminal
         low = buttons & 3
         wheel, motion = bool(buttons & 64), bool(buttons & 32)
         mods = (1 if buttons & SHIFT else 0) | (2 if buttons & CTRL else 0) | (4 if buttons & ALT else 0)
         # The program has the mouse when it asked for it, unless Shift is held.
-        if terminal.mouse_tracking() and not buttons & SHIFT and column < terminal.cols and row < terminal.rows:
+        if terminal.mouse_tracking() and not buttons & SHIFT and column is not None and column < terminal.cols and row < terminal.rows:
             button = 4 + low if wheel else 8 + low if buttons & 128 else (1, 3, 2, 0)[low]
             action = 1 if release else 2 if motion else 0
             self.send(terminal.mouse(action, button, mods, column * CELL_W, row * CELL_H), live=False)
@@ -501,12 +555,12 @@ class Screen:
     def __enter__(self):
         if self.saved is not None:
             tty.setraw(self.fd_in)
-        self.write('\x1b[?1049h\x1b[?1006h\x1b[?1000h\x1b[2J')
+        self.write('\x1b[22;0t\x1b[?1049h\x1b[?1006h\x1b[?1000h\x1b[2J')
         return self
 
     def __exit__(self, *_exc):
         resets = ''.join(f'\x1b[?{number}l' for number, on in self.modes.items() if on)
-        self.write(resets + '\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[?1006l\x1b[0m\x1b[?25h\x1b[?1049l')
+        self.write(resets + '\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[?1006l\x1b[0m\x1b[?25h\x1b[?1049l\x1b[23;0t')
         if self.saved is not None:
             termios.tcsetattr(self.fd_in, termios.TCSADRAIN, self.saved)
 
@@ -532,6 +586,7 @@ def choose(kilix, screen, note='', wait=select.select, clock=time.monotonic):
     """The pane chosen from the list, or None to leave."""
     entries, chosen, next_list, held = [], 0, 0.0, b''
     screen.mirror({1003: False, 1002: False, 1: False, 2004: False})
+    screen.write(f'\x1b]2;{LIST_TITLE}\x07')
     while True:
         if clock() >= next_list:
             next_list = clock() + LIST_SECONDS

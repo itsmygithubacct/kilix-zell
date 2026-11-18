@@ -167,6 +167,19 @@ def title_text(name):
     return text or 'shell'
 
 
+def view_title(view):
+    """A Kilix pane shown in a pane is called what the viewer called its
+    window: the pane's number and name. Until it says, or over its list,
+    the Kilix panes."""
+    try:
+        title = view.terminal.title()
+    except (AttributeError, ValueError):
+        title = ''
+    if not any(32 < ord(ch) < 127 for ch in title):
+        return VIEW_TITLE
+    return title_text(title)
+
+
 class Selection:
     """Text chosen with the left button: from anchor to head, each (row,
     column), rows counted as the scrollbar counts them so the text stays
@@ -809,7 +822,7 @@ class Rooms:
             for room, workspace in self.rooms.items():
                 for index, pane in enumerate(workspace.current['panes']):
                     if getattr(pane, 'shell', None) is not None:
-                        title = VIEW_TITLE
+                        title = view_title(pane)
                     else:
                         title = title_text(self.front(pane)[1] or getattr(pane, 'name', None))
                     if self.titles.get((room, index)) != title:

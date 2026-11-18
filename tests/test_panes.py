@@ -13,6 +13,7 @@ import sys
 import tempfile
 import time
 from types import SimpleNamespace
+import types
 import unittest
 
 TOOLS = Path(__file__).resolve().parents[1] / 'tools'
@@ -553,6 +554,14 @@ class ProtocolTests(unittest.TestCase):
         # Its title says what it is; an agent or a second Kilix is refused.
         self.rooms.poll(100.0)
         self.assertIn('T 10 2 ' + panes.VIEW_TITLE, self.said)
+        # Then it is called what the viewer calls its window: the Kilix
+        # pane it shows.
+        view.terminal.title = lambda: 'Kilix 7: codex \u00e9'
+        self.rooms.poll(101.0)
+        self.assertEqual(self.said[-1], 'T 10 2 Kilix 7: codex')
+        view.terminal.title = lambda: '  '
+        self.rooms.poll(102.0)
+        self.assertEqual(self.said[-1], 'T 10 2 ' + panes.VIEW_TITLE)
         self.rooms.line('A 2 codex')
         self.rooms.line('A 2 kilix')
         self.assertEqual(self.said[-2:], ['N 10 2 ' + panes.VIEWING] * 2)
@@ -1093,6 +1102,16 @@ class RealTerminalTests(unittest.TestCase):
         self.terminal = self.display.Terminal(self.pane.cols, self.pane.rows)
         self.addCleanup(self.terminal.close)
         self.pane.terminal = self.terminal
+
+    def test_a_view_is_called_what_its_viewer_titled_its_window(self):
+        if not hasattr(self.display.Terminal, 'title'):
+            self.skipTest('a display with no titles')
+        terminal = self.display.Terminal(20, 5)
+        self.addCleanup(terminal.close)
+        view = types.SimpleNamespace(terminal=terminal)
+        self.assertEqual(panes.view_title(view), panes.VIEW_TITLE)
+        terminal.feed(b'\x1b]2;Kilix 7: codex\x07')
+        self.assertEqual(panes.view_title(view), 'Kilix 7: codex')
 
     def test_scrollback_selection_and_copy(self):
         for i in range(30):

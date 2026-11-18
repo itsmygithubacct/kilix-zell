@@ -6,6 +6,7 @@ with ZELL_PANES_REAL_DISPLAY=1 the Neuronte display's parser is used too.
 import os
 from pathlib import Path
 import pty
+import re
 import select
 import subprocess
 import sys
@@ -33,6 +34,10 @@ class FakeTerminal:
         self.modes, self.fed, self.back, self.kept_above = {25}, [], 0, 0
         self.alternate = False
         self.mice = []
+        self.named = ''
+
+    def title(self):
+        return self.named
 
     def feed(self, data):
         self.fed.append(data)
@@ -279,29 +284,59 @@ class ViewTests(unittest.TestCase):
         self.term.screen = ['row0 abcdefghijklmno', 'row1', 'row2', 'row3', 'row4', 'row5 end']
         self.term.cursor = (8, 5)
         text, drawn = self.view.paint(50, 4, [])
-        # Three rows and the status line; the cursor's row and column shown.
+        # Three rows and the status line; the cursor's row shown.
         self.assertEqual(len(drawn), 4)
-        self.assertEqual((self.view.ox, self.view.oy), (0, 3))
+        self.assertEqual(self.view.oy, 3)
         self.assertIn('row3', drawn[0])
         self.assertIn('row5 end', drawn[2])
         self.assertTrue(drawn[3].startswith('\x1b[0;7m Kilix pane 7 / Ctrl-] leaves / codex / 60x6'))
         self.assertTrue(text.endswith('\x1b[3;9H\x1b[?25h'))
+        # The window is called after the pane, once.
+        self.assertTrue(text.startswith('\x1b]2;Kilix 7: codex\x07'))
         # Only the rows that changed are drawn again.
         self.term.screen[4] = 'ROW4'
         text, drawn = self.view.paint(50, 4, drawn)
+        self.assertNotIn('\x1b]2;', text)
         self.assertNotIn('\x1b[1;1H', text)
         self.assertIn('\x1b[2;1H', text)
         self.assertNotIn('\x1b[3;1H', text)
-        # A cursor far right moves the columns shown, and the status says so.
+        # A cursor past the width wraps its row; the cursor is on the second
+        # piece, which is followed.
         self.term.cursor = (55, 5)
         text, drawn = self.view.paint(50, 4, drawn)
-        self.assertEqual(self.view.ox, 6)
-        self.assertIn('from column 7', drawn[3])
-        self.assertTrue(text.endswith('\x1b[3;50H\x1b[?25h'))
+        self.assertEqual(self.view.oy, 4)
+        self.assertEqual(self.view.lines, [(4, 0, 50), (5, 0, 50), (5, 50, 10)])
+        self.assertIn('row5 end', drawn[1])
+        self.assertNotIn('from column', drawn[3])
+        self.assertTrue(text.endswith('\x1b[3;6H\x1b[?25h'))
+        # The title its program sets names it.
+        self.term.named = 'vim notes.txt'
+        text, drawn = self.view.paint(50, 4, drawn)
+        self.assertTrue(text.startswith('\x1b]2;Kilix 7: vim notes.txt\x07'))
         # A hidden cursor is hidden here.
         self.term.modes.discard(25)
         text, drawn = self.view.paint(50, 4, drawn)
         self.assertTrue(text.endswith('\x1b[?25l'))
+
+    def test_long_rows_wrap_at_spaces_and_whole_characters(self):
+        text = list('hello world foo'.ljust(20))
+        self.assertEqual(attach.wrap_row(text, 8, 20), [(0, 6), (6, 6), (12, 8)])
+        self.assertEqual(attach.wrap_row(list('abcdefghij'), 4, 10), [(0, 4), (4, 4), (8, 2)])
+        # A wide character is never cut: its halves go together.
+        self.assertEqual(attach.wrap_row(['a', '\u65e5', '', 'b'], 2, 4), [(0, 1), (1, 2), (3, 1)])
+        # The blank end is not wrapped, but up to the cursor it is.
+        self.assertEqual(attach.wrap_row(list('ab'.ljust(10)), 6, 10), [(0, 6)])
+        self.assertEqual(attach.wrap_row([' '] * 10, 4, 10), [(0, 4)])
+        self.assertEqual(attach.wrap_row([' '] * 10, 4, 10, 9), [(0, 4), (4, 4), (8, 2)])
+        # Narrower than here: one piece, the whole row.
+        self.assertEqual(attach.wrap_row(list('a b c'), 30, 5), [(0, 5)])
+        # Wrapped, every row is drawn with every character, none cut.
+        self.term.cols = 30
+        self.term.screen = ['the quick brown fox jumps over', 'x']
+        self.term.cursor = (1, 1)
+        _text, drawn = self.view.paint(12, 8, [])
+        self.assertEqual([re.sub('\x1b\\[[0-9;]*[A-Za-z]', '', line).rstrip() for line in drawn[:5]],
+                         ['the quick', 'brown fox', 'jumps over', 'x', ''])
 
     def test_scrolled_back_it_shows_from_the_top_and_says_so(self):
         self.term.kept_above, self.term.back = 40, 12
@@ -314,7 +349,11 @@ class ViewTests(unittest.TestCase):
         self.assertTrue(wait_for(lambda: self.kilix.sent == [(7, b'x')]))
 
     def test_the_mouse_goes_to_a_program_that_asked_else_the_wheel_scrolls(self):
-        self.term.kept_above, self.view.ox, self.view.oy = 40, 2, 1
+        # Row 0 is wider than here: it is drawn as two rows.
+        self.term.kept_above, self.term.cols = 40, 60
+        self.term.screen[0] = 'x' * 45
+        self.view.paint(30, 8, [])
+        self.assertEqual(self.view.lines[:3], [(0, 0, 30), (0, 30, 30), (1, 0, 30)])
         # No tracking: the wheel scrolls; a click does nothing.
         self.view.pointer(64, 3, 3, False, 30, 8)
         self.assertEqual(self.term.back, 3)
@@ -322,7 +361,8 @@ class ViewTests(unittest.TestCase):
         self.assertEqual(self.term.back, 0)
         self.view.pointer(0, 3, 3, False, 30, 8)
         self.assertEqual(self.term.mice, [])
-        # Tracking: encoded as it asked, at the pane's cell, the offsets added.
+        # Tracking: encoded as it asked, at the pane's cell through the
+        # wrapping.
         self.term.modes.add(1000)
         self.view.pointer(0 | 16 | 8, 3, 3, False, 30, 8)
         self.view.pointer(0, 3, 3, True, 30, 8)
@@ -330,17 +370,26 @@ class ViewTests(unittest.TestCase):
         self.view.pointer(0 | 4, 3, 3, False, 30, 8)
         self.view.pointer(32 + 2, 4, 3, False, 30, 8)
         self.view.pointer(65, 1, 1, False, 30, 8)
-        self.assertEqual(self.term.mice, [(0, 1, 6, 32, 48), (1, 1, 0, 32, 48), (2, 2, 0, 40, 48), (0, 5, 0, 16, 16)])
+        self.view.pointer(0, 3, 2, False, 30, 8)
+        self.assertEqual(self.term.mice, [(0, 1, 6, 16, 16), (1, 1, 0, 16, 16), (2, 2, 0, 24, 16), (0, 5, 0, 0, 0),
+                                          (0, 1, 0, 256, 0)])
         # Shift keeps the wheel here.
         self.view.pointer(64 | 4, 3, 3, False, 30, 8)
         self.assertEqual(self.term.back, 3)
         self.term.back = 0
         # The status line is not the pane's, even over a pane taller than
-        # here; nor what is past its edge.
+        # here; nor what is past a piece's end.
         self.term.rows = 40
         self.view.pointer(0, 3, 8, False, 30, 8)
-        self.view.pointer(0, 30, 3, False, 30, 8)
-        self.assertEqual(len(self.term.mice), 4)
+        self.term.screen[1] = 'aaaa bbbb'
+        self.term.cols = 12
+        self.term.screen[0] = 'aaaa bbbb cc'
+        self.view.paint(8, 8, [])
+        self.assertEqual(self.view.lines[:2], [(0, 0, 5), (0, 5, 7)])
+        self.view.pointer(0, 6, 1, False, 8, 8)
+        self.assertEqual(len(self.term.mice), 5)
+        self.view.pointer(0, 5, 1, False, 8, 8)
+        self.assertEqual(self.term.mice[-1], (0, 1, 0, 32, 0))
         self.assertTrue(wait_for(lambda: len(b''.join(data for _id, data in self.kilix.sent)) > 0))
 
     def test_the_wheel_on_an_alternate_screen_is_arrows_when_asked(self):
@@ -425,15 +474,19 @@ class RealDisplayTests(unittest.TestCase):
                 view.read()
         text, drawn = view.paint(30, 6, [])
         self.assertIn('second line', text)
+        # Wider than here, the first row wraps, after its space: none of it
+        # is lost.
+        self.assertEqual(view.lines[:4], [(0, 0, 4), (0, 4, 30), (0, 34, 26), (1, 0, 30)])
         self.assertIn('38;2;', text)
         self.assertIn('Kilix pane 7 / Ctrl-] leaves', drawn[-1])
         self.assertIn('Kilix pane 7 / Ctrl-] leaves / codex / 60x10', view.paint(70, 6, [])[1][-1])
         self.assertEqual(view.modes(), {1: False, 2004: True, 1003: False, 1002: True})
         view.terminal.feed(b'\r\n' * 20)
+        view.paint(30, 6, [])
         view.pointer(64, 2, 2, False, 30, 6)
         self.assertTrue(wait_for(lambda: kilix.sent))
         # 1000 without 1006: the reports it asked for are X10's.
-        self.assertEqual(kilix.sent[0][1], b'\x1b[M' + bytes([32 + 64, 32 + 2, 32 + 2]))
+        self.assertEqual(kilix.sent[0][1], b'\x1b[M' + bytes([32 + 64, 32 + 2, 32 + 7]))
 
 
 class EndToEndTests(unittest.TestCase):
@@ -504,16 +557,23 @@ class EndToEndTests(unittest.TestCase):
             seen = self.read_until(fd, b'codex')
             self.assertIn(b'Kilix panes', seen)
             self.assertNotIn(b'zell', seen)
+            # This terminal's title is kept, then the window is called the
+            # list, then the pane shown.
+            self.assertLess(seen.index(b'\x1b[22;0t'), seen.index(b'\x1b]2;Kilix panes\x07'))
             os.write(fd, b'\r')
             seen = self.read_until(fd, b'pane says hi')
             self.assertIn(b'pane says hi', seen)
             self.assertIn(b'Kilix pane 7', seen)
+            self.assertIn(b'\x1b]2;Kilix 7: codex\x07', seen)
             os.write(fd, b'ls\r')
             self.assertTrue(wait_for(lambda: self.log.exists() and b'send pane:7 6c730d' in self.log.read_bytes()))
             os.write(fd, b'\x1d')
             seen = self.read_until(fd, b'Up and Down choose')
             self.assertIn(b'Up and Down choose', seen)
+            self.assertIn(b'\x1b]2;Kilix panes\x07', seen)
             os.write(fd, b'\x1b')
+            # Leaving puts this terminal's title back.
+            self.assertIn(b'\x1b[23;0t', self.read_until(fd, b'\x1b[23;0t'))
             _, status = os.waitpid(pid, 0)
             pid = None
             self.assertEqual(os.waitstatus_to_exitcode(status), 0)
