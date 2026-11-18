@@ -2582,6 +2582,9 @@ static void test_input_scan(void){
     scan(&in,&l,"01",1000);
     assert(!strcmp(scan(&in,&l,"~",1000),"V2[ab]"));
     assert(!zell_input_pasting(&in));
+    /* A broken marker followed at once by the real end. */
+    l.n=0;l.log[0]=0;
+    assert(!strcmp(scan(&in,&l,"\033[200~ab\033[2\033[201~z",0),"V5[ab\033[2]K[z]"));
     /* An empty paste is a paste of nothing. */
     l.n=0;l.log[0]=0;
     assert(!strcmp(scan(&in,&l,"\033[200~\033[201~",0),"V0[]"));
@@ -2860,9 +2863,13 @@ static void test_pane_io(void){
         assert(pipe(fds)==0);
         memset(longline,'A',sizeof longline);longline[0]='Y';longline[1]=' ';longline[sizeof longline-1]='\n';
         assert(write(fds[1],longline,sizeof longline)==(ssize_t)sizeof longline);
-        assert(write(fds[1],"Y .\nY eA==\nY .\n",15)==15);
-        close(fds[1]);
+        assert(write(fds[1],"Y .\n",4)==4);
         for(int i=0;i<4;i++)zell_panes_test_read(fds[0]);
+        /* Taken cut short, its first 4 KiB would be a copy by now. */
+        assert(!zell_panes_copy_sequence(&n));
+        assert(write(fds[1],"Y eA==\nY .\n",11)==11);
+        close(fds[1]);
+        for(int i=0;i<2;i++)zell_panes_test_read(fds[0]);
         close(fds[0]);
         const char *seq=zell_panes_copy_sequence(&n);
         assert(seq&&n==12&&!memcmp(seq,"\033]52;c;eA==\a",12));
