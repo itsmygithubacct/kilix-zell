@@ -867,7 +867,7 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
         /* The key that pressed a button is not the pane's until it is let go:
          * its repeats would follow the agent's command in. */
         static uint32_t pressed_with;
-        while(kittykb_input_next(&keyboard.input,&event)){
+        while(next_key(&event)){
             if(pressed_with&&event.key==pressed_with&&event.action!=KITTYKB_ACTION_PRESS){
                 if(event.action==KITTYKB_ACTION_RELEASE)pressed_with=0;
                 continue;
@@ -890,7 +890,7 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
         controls->run=false;
         /* Leave queued events untouched until the previous pipe batch can drain. */
         while(at+2u*TERMINAL_KEY_BYTES+2u<=sizeof scene->service_reply&&
-              kittykb_input_next(&keyboard.input,&event)){
+              next_key(&event)){
             unsigned char bytes[TERMINAL_KEY_BYTES];size_t length=terminal_key_bytes(&event,bytes);
             for(size_t i=0;i<length;i++){
                 unsigned ch=bytes[i];static const char hex[]="0123456789abcdef";
@@ -920,7 +920,7 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
                      kittykb_input_key_down(&keyboard.input, (uint32_t)'S')))) {
         controls->move_y += 1;
     }
-    while (kittykb_input_next(&keyboard.input, &event)) {
+    while (next_key(&event)) {
         if (event.action == KITTYKB_ACTION_RELEASE) {
             continue;
         }

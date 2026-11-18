@@ -38,9 +38,28 @@ static char *ask_bytes;
 static size_t ask_n;
 static int ask_room;
 static int64_t ask_until;
+/* Answers are keys made after the question: keys before the paste, even
+ * read with it, go where they were going first. */
+static bool ask_armed;
+/* The Enter that let a paste through: its repeats and its release are no
+ * one's keys. */
+static uint32_t answered_with;
 static void ask_say(zell_scene *s,const char *text){
- if(ZELL_ROOM_IS_PANES(s->room))zell_panes_tell(s,text,ZELL_PASTE_ASK_MS);
- else zell_notice_apply(s,text);
+ if(ZELL_ROOM_IS_PANES(s->room)){zell_panes_tell(s,text,ZELL_PASTE_ASK_MS);return;}
+ /* Said again even when the last notice, long gone, said the same. */
+ zell_notice_apply(s,"");
+ zell_notice_apply(s,text);
+}
+static bool next_key(kittykb_event *event){
+ while(kittykb_input_next(&keyboard.input,event)){
+  if(answered_with&&event->key==answered_with){
+   if(event->action==KITTYKB_ACTION_REPEAT)continue;
+   if(event->action==KITTYKB_ACTION_RELEASE){answered_with=0;continue;}
+   answered_with=0;
+  }
+  return true;
+ }
+ return false;
 }
 static void ask_drop(zell_scene *s,bool say){
  free(ask_bytes);ask_bytes=NULL;ask_n=0;
@@ -71,9 +90,10 @@ static void desktop_paste(void *user,const char *bytes,size_t count){
  if(!held){ask_say(s,"The paste was not sent.");return;}
  memcpy(held,bytes,count);
  ask_bytes=held;ask_n=count;ask_room=s->room;ask_until=zell_notice_clock_ms()+ZELL_PASTE_ASK_MS;
- char text[96];
- if(lines==1)snprintf(text,sizeof text,"Paste this line and its Enter? Enter pastes it, any other key does not.");
- else snprintf(text,sizeof text,"Paste %zu lines? Enter pastes them, any other key does not.",lines);
+ ask_armed=!typed_n&&!keyboard.input.queue_count;
+ /* Short enough for a laptop pane's title bar beside its buttons. */
+ char text[64];
+ snprintf(text,sizeof text,"Paste %zu line%s? Enter=yes Esc=no",lines,lines==1?"":"s");
  ask_say(s,text);
 }
 /* No key (an event that is not one), or a modifier alone. */
@@ -83,12 +103,16 @@ static bool paste_answer(zell_scene *s){
  if(!ask_n)return false;
  /* Unanswered in time it is said; in another room, it is just gone. */
  if(s->room!=ask_room||zell_notice_clock_ms()>=ask_until){ask_drop(s,s->room==ask_room);return false;}
+ if(!ask_armed){
+  if(typed_n||keyboard.input.queue_count)return false;
+  ask_armed=true;
+ }
  kittykb_event event;
  while(kittykb_input_next(&keyboard.input,&event)){
   if(event.action!=KITTYKB_ACTION_PRESS||modifier_key(event.key))continue;
   if(event.key==KITTYKB_KEY_ENTER||event.key==KITTYKB_KEY_KP_ENTER){
    char *bytes=ask_bytes;size_t n=ask_n;
-   ask_bytes=NULL;ask_n=0;
+   ask_bytes=NULL;ask_n=0;answered_with=event.key;
    paste_deliver(s,bytes,n);
    free(bytes);
   }else ask_drop(s,true);

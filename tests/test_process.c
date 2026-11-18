@@ -664,7 +664,7 @@ static void test_paste_question(void){
     /* Two lines wait; Shift does not answer; Enter types them. */
     desktop_input_feed(&scene,"\033[200~ls\nrm x\n\033[201~",20);
     assert(keyboard.input.queue_count==0&&ask_n==8);
-    assert(!strcmp(scene.notice_text,"Paste 2 lines? Enter pastes them, any other key does not."));
+    assert(!strcmp(scene.notice_text,"Paste 2 lines? Enter=yes Esc=no"));
     zell_controls controls;
     desktop_input_feed(&scene,shift,(size_t)shift_n);
     read_controls(&scene,&controls);
@@ -675,7 +675,7 @@ static void test_paste_question(void){
     assert(ask_n==8);
     desktop_input_feed(&scene,"\033[<35;20;50M",13);
     assert(ask_n==8&&scene.mouse_valid);
-    assert(!strcmp(scene.notice_text,"Paste 2 lines? Enter pastes them, any other key does not."));
+    assert(!strcmp(scene.notice_text,"Paste 2 lines? Enter=yes Esc=no"));
     desktop_input_feed(&scene,"\r",1);
     read_controls(&scene,&controls);
     assert(ask_n==0);
@@ -684,7 +684,7 @@ static void test_paste_question(void){
     assert(!kittykb_input_next(&keyboard.input,&event));
     /* Any other key drops it, and says so. */
     desktop_input_feed(&scene,"\033[200~a\r\nb\033[201~",16);
-    assert(ask_n==4&&!strcmp(scene.notice_text,"Paste 2 lines? Enter pastes them, any other key does not."));
+    assert(ask_n==4&&!strcmp(scene.notice_text,"Paste 2 lines? Enter=yes Esc=no"));
     desktop_input_feed(&scene,"q",1);
     read_controls(&scene,&controls);
     assert(ask_n==0&&!kittykb_input_next(&keyboard.input,&event)&&typed_n==0);
@@ -692,9 +692,29 @@ static void test_paste_question(void){
     /* One line and its Enter is asked about too; a newer paste takes its
      * place. */
     desktop_input_feed(&scene,"\033[200~ls\n\033[201~",15);
-    assert(ask_n==3&&!strcmp(scene.notice_text,"Paste this line and its Enter? Enter pastes it, any other key does not."));
+    assert(ask_n==3&&!strcmp(scene.notice_text,"Paste 1 line? Enter=yes Esc=no"));
     desktop_input_feed(&scene,"\033[200~1\n2\n3\033[201~",17);
-    assert(ask_n==5&&!strcmp(scene.notice_text,"Paste 3 lines? Enter pastes them, any other key does not."));
+    assert(ask_n==5&&!strcmp(scene.notice_text,"Paste 3 lines? Enter=yes Esc=no"));
+    /* Keys typed before a paste that the key queue had no room for yet go
+     * first too: until they have, nothing answers. */
+    {
+        static char many[KITTYKB_EVENT_QUEUE_CAPACITY+64+15];
+        size_t k=KITTYKB_EVENT_QUEUE_CAPACITY+64;
+        memset(many,'z',k);memcpy(many+k,"\033[200~1\n2\033[201~",15);
+        desktop_input_feed(&scene,many,k+15);
+        assert(ask_n==3&&typed_n>0);
+        read_controls(&scene,&controls);
+        assert(keyboard.input.queue_count==0&&typed_n>0);
+        assert(!paste_answer(&scene)&&ask_n==3);
+        while(typed_n){typed_feed();read_controls(&scene,&controls);}
+        assert(paste_answer(&scene)&&ask_n==3);
+        ask_drop(&scene,false);
+    }
+    /* Asked again long after, the same question is said again. */
+    zell_notice_set_clock(200000);
+    desktop_input_feed(&scene,"\033[200~1\n2\n3\033[201~",17);
+    assert(ask_n==5&&scene.notice_until_ms==200000+ZELL_PASTE_ASK_MS&&!strcmp(scene.notice_text,"Paste 3 lines? Enter=yes Esc=no"));
+    zell_notice_set_clock(1000);ask_until=1000+ZELL_PASTE_ASK_MS;
     /* Unanswered for eight seconds it is dropped, and said. */
     zell_notice_set_clock(1000+ZELL_PASTE_ASK_MS-1);
     assert(paste_answer(&scene)&&ask_n==5);
@@ -708,12 +728,34 @@ static void test_paste_question(void){
     scene.mouse_valid=true;scene.mouse_click=true;scene.mouse_x=10;scene.mouse_y=300;
     assert(zell_desktop_click(&scene)&&zell_panes_keys_to_pane());
     desktop_input_feed(&scene,"\033[200~a\nb\033[201~",15);
-    assert(ask_n==3&&!strcmp(zell_panes_notice(ZELL_ROOM_PANES_RIGHT,0),"Paste 2 lines? Enter pastes them, any other key does not."));
+    assert(ask_n==3&&!strcmp(zell_panes_notice(ZELL_ROOM_PANES_RIGHT,0),"Paste 2 lines? Enter=yes Esc=no"));
     assert(!strcmp(zell_panes_pending(),""));
     desktop_input_feed(&scene,"\r",1);
     read_controls(&scene,&controls);
     zell_panes_test_drain();
     assert(ask_n==0&&!strcmp(zell_panes_pending(),"P 10 0 610a62\nP 10 0 .\n"));
+    /* Held, the Enter that pasted repeats and is let go: neither goes to
+     * the pane; the next key does. */
+    desktop_input_feed(&scene,"\033[200~1\n2\033[201~",15);
+    assert(ask_n==3);
+    desktop_input_feed(&scene,"\r\033[13;1:2u\033[13;1:2u\033[13;1:3ux",29);
+    read_controls(&scene,&controls);
+    read_controls(&scene,&controls);
+    zell_panes_test_drain();
+    assert(!strcmp(zell_panes_pending(),"P 10 0 610a62\nP 10 0 .\nP 10 0 310a32\nP 10 0 .\nK78\n"));
+    /* An Enter typed before the paste, read with it, goes to the pane and
+     * does not answer: the question waits for a key after it. */
+    desktop_input_feed(&scene,"\r\033[200~rm a\nrm b\n\033[201~",23);
+    assert(ask_n==10);
+    read_controls(&scene,&controls);
+    zell_panes_test_drain();
+    assert(ask_n==10&&!strcmp(zell_panes_pending(),"P 10 0 610a62\nP 10 0 .\nP 10 0 310a32\nP 10 0 .\nK78\nK0d\n"));
+    assert(!strcmp(zell_panes_notice(ZELL_ROOM_PANES_RIGHT,0),"Paste 2 lines? Enter=yes Esc=no"));
+    /* With the keys before it gone, the next key answers. */
+    read_controls(&scene,&controls);
+    desktop_input_feed(&scene,"q",1);
+    read_controls(&scene,&controls);
+    assert(ask_n==0&&!strcmp(zell_panes_notice(ZELL_ROOM_PANES_RIGHT,0),"The paste was not sent."));
     desktop_input_feed(&scene,"\033[200~c\nd\033[201~",15);
     assert(ask_n==3);
     desktop_input_feed(&scene,"\033[<0;20;300M",13);
