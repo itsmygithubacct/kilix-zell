@@ -864,7 +864,8 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
         /* Alt with the arrows moves between the panes and the walkway: he
          * does not walk then. */
         bool alt_held=kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_LEFT_ALT)||kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_RIGHT_ALT);
-        if(!zell_panes_keys_to_pane()&&!alt_held){
+        if(zell_panes_hotkeys_open())controls->run=false;
+        else if(!zell_panes_keys_to_pane()&&!alt_held){
             controls->move_x=(kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_RIGHT)?1:0)-(kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_LEFT)?1:0);
             controls->move_y=(kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_DOWN)?1:0)-(kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_UP)?1:0);
         }
@@ -876,12 +877,42 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
                 if(event.action==KITTYKB_ACTION_RELEASE)pressed_with=0;
                 continue;
             }
+            uint32_t mods=event.modifiers&(KITTYKB_MOD_ALT|KITTYKB_MOD_CTRL|KITTYKB_MOD_SHIFT|KITTYKB_MOD_SUPER);
+            bool pressed=event.action==KITTYKB_ACTION_PRESS;
+            /* The Hotkeys window: F1 opens it; while it is open, Esc, Enter,
+             * Space, q or F1 closes it and no key goes anywhere else. */
+            if(zell_panes_hotkeys_open()){
+                if(pressed&&!mods&&(event.key==KITTYKB_KEY_ESCAPE||event.key==KITTYKB_KEY_ENTER||event.key==KITTYKB_KEY_KP_ENTER||
+                                    event.key==' '||event.key=='q'||event.key==KITTYKB_KEY_F1)){
+                    zell_panes_hotkeys_show(false);
+                    pressed_with=event.key;
+                }
+                continue;
+            }
+            if(event.key==KITTYKB_KEY_F1&&!mods){
+                if(pressed){zell_panes_hotkeys_show(true);pressed_with=event.key;}
+                continue;
+            }
+            /* Kilix's window keys, which it hands to Zell here: Ctrl+Tab and
+             * Ctrl+Shift+Tab go round the panes, Ctrl+Alt+Z zooms. */
+            if(event.key==KITTYKB_KEY_TAB&&(mods==KITTYKB_MOD_CTRL||mods==(KITTYKB_MOD_CTRL|KITTYKB_MOD_SHIFT))){
+                if(pressed){(void)zell_panes_cycle(scene,mods&KITTYKB_MOD_SHIFT?-1:1);pressed_with=event.key;}
+                continue;
+            }
+            if((event.key=='z'||event.key=='Z')&&mods==(KITTYKB_MOD_CTRL|KITTYKB_MOD_ALT)){
+                if(pressed){(void)zell_panes_zoom_key(scene);pressed_with=event.key;}
+                continue;
+            }
             /* Alt and an arrow, nothing else held: never the pane's. */
             if((event.modifiers&(KITTYKB_MOD_ALT|KITTYKB_MOD_CTRL|KITTYKB_MOD_SHIFT|KITTYKB_MOD_SUPER))==KITTYKB_MOD_ALT&&
                (event.key==KITTYKB_KEY_LEFT||event.key==KITTYKB_KEY_RIGHT||event.key==KITTYKB_KEY_UP||event.key==KITTYKB_KEY_DOWN)){
-                if(event.action==KITTYKB_ACTION_PRESS)
+                /* Its repeats and release are not the pane's, Alt let go
+                 * first or not. */
+                if(event.action==KITTYKB_ACTION_PRESS){
                     (void)zell_panes_move(scene,event.key==KITTYKB_KEY_LEFT?-1:event.key==KITTYKB_KEY_RIGHT?1:0,
                                           event.key==KITTYKB_KEY_UP?-1:event.key==KITTYKB_KEY_DOWN?1:0);
+                    pressed_with=event.key;
+                }
                 continue;
             }
             bool press=event.action==KITTYKB_ACTION_PRESS&&(event.key==KITTYKB_KEY_ENTER||event.key==KITTYKB_KEY_KP_ENTER||event.key==' ');
@@ -1120,7 +1151,7 @@ static int run_scene(void)
                 scene.theater_install_code=-1;
             }
         }
-        if(scene.desktop){zell_panes_pump(&scene);desktop_copy();}
+        if(scene.desktop){zell_panes_pump(&scene);desktop_copy();desktop_app_keys(&scene,false);}
         /* service_frame ignores a job frame whose window generation does not match. */
         service_pump(&vitals,&scene);
         service_pump(&service,&scene);
@@ -1165,7 +1196,7 @@ static int run_scene(void)
     service_stop(&vitals);
     service_stop(&service);
     free(scene.terminal_pixels);
-    if(scene.desktop)desktop_mouse_mode(false);
+    if(scene.desktop){desktop_app_keys(&scene,true);desktop_mouse_mode(false);}
     speech_stop(&speech);
     proc_stop(&proc);
     free(rgba);

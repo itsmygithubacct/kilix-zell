@@ -554,6 +554,31 @@ static void desktop_panes_button(sr_canvas *c,zell_rect r,const char *label,uint
  int tw=sr_text_width_in(SR_FONT_FIXED_8X16,label,1);
  sr_text(c,(float)(r.x+(r.w-tw)/2),(float)(r.y+(r.h-16)/2),label,ink,1,1);
 }
+/* The Hotkeys window, over the panes below the walkway: the keys in a
+ * column, what they do beside them, each cut to fit. */
+static void desktop_panes_hotkeys(sr_canvas *c){
+ int line_h=18,keys_w=27*8,w=c->w-32<820?c->w-32:820,h=zell_panes_hotkeys_lines*line_h+56;
+ if(h>c->h-ZELL_PANES_WALK_H-16)h=c->h-ZELL_PANES_WALK_H-16;
+ if(w<120||h<60)return;
+ int x=(c->w-w)/2,y=ZELL_PANES_WALK_H+8;
+ sr_fill_rect(c,0,(float)ZELL_PANES_WALK_H,(float)c->w,(float)(c->h-ZELL_PANES_WALK_H),0x05090cu,.55f);
+ sr_fill_rect(c,(float)x,(float)y,(float)w,(float)h,0x101b24u,.97f);
+ sr_stroke_rect(c,(float)x,(float)y,(float)w,(float)h,2,0xd9ba79u,1);
+ desktop_text(c,x+14,y+8,"Hotkeys",0xd9ba79u,w-28);
+ desktop_text(c,x+w-14-15*8,y+8,"Esc closes",0x9fb4c0u,15*8);
+ int row=y+34;
+ for(int i=0;i<zell_panes_hotkeys_lines&&row+16<=y+h-6;i++,row+=line_h){
+  const char *text=zell_panes_hotkeys_text[i],*bar=strchr(text,'|');
+  if(text[0]=='#'){desktop_text(c,x+14,row,text+1,0x9ff0c8u,w-28);continue;}
+  if(!bar){desktop_text(c,x+14,row,text,0x9fb4c0u,w-28);continue;}
+  char keys[64];size_t n=(size_t)(bar-text)<sizeof keys-1?(size_t)(bar-text):sizeof keys-1;
+  memcpy(keys,text,n);keys[n]=0;
+  if(w>keys_w+120){
+   desktop_text(c,x+22,row,keys,0xffffffu,keys_w-12);
+   desktop_text(c,x+22+keys_w,row,bar+1,0xd6e4ecu,w-36-keys_w);
+  }else desktop_text(c,x+14,row,n?keys:bar+1,n?0xffffffu:0xd6e4ecu,w-28);
+ }
+}
 /* A pane room is the walkway, the panes' title bars and their cells, edge
  * to edge: no HUD, no status strip, no border. The thin green line at the
  * walkway's end is the way back. */
@@ -635,11 +660,17 @@ static void desktop_panes_room(const zell_scene *s,sr_canvas *c){
   else snprintf(text,sizeof text,"Opening %d panes...",count);
   desktop_label(c,c->w/2,ZELL_PANES_CELLS_Y+(c->h-ZELL_PANES_CELLS_Y)/2,text,error[0]?0xe5ad87u:0xb9f8dbu);
  }
+ zell_rect hotkeys;zell_panes_hotkeys_rect(s,&hotkeys);
+ if(hotkeys.w){
+  bool under=aim==ZELL_PANES_AIM_HOTKEYS||zell_panes_hotkeys_open();
+  desktop_panes_button(c,hotkeys,ZELL_PANES_HOTKEYS_LABEL,under?0x5a4a24u:0x2a2f45u,under?0xd9ba79u:0x8f8fd0u,0xffffffu);
+ }
  zell_rect exit;zell_panes_exit_rect(s,&exit);
  sr_fill_rect(c,(float)exit.x,(float)exit.y,(float)exit.w,(float)exit.h,ZELL_PANES_EXIT_RGB,1);
  zell_actor_pose pose=zell_desktop_pose(s,-1);
  sr_fill_ellipse(c,s->x,s->y,12.f,4.f,0x071719u,.45f);
  desktop_art(c,pose.art,(int)s->x+pose.offset_x,(int)s->y+pose.offset_y,ZELL_PANES_KILIX_H);
+ if(zell_panes_hotkeys_open())desktop_panes_hotkeys(c);
 }
 static void desktop_base(const zell_scene *s,sr_canvas *c){
  if(ZELL_ROOM_IS_PANES(s->room)){desktop_panes_room(s,c);return;}

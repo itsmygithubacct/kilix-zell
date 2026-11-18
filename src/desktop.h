@@ -188,7 +188,7 @@ bool zell_panes_press(zell_scene *s);
  * agent), the plaque in a pane's middle (index) and a title-bar button
  * below him (index, button), the one whose middle is nearest him; else the
  * pane itself (index), or nothing. Nothing while a pane has the keys. */
-enum { ZELL_PANES_AIM_NONE, ZELL_PANES_AIM_AGENT, ZELL_PANES_AIM_PAD, ZELL_PANES_AIM_CHROME, ZELL_PANES_AIM_PANE };
+enum { ZELL_PANES_AIM_NONE, ZELL_PANES_AIM_AGENT, ZELL_PANES_AIM_PAD, ZELL_PANES_AIM_CHROME, ZELL_PANES_AIM_PANE, ZELL_PANES_AIM_HOTKEYS };
 int zell_panes_aim(const zell_scene *s,int *index,int *which);
 /* The plaque: ZELL_PANES_PAD_W wide at the pane's middle, on panes at least
  * ZELL_PANES_PAD_MIN wide; w is 0 otherwise. */
@@ -216,6 +216,17 @@ int zell_panes_pane_at(const zell_scene *s,int x);
  * Down gives the keys to the pane he is over. Not to panes a zoom hides.
  * False outside a pane room. */
 bool zell_panes_move(zell_scene *s,int dx,int dy);
+/* Ctrl+Tab (step 1) and Ctrl+Shift+Tab (-1); Ctrl+Alt+Z. */
+bool zell_panes_cycle(zell_scene *s,int step);
+bool zell_panes_zoom_key(zell_scene *s);
+/* The Hotkeys button on the walkway (w 0 when the room is too narrow), and
+ * the window it opens: what it says, a line each. */
+#define ZELL_PANES_HOTKEYS_LABEL "Hotkeys"
+void zell_panes_hotkeys_rect(const zell_scene *s,zell_rect *r);
+bool zell_panes_hotkeys_open(void);
+void zell_panes_hotkeys_show(bool open);
+extern const char *const zell_panes_hotkeys_text[];
+extern const int zell_panes_hotkeys_lines;
 /* Agent button `agent` over pane index; w is 0 when it does not fit. */
 void zell_panes_button_rect(const zell_scene *s,int index,int agent,zell_rect *r);
 int zell_panes_agent_count(void);

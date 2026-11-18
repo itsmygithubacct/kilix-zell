@@ -2299,11 +2299,14 @@ static void test_pane_rooms(void){
         assert(s.x<104.f);
         zell_panes_button_rect(&s,1,0,&b);assert(b.x==260&&b.w==56);
         zell_panes_button_rect(&s,1,1,&b);assert(b.x==394&&b.w==48);
-        zell_panes_button_rect(&s,3,1,&b);assert(b.x==874&&b.w==48);
+        /* The last pane's second would reach the Hotkeys button (876). */
+        zell_panes_button_rect(&s,3,1,&b);assert(b.w==0);
         zell_panes_button_rect(&s,0,2,&b);assert(b.w==0);
         zell_panes_button_rect(&s,4,0,&b);assert(b.w==0);
         zell_scene narrow=s;zell_scene_resize(&narrow,400,300);
-        zell_panes_button_rect(&narrow,3,0,&b);assert(b.x==312+12&&b.w==56);
+        /* There the Hotkeys button (316) leaves the last pane none. */
+        zell_panes_button_rect(&narrow,3,0,&b);assert(b.w==0);
+        zell_panes_button_rect(&narrow,2,0,&b);assert(b.x==208+12&&b.w==56);
         zell_panes_button_rect(&narrow,3,1,&b);assert(b.w==0);
         /* No plaque on a pane too narrow for one. */
         zell_panes_pad_rect(&narrow,3,&b);assert(b.w==0);
@@ -3154,32 +3157,32 @@ static void test_pane_io(void){
      * their middles are 120, 364, 604 and 844. */
     zell_panes_test_reset();
     {
-        char want[256]="";
+        char moves[256]="";
         place_room(&s,1,0,0);
         assert(!zell_panes_move(&s,1,0));
         zell_panes_enter(&s,ZELL_ROOM_PANES_RIGHT);pane_click(&s,10,300);
         assert(zell_panes_keys_to_pane()&&!strcmp(zell_panes_pending(),""));
         for(int to=1;to<4;to++){
             assert(zell_panes_move(&s,1,0));
-            char line[8];snprintf(line,sizeof line,"F %d\n",to);strcat(want,line);
-            assert(!strcmp(zell_panes_pending(),want)&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==to&&zell_panes_keys_to_pane());
+            char line[8];snprintf(line,sizeof line,"F %d\n",to);strcat(moves,line);
+            assert(!strcmp(zell_panes_pending(),moves)&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==to&&zell_panes_keys_to_pane());
         }
         /* At the last pane, Right goes nowhere; Down in a pane neither. */
         assert(zell_panes_move(&s,1,0)&&zell_panes_move(&s,0,1));
-        assert(!strcmp(zell_panes_pending(),want)&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==3);
+        assert(!strcmp(zell_panes_pending(),moves)&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==3);
         assert(zell_panes_move(&s,-1,0));
-        strcat(want,"F 2\n");assert(!strcmp(zell_panes_pending(),want)&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==2);
+        strcat(moves,"F 2\n");assert(!strcmp(zell_panes_pending(),moves)&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==2);
         /* Up: Kilix has the keys, over the pane left, facing it. */
         s.direction=3;
         assert(zell_panes_move(&s,0,-1));
-        assert(!zell_panes_keys_to_pane()&&s.x==604.f&&s.direction==0&&!strcmp(zell_panes_pending(),want));
+        assert(!zell_panes_keys_to_pane()&&s.x==604.f&&s.direction==0&&!strcmp(zell_panes_pending(),moves));
         /* Along the walkway, pane by pane, stopping at the ends. */
         assert(zell_panes_move(&s,1,0)&&s.x==844.f);
         assert(zell_panes_move(&s,1,0)&&s.x==844.f);
         float along[]={604.f,364.f,120.f,120.f};
         for(int i=0;i<4;i++)assert(zell_panes_move(&s,-1,0)&&s.x==along[i]&&!zell_panes_keys_to_pane());
         assert(zell_panes_move(&s,0,-1)&&s.x==120.f&&!zell_panes_keys_to_pane());
-        assert(!strcmp(zell_panes_pending(),want));
+        assert(!strcmp(zell_panes_pending(),moves));
         /* Shift runs him along the walkway; let go, he walks. */
         {
             zell_controls c={0};
@@ -3194,16 +3197,98 @@ static void test_pane_io(void){
         }
         /* Down: the pane he is over gets the keys. */
         assert(zell_panes_move(&s,0,1));
-        strcat(want,"F 0\n");assert(!strcmp(zell_panes_pending(),want)&&zell_panes_keys_to_pane()&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==0);
+        strcat(moves,"F 0\n");assert(!strcmp(zell_panes_pending(),moves)&&zell_panes_keys_to_pane()&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==0);
         /* Zoomed, the others cannot be gone to, from the pane or the walkway;
          * Up and Down still work. */
         zell_rect r;zell_panes_chrome_button(&s,0,ZELL_PANES_ZOOM,&r);
         pane_click(&s,r.x+r.w/2,r.y+r.h/2);
-        strcat(want,"Z 0\n");assert(!strcmp(zell_panes_pending(),want)&&zell_panes_zoom(ZELL_ROOM_PANES_RIGHT)==0);
-        assert(zell_panes_move(&s,1,0)&&!strcmp(zell_panes_pending(),want)&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==0);
+        strcat(moves,"Z 0\n");assert(!strcmp(zell_panes_pending(),moves)&&zell_panes_zoom(ZELL_ROOM_PANES_RIGHT)==0);
+        assert(zell_panes_move(&s,1,0)&&!strcmp(zell_panes_pending(),moves)&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==0);
         assert(zell_panes_move(&s,0,-1)&&!zell_panes_keys_to_pane()&&s.x==480.f);
         assert(zell_panes_move(&s,1,0)&&s.x==480.f&&zell_panes_move(&s,-1,0)&&s.x==480.f);
-        assert(zell_panes_move(&s,0,1)&&zell_panes_keys_to_pane()&&!strcmp(zell_panes_pending(),want));
+        assert(zell_panes_move(&s,0,1)&&zell_panes_keys_to_pane()&&!strcmp(zell_panes_pending(),moves));
+    }
+    /* The Hotkeys button at the walkway's right end (104 in where the way
+     * back is), clear of the plaques and agent buttons; Kilix or a click
+     * opens its window; a click, anywhere, closes it and does nothing else;
+     * under it the panes get no pointer. */
+    zell_panes_test_reset();
+    {
+        char want[256]="";
+        zell_rect hk,b;
+        place_room(&s,1,0,0);
+        zell_panes_test_line("G qwen Qwen");zell_panes_test_line("G codex Codex");zell_panes_test_line("G grok Grok");
+        zell_panes_enter(&s,ZELL_ROOM_PANES_RIGHT);
+        zell_panes_hotkeys_rect(&s,&hk);
+        assert(hk.x==960-12-72&&hk.w==72&&hk.y==ZELL_PANES_BUTTON_Y&&hk.h==ZELL_PANES_BUTTON_H);
+        for(int index=0;index<4;index++){
+            zell_panes_pad_rect(&s,index,&b);
+            assert(!b.w||b.x+b.w+6<=hk.x||b.x>=hk.x+hk.w);
+            for(int agent=0;agent<3;agent++){
+                zell_panes_button_rect(&s,index,agent,&b);
+                assert(!b.w||b.x+b.w+6<=hk.x);
+            }
+        }
+        /* Before it, the last pane showed Codex at 874: now it does not. */
+        zell_panes_button_rect(&s,3,0,&b);assert(b.w&&b.x==740);
+        zell_panes_button_rect(&s,3,1,&b);assert(!b.w);
+        int index,which;
+        s.x=(float)(hk.x+hk.w/2);
+        assert(zell_panes_aim(&s,&index,&which)==ZELL_PANES_AIM_HOTKEYS&&!zell_panes_hotkeys_open());
+        assert(zell_panes_press(&s)&&zell_panes_hotkeys_open()&&!zell_panes_keys_to_pane());
+        assert(zell_panes_pointer(&s,0,100,300,false)&&!strcmp(zell_panes_pending(),want));
+        pane_click(&s,100,300);
+        assert(!zell_panes_hotkeys_open()&&!zell_panes_keys_to_pane()&&!strcmp(zell_panes_pending(),want));
+        pane_click(&s,hk.x+3,hk.y+3);
+        assert(zell_panes_hotkeys_open()&&!zell_panes_keys_to_pane());
+        /* Into the room again, it is closed. */
+        zell_panes_enter(&s,ZELL_ROOM_PANES_RIGHT);
+        assert(!zell_panes_hotkeys_open());
+        /* A plaque the button would cover moves left of it; one with no room
+         * there is not drawn. */
+        s.width=900;
+        zell_panes_hotkeys_rect(&s,&hk);zell_panes_pad_rect(&s,3,&b);
+        assert(hk.x==900-12-72&&b.w&&b.x==hk.x-6-ZELL_PANES_PAD_W);
+        /* The left room's way back is at its right end. */
+        place_room(&s,1,0,0);zell_panes_enter(&s,ZELL_ROOM_PANES_LEFT);
+        zell_panes_hotkeys_rect(&s,&hk);assert(hk.x==960-104-72);
+        s.width=150;zell_panes_hotkeys_rect(&s,&hk);assert(!hk.w);
+        /* What it says: each line fits its window at 820 pixels. */
+        int parts=0;
+        for(int i=0;i<zell_panes_hotkeys_lines;i++){
+            const char *line=zell_panes_hotkeys_text[i],*bar=strchr(line,'|');
+            parts+=line[0]=='#';
+            if(bar)assert(bar-line<=25&&strlen(bar+1)<=70);
+            else assert(strlen(line)<=98);
+        }
+        assert(parts==2&&zell_panes_hotkeys_lines>20);
+    }
+    /* Ctrl+Tab and Ctrl+Shift+Tab go round the panes; from the walkway to the
+     * pane below Kilix; zoomed, the room shows the pane they go to. Ctrl+Alt+Z
+     * zooms the pane with the keys, or the one below Kilix. */
+    zell_panes_test_reset();
+    {
+        char want[256]="";
+        place_room(&s,1,0,0);
+        assert(!zell_panes_cycle(&s,1)&&!zell_panes_zoom_key(&s));
+        zell_panes_enter(&s,ZELL_ROOM_PANES_RIGHT);
+        s.x=604.f;
+        assert(zell_panes_cycle(&s,1));
+        strcat(want,"F 2\n");assert(!strcmp(zell_panes_pending(),want)&&zell_panes_keys_to_pane());
+        assert(zell_panes_cycle(&s,1));strcat(want,"F 3\n");
+        assert(zell_panes_cycle(&s,1));strcat(want,"F 0\n");
+        assert(zell_panes_cycle(&s,-1));strcat(want,"F 3\n");
+        assert(!strcmp(zell_panes_pending(),want)&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==3);
+        assert(zell_panes_zoom_key(&s));
+        strcat(want,"Z 3\n");assert(!strcmp(zell_panes_pending(),want)&&zell_panes_zoom(ZELL_ROOM_PANES_RIGHT)==3);
+        assert(zell_panes_cycle(&s,-1));
+        strcat(want,"Z 2\n");assert(!strcmp(zell_panes_pending(),want)&&zell_panes_zoom(ZELL_ROOM_PANES_RIGHT)==2&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==2);
+        assert(zell_panes_zoom_key(&s));
+        strcat(want,"Z -1\n");assert(!strcmp(zell_panes_pending(),want)&&zell_panes_zoom(ZELL_ROOM_PANES_RIGHT)==-1);
+        /* From the walkway: the pane below him, not the one with the focus. */
+        assert(zell_panes_move(&s,0,-1)&&zell_panes_move(&s,-1,0)&&!zell_panes_keys_to_pane()&&s.x==364.f);
+        assert(zell_panes_zoom_key(&s));
+        strcat(want,"Z 1\n");assert(!strcmp(zell_panes_pending(),want)&&!zell_panes_keys_to_pane());
     }
     /* Drawn: the End button and lines back in the title, the scrollbar over
      * the cells while scrolled back, brighter under the pointer. */
@@ -3252,6 +3337,23 @@ static void test_pane_io(void){
             assert(region_diffs(&canvas,&live,(zell_rect){bar.x+8+7*8,bar.y+2,8*16,16})>40);
             assert(region_diffs(&canvas,&live,(zell_rect){bar.x+8,bar.y+2,8*7,16})==0);
             sr_canvas_free(&live);
+        }
+        /* The Hotkeys button, lit while its window is open; the window over
+         * the cells, edged in gold, the keys in white in its left column. */
+        {
+            zell_rect hk;zell_panes_hotkeys_rect(&s,&hk);
+            /* Its left margin, clear of the label in either build. */
+            zell_rect inside={hk.x+2,hk.y+2,4,hk.h-4};
+            int wx=(960-820)/2,wy=ZELL_PANES_WALK_H+8;
+            zell_rect edge={wx,wy-2,820,5},keys={wx+22,wy+34+18,27*8,16};
+            zell_draw(&s,&canvas);
+            assert(hk.x==784&&ink_count(&canvas,inside,0x2a2f45u,0)==inside.w*inside.h);
+            assert(!ink_count(&canvas,edge,0xd9ba79u,0)&&!ink_count(&canvas,keys,0xffffffu,0));
+            zell_panes_hotkeys_show(true);zell_draw(&s,&canvas);
+            assert(ink_count(&canvas,inside,0x5a4a24u,0)==inside.w*inside.h);
+            assert(ink_count(&canvas,edge,0xd9ba79u,0)>=820&&ink_count(&canvas,keys,0xffffffu,0)>20);
+            zell_panes_hotkeys_show(false);zell_draw(&s,&canvas);
+            assert(!ink_count(&canvas,edge,0xd9ba79u,0));
         }
         sr_canvas_free(&canvas);
         /* The reset unmaps the map the copy was handed. */

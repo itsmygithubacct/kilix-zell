@@ -138,6 +138,26 @@ static void desktop_mouse_mode(bool enabled){
  const char *sequence=enabled?"\033[?1003h\033[?1006h\033[?1016h\033[?2004h":"\033[?2004l\033[?1016l\033[?1006l\033[?1003l";
  if(!kittyfb_write_control(&framebuffer,sequence,strlen(sequence)))(void)write(STDOUT_FILENO,sequence,strlen(sequence));
 }
+/* While a pane room is shown, Zell sets the user variable kilix_app_keys
+ * on its Kilix window: Kilix then hands it the keys it uses for its own
+ * windows (Alt+arrows, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+Alt+Z), which the
+ * room uses the same way. Unset elsewhere and when Zell stops. The
+ * sequence to write when that changes, else NULL. */
+static bool app_keys_on;
+static const char *app_keys_change(const zell_scene *s,bool stopping){
+ bool want=!stopping&&s->desktop&&ZELL_ROOM_IS_PANES(s->room);
+ if(want==app_keys_on)return NULL;
+ app_keys_on=want;
+ return want?"\033]1337;SetUserVar=kilix_app_keys=MQ==\007":"\033]1337;SetUserVar=kilix_app_keys\007";
+}
+static void desktop_app_keys(const zell_scene *s,bool stopping){
+ const char *sequence=app_keys_change(s,stopping);
+ if(!sequence)return;
+ if(kittyfb_write_control(&framebuffer,sequence,strlen(sequence)))return;
+ if(stopping)(void)write(STDOUT_FILENO,sequence,strlen(sequence));
+ /* Not written: tried again next frame. */
+ else app_keys_on=!app_keys_on;
+}
 /* Text selected in a pane goes on the outer terminal's clipboard, between
  * two of the presenter's frames. One that cannot be written is dropped, not
  * tried again: a stalled terminal would stall Zell each time. */

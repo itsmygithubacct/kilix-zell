@@ -651,12 +651,13 @@ static void desktop_input_feed(zell_scene *s,const char *bytes,size_t count){
  * their service is given its shared surface, as the Workshop computer's is;
  * a station that never opens it is not. */
 static void test_service_surfaces(void){
-    int stations[]={ZELL_COMMAND_SCREEN_FIRST,ZELL_COMMAND_SCREEN_LAST,ZELL_WORKSHOP_COMPUTER,ZELL_COMMAND_COMPUTER,10};
-    bool surface[]={true,true,true,true,false};
-    for(int i=0;i<5;i++){
+    /* The DJ's browser (station 4, action 9) too: any station's helper. */
+    int stations[]={ZELL_COMMAND_SCREEN_FIRST,ZELL_COMMAND_SCREEN_LAST,ZELL_WORKSHOP_COMPUTER,ZELL_COMMAND_COMPUTER,4,10};
+    bool surface[]={true,true,true,true,true,true};
+    for(int i=0;i<6;i++){
         static zell_scene scene;
         memset(&scene,0,sizeof scene);
-        scene.desktop=true;scene.room=1;scene.station=stations[i];
+        scene.desktop=true;scene.room=1;scene.station=stations[i];scene.menu_index=stations[i]==4?9:0;
         desktop_service svc={.in_fd=-1,.out_fd=-1,.frame_fd=-1};
         service_start(&svc,&scene);
         assert(svc.pid>0);
@@ -665,8 +666,35 @@ static void test_service_surfaces(void){
         service_stop(&svc);
         free(scene.terminal_pixels);scene.terminal_pixels=NULL;
     }
-    assert(service_has_surface(ZELL_COMMAND_SCREEN_FIRST+2,false)&&!service_has_surface(ZELL_COMMAND_SCREEN_LAST+1,false));
-    assert(!service_has_surface(ZELL_COMMAND_SCREEN_FIRST-1,false)&&service_has_surface(10,true));
+    /* The vitals monitor has none. */
+    static zell_scene scene;
+    memset(&scene,0,sizeof scene);
+    scene.desktop=true;scene.room=1;
+    desktop_service monitor={.in_fd=-1,.out_fd=-1,.frame_fd=-1};
+    service_start_mode(&monitor,&scene,true);
+    assert(monitor.pid>0&&!monitor.frame_map&&monitor.frame_fd<0&&!scene.terminal_pixels);
+    service_stop(&monitor);
+}
+/* Kilix hands a pane room its window keys while Zell says so with the
+ * user variable kilix_app_keys: set on entering one, unset on leaving it
+ * and when Zell stops, each once. */
+static void test_app_keys(void){
+    static zell_scene scene;
+    memset(&scene,0,sizeof scene);
+    scene.desktop=true;scene.room=1;
+    assert(!app_keys_change(&scene,false));
+    scene.room=ZELL_ROOM_PANES_LEFT;
+    assert(!strcmp(app_keys_change(&scene,false),"\033]1337;SetUserVar=kilix_app_keys=MQ==\007"));
+    assert(!app_keys_change(&scene,false));
+    scene.room=ZELL_ROOM_PANES_RIGHT;assert(!app_keys_change(&scene,false));
+    scene.room=1;
+    assert(!strcmp(app_keys_change(&scene,false),"\033]1337;SetUserVar=kilix_app_keys\007"));
+    assert(!app_keys_change(&scene,true));
+    scene.room=ZELL_ROOM_PANES_LEFT;
+    assert(app_keys_change(&scene,false)&&!strcmp(app_keys_change(&scene,true),"\033]1337;SetUserVar=kilix_app_keys\007"));
+    assert(!app_keys_change(&scene,true));
+    /* Not the desktop: never. */
+    scene.desktop=false;assert(!app_keys_change(&scene,false));
 }
 static void test_paste_question(void){
     zell_scene scene;
@@ -837,6 +865,48 @@ static void test_paste_question(void){
         desktop_input_feed(&scene,"\033[1;7C",6);
         read_controls(&scene,&controls);
         assert(zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==1&&strchr(zell_panes_pending()+before,'K'));
+        /* Into pane 0, then Alt+Right with Alt let go first: the arrow's
+         * repeat and release do not reach pane 1. */
+        {
+            keyboard.input.support=(uint8_t)KITTYKB_SUPPORT_AVAILABLE;
+            keyboard.input.terminal_flags|=KITTYKB_FLAG_REPORT_EVENTS|KITTYKB_FLAG_REPORT_ALL_KEYS;
+            zell_rect r;zell_panes_pane_rect(&scene,0,&r);
+            scene.mouse_valid=true;scene.mouse_click=true;scene.mouse_x=r.x+4;scene.mouse_y=300;
+            assert(zell_desktop_click(&scene)&&zell_panes_keys_to_pane()&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==0);
+            size_t at=strlen(zell_panes_pending());
+            n=snprintf(held,sizeof held,"\033[%d;3:1u\033[1;3:1C\033[%d;3:3u\033[1;1:2C\033[1;1:3C",KITTYKB_KEY_LEFT_ALT,KITTYKB_KEY_LEFT_ALT);
+            desktop_input_feed(&scene,held,(size_t)n);
+            read_controls(&scene,&controls);
+            assert(zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==1&&!strcmp(zell_panes_pending()+at,"F 1\n"));
+            /* And the next Right is the pane's. */
+            desktop_input_feed(&scene,"\033[1;1:1C",8);
+            read_controls(&scene,&controls);
+            assert(strchr(zell_panes_pending()+at,'K'));
+            keyboard.input.support=support;keyboard.input.terminal_flags=flags;
+        }
+        /* F1 opens the Hotkeys window; while it is open no key goes to the
+         * pane or moves anything; Esc closes it. */
+        before=strlen(zell_panes_pending());
+        desktop_input_feed(&scene,"\033[11~",5);
+        read_controls(&scene,&controls);
+        assert(zell_panes_hotkeys_open());
+        desktop_input_feed(&scene,"ab\033[1;3C\033[9;5u",14);
+        read_controls(&scene,&controls);
+        assert(zell_panes_hotkeys_open()&&!strcmp(zell_panes_pending()+before,"")&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==1);
+        desktop_input_feed(&scene,"\033[27u",5);
+        read_controls(&scene,&controls);
+        assert(!zell_panes_hotkeys_open()&&!strcmp(zell_panes_pending()+before,""));
+        /* Ctrl+Tab, Ctrl+Shift+Tab and Ctrl+Alt+Z are the room's, never the
+         * pane's. */
+        desktop_input_feed(&scene,"\033[9;5u",6);
+        read_controls(&scene,&controls);
+        assert(zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==2&&!strcmp(zell_panes_pending()+before,"F 2\n"));
+        desktop_input_feed(&scene,"\033[9;6u\033[122;7u",15);
+        read_controls(&scene,&controls);
+        assert(zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==1&&!strcmp(zell_panes_pending()+before,"F 2\nF 1\nZ 1\n"));
+        desktop_input_feed(&scene,"\033[122;7u",9);
+        read_controls(&scene,&controls);
+        assert(zell_panes_zoom(ZELL_ROOM_PANES_RIGHT)==-1&&!strcmp(zell_panes_pending()+before,"F 2\nF 1\nZ 1\nZ -1\n"));
         /* Back to pane 0, as the paste tests that follow expect. */
         scene.mouse_valid=true;scene.mouse_click=true;scene.mouse_x=10;scene.mouse_y=300;
         assert(zell_desktop_click(&scene)&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==0);
@@ -991,6 +1061,7 @@ int main(void)
     desktop_input_feed(&scene,"\033[A",3);
     assert(kittykb_input_next(&keyboard.input,&typed)&&typed.key==KITTYKB_KEY_UP);
     test_service_surfaces();
+    test_app_keys();
     test_paste_question();
     test_terminal_transport(&scene);
     test_menu_and_mana(&scene);

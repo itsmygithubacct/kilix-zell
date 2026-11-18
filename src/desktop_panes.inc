@@ -70,6 +70,8 @@ typedef struct {
      * size, which grows past the Command Center's a frame later. */
     bool entering;
     int focus[2],zoom[2];
+    /* The Hotkeys window is open over the room. */
+    bool hotkeys;
     char title[2][4][32];
     pn_agent agents[ZELL_PANES_AGENTS];
     int agent_count;
@@ -167,7 +169,7 @@ void zell_panes_enter(zell_scene *s,int room){
     if(!zell_panes_count(room))return;
     s->room=room;pn_stand(s);
     /* He walked in: the keys are his. */
-    pn.keys_pane=false;pn.confirm_room=0;pn.entering=true;
+    pn.keys_pane=false;pn.confirm_room=0;pn.entering=true;pn.hotkeys=false;
     pn.grab=pn.bar_grab=pn.bar_hover=pn.motion_pane=-1;
     pn_place(s);
     pn.rest_room=room;pn.rest_x=s->x;
@@ -288,26 +290,48 @@ int zell_panes_pane_at(const zell_scene *s,int x){
 /* The plaque in the middle of a pane's part of the walkway: Kilix standing
  * there and pressing gives the pane the keys. None on a pane narrower than
  * ZELL_PANES_PAD_MIN. */
+/* The Hotkeys button: at the walkway's right end, 12 pixels in (104 when
+ * the way back is there, so Kilix does not come in standing on it). */
+void zell_panes_hotkeys_rect(const zell_scene *s,zell_rect *r){
+    *r=(zell_rect){0};
+    if(!zell_panes_count(s->room))return;
+    int width=s->width>0?s->width:1,w=(int)strlen(ZELL_PANES_HOTKEYS_LABEL)*8+16;
+    int x=width-(zell_panes_exit_side(s->room)>0?104:12)-w;
+    if(x<12)return;
+    *r=(zell_rect){x,ZELL_PANES_BUTTON_Y,w,ZELL_PANES_BUTTON_H};
+}
+bool zell_panes_hotkeys_open(void){return pn.hotkeys;}
+void zell_panes_hotkeys_show(bool open){pn.hotkeys=open;}
 void zell_panes_pad_rect(const zell_scene *s,int index,zell_rect *r){
-    zell_rect pane;zell_panes_pane_rect(s,index,&pane);
+    zell_rect pane,hotkeys;zell_panes_pane_rect(s,index,&pane);
     *r=(zell_rect){0};
     if(!pane.w||pane.w<ZELL_PANES_PAD_MIN)return;
     *r=(zell_rect){pane.x+pane.w/2-ZELL_PANES_PAD_W/2,ZELL_PANES_BUTTON_Y,ZELL_PANES_PAD_W,ZELL_PANES_BUTTON_H};
+    /* Clear of the Hotkeys button: moved left of it, or not there. */
+    zell_panes_hotkeys_rect(s,&hotkeys);
+    if(hotkeys.w&&r->x<hotkeys.x+hotkeys.w&&r->x+r->w+6>hotkeys.x){
+        int x=hotkeys.x-6-ZELL_PANES_PAD_W;
+        if(x<pane.x+8){*r=(zell_rect){0};return;}
+        r->x=x;
+    }
 }
 /* Left to right from 12 pixels into the pane's part of the walkway (104
  * when the way back is at its left, so Kilix does not come in standing on
  * one), 6 apart, past the plaque in the middle; one that would pass 8
  * pixels short of its end is not shown, nor any after it. */
 void zell_panes_button_rect(const zell_scene *s,int index,int agent,zell_rect *r){
-    zell_rect pane,pad;zell_panes_pane_rect(s,index,&pane);
+    zell_rect pane,pad,hotkeys;zell_panes_pane_rect(s,index,&pane);
     *r=(zell_rect){0};
     if(!pane.w||agent<0||agent>=pn.agent_count)return;
     zell_panes_pad_rect(s,index,&pad);
+    zell_panes_hotkeys_rect(s,&hotkeys);
     int x=pane.x+(pane.x==0&&zell_panes_exit_side(s->room)<0?104:12);
     for(int i=0;i<=agent;i++){
         int w=(int)strlen(pn.agents[i].label)*8+16;
         if(pad.w&&x<pad.x+pad.w+6&&x+w+6>pad.x)x=pad.x+pad.w+6;
         if(x+w>pane.x+pane.w-8)return;
+        /* Nor one that would reach the Hotkeys button. */
+        if(hotkeys.w&&x<hotkeys.x+hotkeys.w&&x+w+6>hotkeys.x)return;
         if(i==agent){*r=(zell_rect){x,ZELL_PANES_BUTTON_Y,w,ZELL_PANES_BUTTON_H};return;}
         x+=w+6;
     }
@@ -412,6 +436,8 @@ int zell_panes_aim(const zell_scene *s,int *index,int *which){
         zell_rect b;zell_panes_button_rect(s,i,agent,&b);
         pn_nearer(b,s->x,ZELL_PANES_AIM_AGENT,i,agent,&best,&aim,index,which);
     }
+    zell_rect hotkeys;zell_panes_hotkeys_rect(s,&hotkeys);
+    pn_nearer(hotkeys,s->x,ZELL_PANES_AIM_HOTKEYS,-1,-1,&best,&aim,index,which);
     int pane=zell_panes_pane_at(s,(int)s->x);
     if(pane>=0){
         zell_rect pad;zell_panes_pad_rect(s,pane,&pad);
@@ -454,8 +480,62 @@ bool zell_panes_move(zell_scene *s,int dx,int dy){
     else if(dx&&!zoomed&&under+dx>=0&&under+dx<count)pn_stand_over(s,under+dx);
     return true;
 }
+/* Ctrl+Tab and Ctrl+Shift+Tab, as Kilix's next and previous window: from a
+ * pane, the keys go round the panes (a zoomed room shows the one they go
+ * to); from the walkway, to the pane below Kilix. */
+bool zell_panes_cycle(zell_scene *s,int step){
+    if(!ZELL_ROOM_IS_PANES(s->room))return false;
+    int slot=pn_slot(s->room),count=zell_panes_count(s->room);
+    int to=pn.keys_pane?((pn.focus[slot]+step)%count+count)%count:zell_panes_pane_at(s,(int)s->x);
+    if(to<0)to=pn.focus[slot];
+    if(pn.zoom[slot]>=0&&pn.zoom[slot]!=to&&!pn_chrome(s,to,ZELL_PANES_ZOOM))return true;
+    pn_take(s,to);
+    return true;
+}
+/* Ctrl+Alt+Z, as Kilix's stack layout: the pane with the keys (from the
+ * walkway, the one below Kilix) fills the room, or no longer does. */
+bool zell_panes_zoom_key(zell_scene *s){
+    if(!ZELL_ROOM_IS_PANES(s->room))return false;
+    int slot=pn_slot(s->room);
+    int index=pn.keys_pane?pn.focus[slot]:zell_panes_pane_at(s,(int)s->x);
+    if(index>=0)(void)pn_chrome(s,index,ZELL_PANES_ZOOM);
+    return true;
+}
+/* What the Hotkeys window says: "KEYS|what they do"; "#" heads a part. */
+const char *const zell_panes_hotkeys_text[]={
+    "#In this room: Zell's keys, as Kilix's are for its windows",
+    "Alt+Left / Alt+Right|the pane beside; on the walkway, Kilix steps over it",
+    "Alt+Up|from a pane up to the walkway, Kilix over that pane",
+    "Alt+Down|from the walkway into the pane below Kilix",
+    "Ctrl+Tab / Ctrl+Shift+Tab|the next / previous pane",
+    "Ctrl+Alt+Z|zoom the pane, or unzoom it",
+    "Left / Right|walk Kilix along the walkway; hold Shift to run",
+    "Enter or Space|press what Kilix stands at",
+    "Shift+PgUp / PgDn|scroll the pane a page; Shift+Home / End: top, bottom",
+    "F1|this window; Esc, Enter or a click closes it",
+    "Mouse|click a pane to type in it, the walkway to give Kilix the keys;",
+    "|the wheel scrolls; a drag selects and copies",
+    "",
+    "#Ctrl+Shift: Kilix's own keys, for its tabs and windows",
+    "Ctrl+Shift+Left / Right|the previous / next Kilix tab",
+    "Ctrl+Shift+PgUp / PgDn|move this tab left / right",
+    "Ctrl+Shift+T / Q|a new tab / close this tab",
+    "Ctrl+Shift+Enter|split this Kilix window",
+    "Ctrl+Shift+N|a new Kilix window on the desktop",
+    "Ctrl+Shift+C / V|copy Kilix's selection / paste, into the pane with the keys",
+    "Ctrl+Shift+Up / Down|scroll Kilix's own window a line",
+    "Ctrl+Shift+R|resize Kilix's windows: the arrows, then Enter",
+    "Ctrl+Shift+Home|Kilix's windows back to their sizes",
+    "Ctrl+Shift+D|dictate",
+    "Ctrl+Shift+B|Kilix's tmux-style prefix, then a key; Esc leaves it",
+    "",
+    "Alt+arrows, Ctrl+Tab and Ctrl+Alt+Z reach Zell from a Kilix that hands",
+    "them to it (0.2.4 on); an older Kilix moves between its own windows.",
+};
+const int zell_panes_hotkeys_lines=(int)(sizeof zell_panes_hotkeys_text/sizeof zell_panes_hotkeys_text[0]);
 bool zell_panes_press(zell_scene *s){
     int index,which,aim=zell_panes_aim(s,&index,&which);
+    if(aim==ZELL_PANES_AIM_HOTKEYS){pn.hotkeys=true;return true;}
     if(aim==ZELL_PANES_AIM_AGENT){pn_start_agent(s,index,which);return true;}
     if(aim==ZELL_PANES_AIM_CHROME){(void)pn_chrome(s,index,which);return true;}
     if(aim==ZELL_PANES_AIM_PAD||aim==ZELL_PANES_AIM_PANE){pn_take(s,index);return true;}
@@ -464,8 +544,12 @@ bool zell_panes_press(zell_scene *s){
 bool zell_panes_click(zell_scene *s){
     if(!ZELL_ROOM_IS_PANES(s->room)||!s->mouse_click||!s->mouse_valid)return false;
     s->mouse_click=false;
+    /* A click anywhere closes the Hotkeys window, and does nothing else. */
+    if(pn.hotkeys){pn.hotkeys=false;return true;}
     int x=s->mouse_x,y=s->mouse_y,count=zell_panes_count(s->room);
     if(y<ZELL_PANES_WALK_H){
+        zell_rect hotkeys;zell_panes_hotkeys_rect(s,&hotkeys);
+        if(pn_inside(hotkeys,x,y)){pn.hotkeys=true;return true;}
         for(int index=0;index<count;index++){
             for(int agent=0;agent<pn.agent_count;agent++){
                 zell_rect b;zell_panes_button_rect(s,index,agent,&b);
@@ -513,6 +597,8 @@ static void pn_send_pointer(int index,int action,int button,int mods,int px,int 
 }
 bool zell_panes_pointer(zell_scene *s,unsigned buttons,int x,int y,bool release){
     if(!ZELL_ROOM_IS_PANES(s->room))return false;
+    /* Under the Hotkeys window the panes get no pointer. */
+    if(pn.hotkeys){pn.grab=pn.bar_grab=-1;return true;}
     int slot=pn_slot(s->room);
     bool motion=(buttons&32u)!=0,wheel=(buttons&64u)!=0;
     unsigned low=buttons&3u;
