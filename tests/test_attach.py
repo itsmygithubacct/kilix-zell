@@ -133,6 +133,9 @@ class PureTests(unittest.TestCase):
         self.assertEqual(attach.follow(6, 2, 10, 30), 2)
         self.assertEqual(attach.follow(50, 29, 10, 30), 20)
         self.assertEqual(attach.follow(-4, 0, 10, 30), 0)
+        # One row past the view moves it by one.
+        self.assertEqual(attach.follow(0, 10, 10, 30), 1)
+        self.assertEqual(attach.follow(5, 15, 10, 30), 6)
 
     def test_escaped_bytes_are_read_back_as_themselves(self):
         self.assertEqual(attach.escaped(b'ls -l\r'), 'ls -l\\x0d')
@@ -332,7 +335,9 @@ class ViewTests(unittest.TestCase):
         self.view.pointer(64 | 4, 3, 3, False, 30, 8)
         self.assertEqual(self.term.back, 3)
         self.term.back = 0
-        # The status line is not the pane's; nor what is past its edge.
+        # The status line is not the pane's, even over a pane taller than
+        # here; nor what is past its edge.
+        self.term.rows = 40
         self.view.pointer(0, 3, 8, False, 30, 8)
         self.view.pointer(0, 30, 3, False, 30, 8)
         self.assertEqual(len(self.term.mice), 4)
