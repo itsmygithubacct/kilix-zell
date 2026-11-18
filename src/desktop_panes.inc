@@ -424,6 +424,34 @@ int zell_panes_aim(const zell_scene *s,int *index,int *which){
     *index=pane;
     return ZELL_PANES_AIM_PANE;
 }
+/* Kilix over the middle of pane index's part of the walkway, facing it. */
+static void pn_stand_over(zell_scene *s,int index){
+    zell_rect r;float x0,x1;
+    zell_panes_pane_rect(s,index,&r);
+    if(r.w<=0)return;
+    pn_bounds(s,&x0,&x1);
+    float x=(float)r.x+(float)r.w/2.f;
+    s->x=x<x0?x0:x>x1?x1:x;
+    s->direction=0;
+    pn.entering=false;
+}
+bool zell_panes_move(zell_scene *s,int dx,int dy){
+    if(!ZELL_ROOM_IS_PANES(s->room))return false;
+    int slot=pn_slot(s->room),count=zell_panes_count(s->room);
+    /* While one pane fills the room the others cannot be gone to. */
+    bool zoomed=pn.zoom[slot]>=0;
+    if(pn.keys_pane){
+        int at=pn.focus[slot];
+        if(dy<0){pn.keys_pane=false;pn_stand_over(s,at);}
+        else if(dx&&!zoomed&&at+dx>=0&&at+dx<count)pn_take(s,at+dx);
+        return true;
+    }
+    int under=zell_panes_pane_at(s,(int)s->x);
+    if(under<0)return true;
+    if(dy>0)pn_take(s,under);
+    else if(dx&&!zoomed&&under+dx>=0&&under+dx<count)pn_stand_over(s,under+dx);
+    return true;
+}
 bool zell_panes_press(zell_scene *s){
     int index,which,aim=zell_panes_aim(s,&index,&which);
     if(aim==ZELL_PANES_AIM_AGENT){pn_start_agent(s,index,which);return true;}

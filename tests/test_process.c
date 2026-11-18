@@ -768,6 +768,33 @@ static void test_paste_question(void){
     assert(ask_n==0);
     scene.mouse_valid=true;scene.mouse_click=true;scene.mouse_x=10;scene.mouse_y=300;
     assert(zell_desktop_click(&scene)&&zell_panes_keys_to_pane());
+    /* Alt and an arrow move the keys; the pane is sent nothing for them. */
+    {
+        size_t before=strlen(zell_panes_pending());
+        desktop_input_feed(&scene,"\033[1;3C",6);
+        read_controls(&scene,&controls);
+        assert(zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==1&&!strcmp(zell_panes_pending()+before,"F 1\n"));
+        desktop_input_feed(&scene,"\033[1;3D\033[1;3A",12);
+        read_controls(&scene,&controls);
+        assert(!zell_panes_keys_to_pane()&&scene.x==120.f&&!strcmp(zell_panes_pending()+before,"F 1\nF 0\n"));
+        /* On the walkway, Alt held, Left takes him over the next pane but
+         * he does not walk. */
+        char held[64];
+        int n=snprintf(held,sizeof held,"\033[%d;3:1u\033[1;3:1C",KITTYKB_KEY_LEFT_ALT);
+        desktop_input_feed(&scene,held,(size_t)n);
+        read_controls(&scene,&controls);
+        assert(scene.x==364.f&&controls.move_x==0&&!zell_panes_keys_to_pane());
+        n=snprintf(held,sizeof held,"\033[1;3:3C\033[%d;1:3u",KITTYKB_KEY_LEFT_ALT);
+        desktop_input_feed(&scene,held,(size_t)n);
+        read_controls(&scene,&controls);
+        desktop_input_feed(&scene,"\033[1;3B",6);
+        read_controls(&scene,&controls);
+        assert(zell_panes_keys_to_pane()&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==1);
+        assert(!strstr(zell_panes_pending()+before,"K"));
+        /* Back to pane 0, as the paste tests that follow expect. */
+        scene.mouse_valid=true;scene.mouse_click=true;scene.mouse_x=10;scene.mouse_y=300;
+        assert(zell_desktop_click(&scene)&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==0);
+    }
     /* Leaving the room drops it, unsaid. */
     desktop_input_feed(&scene,"\033[200~e\nf\033[201~",15);
     assert(ask_n==3);

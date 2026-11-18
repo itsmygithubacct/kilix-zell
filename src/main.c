@@ -860,7 +860,10 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
     if(scene->desktop&&ZELL_ROOM_IS_PANES(scene->room)){
         controls->run=false;
         controls->move_x=controls->move_y=0;
-        if(!zell_panes_keys_to_pane()){
+        /* Alt with the arrows moves between the panes and the walkway: he
+         * does not walk then. */
+        bool alt_held=kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_LEFT_ALT)||kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_RIGHT_ALT);
+        if(!zell_panes_keys_to_pane()&&!alt_held){
             controls->move_x=(kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_RIGHT)?1:0)-(kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_LEFT)?1:0);
             controls->move_y=(kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_DOWN)?1:0)-(kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_UP)?1:0);
         }
@@ -870,6 +873,14 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
         while(next_key(&event)){
             if(pressed_with&&event.key==pressed_with&&event.action!=KITTYKB_ACTION_PRESS){
                 if(event.action==KITTYKB_ACTION_RELEASE)pressed_with=0;
+                continue;
+            }
+            /* Alt and an arrow, nothing else held: never the pane's. */
+            if((event.modifiers&(KITTYKB_MOD_ALT|KITTYKB_MOD_CTRL|KITTYKB_MOD_SHIFT|KITTYKB_MOD_SUPER))==KITTYKB_MOD_ALT&&
+               (event.key==KITTYKB_KEY_LEFT||event.key==KITTYKB_KEY_RIGHT||event.key==KITTYKB_KEY_UP||event.key==KITTYKB_KEY_DOWN)){
+                if(event.action==KITTYKB_ACTION_PRESS)
+                    (void)zell_panes_move(scene,event.key==KITTYKB_KEY_LEFT?-1:event.key==KITTYKB_KEY_RIGHT?1:0,
+                                          event.key==KITTYKB_KEY_UP?-1:event.key==KITTYKB_KEY_DOWN?1:0);
                 continue;
             }
             bool press=event.action==KITTYKB_ACTION_PRESS&&(event.key==KITTYKB_KEY_ENTER||event.key==KITTYKB_KEY_KP_ENTER||event.key==' ');

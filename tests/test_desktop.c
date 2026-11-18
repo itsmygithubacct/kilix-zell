@@ -3148,6 +3148,51 @@ static void test_pane_io(void){
     assert(zell_paste_lines("ls\n",3)==1&&zell_paste_lines("ls\r",3)==1&&zell_paste_lines("ls\r\n",4)==1);
     assert(zell_paste_lines("a\nb",3)==2&&zell_paste_lines("a\r\nb\r\n",6)==2&&zell_paste_lines("a\rb\nc",5)==3);
     assert(zell_paste_lines("\n\n",2)==2&&zell_paste_lines("\r\r\n",3)==2);
+    /* Alt and the arrows: between the panes, up to the walkway over the
+     * pane left, along it pane by pane, and down into the pane he is over.
+     * Four panes at 960 are 30, 29, 29 and 29 cells with a cell between:
+     * their middles are 120, 364, 604 and 844. */
+    zell_panes_test_reset();
+    {
+        char want[256]="";
+        place_room(&s,1,0,0);
+        assert(!zell_panes_move(&s,1,0));
+        zell_panes_enter(&s,ZELL_ROOM_PANES_RIGHT);pane_click(&s,10,300);
+        assert(zell_panes_keys_to_pane()&&!strcmp(zell_panes_pending(),""));
+        for(int to=1;to<4;to++){
+            assert(zell_panes_move(&s,1,0));
+            char line[8];snprintf(line,sizeof line,"F %d\n",to);strcat(want,line);
+            assert(!strcmp(zell_panes_pending(),want)&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==to&&zell_panes_keys_to_pane());
+        }
+        /* At the last pane, Right goes nowhere; Down in a pane neither. */
+        assert(zell_panes_move(&s,1,0)&&zell_panes_move(&s,0,1));
+        assert(!strcmp(zell_panes_pending(),want)&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==3);
+        assert(zell_panes_move(&s,-1,0));
+        strcat(want,"F 2\n");assert(!strcmp(zell_panes_pending(),want)&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==2);
+        /* Up: Kilix has the keys, over the pane left, facing it. */
+        s.direction=3;
+        assert(zell_panes_move(&s,0,-1));
+        assert(!zell_panes_keys_to_pane()&&s.x==604.f&&s.direction==0&&!strcmp(zell_panes_pending(),want));
+        /* Along the walkway, pane by pane, stopping at the ends. */
+        assert(zell_panes_move(&s,1,0)&&s.x==844.f);
+        assert(zell_panes_move(&s,1,0)&&s.x==844.f);
+        float along[]={604.f,364.f,120.f,120.f};
+        for(int i=0;i<4;i++)assert(zell_panes_move(&s,-1,0)&&s.x==along[i]&&!zell_panes_keys_to_pane());
+        assert(zell_panes_move(&s,0,-1)&&s.x==120.f&&!zell_panes_keys_to_pane());
+        assert(!strcmp(zell_panes_pending(),want));
+        /* Down: the pane he is over gets the keys. */
+        assert(zell_panes_move(&s,0,1));
+        strcat(want,"F 0\n");assert(!strcmp(zell_panes_pending(),want)&&zell_panes_keys_to_pane()&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==0);
+        /* Zoomed, the others cannot be gone to, from the pane or the walkway;
+         * Up and Down still work. */
+        zell_rect r;zell_panes_chrome_button(&s,0,ZELL_PANES_ZOOM,&r);
+        pane_click(&s,r.x+r.w/2,r.y+r.h/2);
+        strcat(want,"Z 0\n");assert(!strcmp(zell_panes_pending(),want)&&zell_panes_zoom(ZELL_ROOM_PANES_RIGHT)==0);
+        assert(zell_panes_move(&s,1,0)&&!strcmp(zell_panes_pending(),want)&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==0);
+        assert(zell_panes_move(&s,0,-1)&&!zell_panes_keys_to_pane()&&s.x==480.f);
+        assert(zell_panes_move(&s,1,0)&&s.x==480.f&&zell_panes_move(&s,-1,0)&&s.x==480.f);
+        assert(zell_panes_move(&s,0,1)&&zell_panes_keys_to_pane()&&!strcmp(zell_panes_pending(),want));
+    }
     /* Drawn: the End button and lines back in the title, the scrollbar over
      * the cells while scrolled back, brighter under the pointer. */
     zell_panes_test_reset();

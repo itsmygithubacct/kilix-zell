@@ -207,6 +207,12 @@ void zell_panes_chrome_rect(const zell_scene *s,int index,zell_rect *r);
 void zell_panes_chrome_button(const zell_scene *s,int index,int button,zell_rect *r);
 /* The pane a canvas x is over; a separator belongs to the pane on its left. */
 int zell_panes_pane_at(const zell_scene *s,int x);
+/* Alt and an arrow: from a pane, Left and Right give the keys to the pane
+ * beside it and Up gives them to Kilix, over that pane; from the walkway,
+ * Left and Right take Kilix over the pane beside the one he is over, and
+ * Down gives the keys to the pane he is over. Not to panes a zoom hides.
+ * False outside a pane room. */
+bool zell_panes_move(zell_scene *s,int dx,int dy);
 /* Agent button `agent` over pane index; w is 0 when it does not fit. */
 void zell_panes_button_rect(const zell_scene *s,int index,int agent,zell_rect *r);
 int zell_panes_agent_count(void);
