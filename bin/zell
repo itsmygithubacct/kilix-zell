@@ -10,8 +10,8 @@ for app in "${ZELL_NEURONTE_HOME:-}" \
 do
     [ -n "$app" ] || continue
     if [ -x "$app/zell-neuronte" ]; then
-        if [ -z "${ZELL_NEURONTE_WEIGHTS:-}" ] && [ -f "$app/weights/neuronte-split-v4.nrt" ]; then
-            ZELL_NEURONTE_WEIGHTS="$app/weights/neuronte-split-v4.nrt"
+        if [ -z "${ZELL_NEURONTE_WEIGHTS:-}" ] && [ -f "$app/weights/neuronte-split-v9.nrt" ]; then
+            ZELL_NEURONTE_WEIGHTS="$app/weights/neuronte-split-v9.nrt"
             export ZELL_NEURONTE_WEIGHTS
         fi
         exec "$app/zell-neuronte" "$@"

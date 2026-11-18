@@ -41,7 +41,7 @@
 #include "soft_raster.h"
 
 #ifndef ZELL_NEURONTE_WEIGHTS
-#define ZELL_NEURONTE_WEIGHTS "neuronte-split-v4.nrt"
+#define ZELL_NEURONTE_WEIGHTS "neuronte-split-v9.nrt"
 #endif
 
 enum { ZN_CELL_W = 8, ZN_CELL_H = 16 };

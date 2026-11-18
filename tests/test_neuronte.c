@@ -85,6 +85,39 @@ static void test_untrained_and_utf8(void)
     sr_canvas_free(&text);
 }
 
+/* split-v9 was not trained on the hexagram U+4DC0, but the term-blocks
+ * bundle beside it was: the hexagram is drawn from that bundle, so it is
+ * ink and is not the untrained mark that a CJK letter gets. The same holds
+ * for an icon of the neuronte-kilix-chrome bundles. */
+static void test_a_bundle_draws_what_the_net_was_not_trained_on(void)
+{
+    zell_scene scene;
+    sr_canvas blank;
+    sr_canvas mark;
+    sr_canvas bundle;
+
+    expect(sr_canvas_init(&blank, 320, 240) && sr_canvas_init(&mark, 320, 240) &&
+           sr_canvas_init(&bundle, 320, 240), "bundle canvases allocate");
+    zell_scene_init(&scene, 320, 240);
+    scene.mode = ZELL_MODE_ANSWER;
+    scene.answer[0] = '\0';
+    zell_draw(&scene, &blank);
+    snprintf(scene.answer, sizeof scene.answer, "\xe4\xb8\xad");
+    zell_draw(&scene, &mark);
+    snprintf(scene.answer, sizeof scene.answer, "\xe4\xb7\x80");
+    zell_draw(&scene, &bundle);
+    expect(differs(&blank, &bundle, 0, 0, 320, 240) > 0, "the hexagram leaves ink");
+    expect(differs(&mark, &bundle, 0, 0, 320, 240) > 0, "the hexagram is not the untrained mark");
+    /* And the Kilix chrome bundle draws the private-use icon U+F0731. */
+    snprintf(scene.answer, sizeof scene.answer, "\xf3\xb0\x9c\xb1");
+    zell_draw(&scene, &bundle);
+    expect(differs(&blank, &bundle, 0, 0, 320, 240) > 0, "the chrome icon leaves ink");
+    expect(differs(&mark, &bundle, 0, 0, 320, 240) > 0, "the chrome icon is not the untrained mark");
+    sr_canvas_free(&blank);
+    sr_canvas_free(&mark);
+    sr_canvas_free(&bundle);
+}
+
 /* The sign's word is ink on the board: pixels between the board's
  * colours and the ink colour, darker than any board colour. */
 static void test_sign_reads_voice(void)
@@ -416,10 +449,11 @@ static void test_close_button_is_a_cross(void)
  * size or place changes them. */
 static void test_ellipse_fills_its_box(void)
 {
+    /* Pinned with neuronte-v2 2.5.1's split-v9 black circle. */
     static const struct { float cx, cy, rx, ry; int x0, x1, y0, y1, inked; } want[] = {
-        {60.0f, 40.0f, 40.0f, 20.0f, 20, 100, 20, 59, 2581},
-        {60.0f, 40.0f, 17.0f, 5.0f, 43, 76, 35, 44, 272},
-        {60.5f, 40.5f, 23.0f, 7.0f, 37, 83, 33, 47, 533},
+        {60.0f, 40.0f, 40.0f, 20.0f, 20, 100, 20, 59, 2586},
+        {60.0f, 40.0f, 17.0f, 5.0f, 43, 76, 35, 44, 270},
+        {60.5f, 40.5f, 23.0f, 7.0f, 37, 83, 33, 47, 532},
     };
     sr_canvas c;
     size_t i;
@@ -506,20 +540,23 @@ static void test_shapes_are_measured_again_after_close(void)
         unsetenv("ZELL_NEURONTE_WEIGHTS");
     }
     expect(zell_neuronte_open(), "the weights open again");
-    expect(ellipse_pixels(&c) == 2581, "the ellipse is measured again after a failed open");
+    expect(ellipse_pixels(&c) == 2586, "the ellipse is measured again after a failed open");
     sr_canvas_free(&c);
 }
 
 int main(void)
 {
+    /* This is the Neuronte build's own test: weights it cannot load are a
+     * failure, so a wrong weights path is not passed over as a skip. */
     if (!zell_neuronte_open()) {
-        printf("test-neuronte: skipped, cannot load %s\n", zell_neuronte_weights());
-        return 0;
+        fprintf(stderr, "FAIL: test-neuronte cannot load %s\n", zell_neuronte_weights());
+        return 1;
     }
     /* First, while no shape has been measured yet. */
     test_shapes_are_measured_again_after_close();
     test_answer_text_is_drawn();
     test_untrained_and_utf8();
+    test_a_bundle_draws_what_the_net_was_not_trained_on();
     test_sign_reads_voice();
     test_tiles_are_pixel_exact();
     test_framerate_is_shown();

@@ -20,6 +20,18 @@ def copy(source, target, executable=False):
     target.chmod(0o755 if executable else 0o644)
 
 
+def neuronte_weights(neuronte):
+    """The weight files Zell takes from a neuronte-v2 checkout: its split-v9
+    text net, and the bundles beside it that draw what that net was not
+    trained on (draw_neuronte.c finds them in the net's folder)."""
+    folder = neuronte/'weights'
+    split = folder/'neuronte-split-v9.nrt'
+    if not split.is_file():
+        raise SystemExit(f'{split} is missing: NEURONTE must be a neuronte-v2 checkout, 2.5.1 or later')
+    bundles = sorted(path.name for pattern in ('neuronte-term-*.nrt', 'neuronte-kilix-*.nrt') for path in folder.glob(pattern))
+    return [split.name] + bundles
+
+
 def build(dest, modules, neuronte, ghostty, sdk, display=None, framebuffer=None):
     display = display or modules/'neuronte-display'
     framebuffer = framebuffer or modules/'kitty-framebuffer'
@@ -34,7 +46,8 @@ def build(dest, modules, neuronte, ghostty, sdk, display=None, framebuffer=None)
     for name in ('set-mana', 'show-mana', 'clear-mana'):
         copy(ROOT/'tools/mana'/name, dest/'tools/mana'/name, True)
     copy(ROOT/'tools/mana/README', dest/'tools/mana/README')
-    copy(neuronte/'weights/neuronte-split-v4.nrt', dest/'weights/neuronte-split-v4.nrt')
+    for name in neuronte_weights(neuronte):
+        copy(neuronte/'weights'/name, dest/'weights'/name)
     copy(neuronte/'build/libneuronte.so', dest/'lib/libneuronte.so', True)
     copy(ghostty/'lib/libghostty-vt.so.0', dest/'lib/libghostty-vt.so.0', True)
     copy(display/'neuronte_display.py', dest/'libexec/neuronte-display/neuronte_display.py')
@@ -86,7 +99,7 @@ def install_service(app, unit_dir):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--modules', type=Path, default=ROOT.parents[1]/'kilix-modules')
-    parser.add_argument('--neuronte', type=Path, default=Path.home()/'projects/neuronte')
+    parser.add_argument('--neuronte', type=Path, default=Path.home()/'projects/neuronte-v2')
     parser.add_argument('--ghostty', type=Path, default=Path.home()/'projects/batty/build/ghostty')
     parser.add_argument('--neuronte-sdk', type=Path, help='neuronte-sdk checkout the canvas was built from '
                         '(default: neuronte-sdk under --modules)')

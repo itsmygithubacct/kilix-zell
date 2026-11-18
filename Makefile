@@ -188,10 +188,12 @@ test: $(BUILD)/test-scene
 # The Neuronte renderer, beside the default one: `make RENDER=neuronte`
 # builds zell-neuronte, in which Neuronte nets draw the text, the outlines
 # and the pictures. NEURONTE is a
-# checkout of that library with `make` run in it. The default build above
-# does not need it.
-NEURONTE ?= $(HOME)/projects/neuronte
-NEURONTE_WEIGHTS ?= $(NEURONTE)/weights/neuronte-split-v4.nrt
+# checkout of neuronte-v2 (2.5.1 or later) with `make` run in it: its
+# split-v9 net, and the neuronte-term-* and neuronte-kilix-* bundles beside
+# it for what that net was not trained on. The default build above does not
+# need it.
+NEURONTE ?= $(HOME)/projects/neuronte-v2
+NEURONTE_WEIGHTS ?= $(NEURONTE)/weights/neuronte-split-v9.nrt
 NEURONTE_LIB := $(NEURONTE)/build/libneuronte.a
 N_CPPFLAGS := $(CPPFLAGS) -I$(NEURONTE)/include -DZELL_RENDER_NEURONTE \
 	-DZELL_NEURONTE_WEIGHTS='"$(NEURONTE_WEIGHTS)"'

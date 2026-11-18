@@ -9,6 +9,28 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
 import desktop
 import zell_library as local
 
+import package_runtime
+
+
+class NeuronteWeightsTests(unittest.TestCase):
+    def test_zell_takes_split_v9_and_the_bundles_beside_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            weights = Path(directory, 'weights')
+            weights.mkdir()
+            for name in ('neuronte-split-v9.nrt', 'neuronte-split-v4.nrt', 'neuronte-term-letters-v1.nrt',
+                         'neuronte-term-blocks-v1.nrt', 'neuronte-term-blocks-v1.list.txt',
+                         'neuronte-kilix-chrome-v2.nrt', 'neuronte-emoji-v1.nrt', 'neuronte-ui9-v2.nrt'):
+                (weights/name).touch()
+            self.assertEqual(package_runtime.neuronte_weights(Path(directory)),
+                             ['neuronte-split-v9.nrt', 'neuronte-kilix-chrome-v2.nrt', 'neuronte-term-blocks-v1.nrt',
+                              'neuronte-term-letters-v1.nrt'])
+            # A checkout from before neuronte-v2 is refused, by name.
+            (weights/'neuronte-split-v9.nrt').unlink()
+            with self.assertRaises(SystemExit) as refused:
+                package_runtime.neuronte_weights(Path(directory))
+            self.assertIn('neuronte-v2', str(refused.exception))
+
+
 class LibraryTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name)
@@ -35,12 +57,12 @@ class LibraryTests(unittest.TestCase):
         with self.assertRaises(ValueError):lib.add(str(self.root/'missing'),True)
     def test_launcher_selects_neuronte_and_preserves_arguments(self):
         app=self.root/'installed';(app/'weights').mkdir(parents=True)
-        (app/'weights/neuronte-split-v4.nrt').touch()
+        (app/'weights/neuronte-split-v9.nrt').touch()
         binary=app/'zell-neuronte';binary.write_text('#!/bin/sh\nprintf "%s\\n" "$ZELL_NEURONTE_WEIGHTS" "$@"\n');binary.chmod(0o755)
         launcher=Path(__file__).resolve().parents[1]/'bin/zell'
         env=dict(os.environ,ZELL_NEURONTE_HOME=str(app));env.pop('ZELL_NEURONTE_WEIGHTS',None)
         result=subprocess.run([str(launcher),'argument with spaces','--version'],capture_output=True,text=True,env=env,check=True)
-        self.assertEqual(result.stdout.splitlines(),[str(app/'weights/neuronte-split-v4.nrt'),'argument with spaces','--version'])
+        self.assertEqual(result.stdout.splitlines(),[str(app/'weights/neuronte-split-v9.nrt'),'argument with spaces','--version'])
     def test_launcher_does_not_fall_back_to_legacy_zell(self):
         app=self.root/'kilix-apps/kilix-zell';app.mkdir(parents=True)
         (app/'zell').write_text('#!/bin/sh\nexit 0\n');(app/'zell').chmod(0o755)

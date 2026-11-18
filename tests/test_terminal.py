@@ -298,7 +298,7 @@ class TerminalTests(unittest.TestCase):
                 self.skipTest('Neuronte native parser is not built')
         except (ImportError, RuntimeError):
             self.skipTest('Neuronte renderer is unavailable')
-        home = Path(os.environ.get('NEURONTE_HOME', Path.home()/'projects/neuronte'))
+        home = Path(os.environ.get('NEURONTE_HOME', Path.home()/'projects/neuronte-v2'))
         if not (home/'build/libneuronte.so').exists():
             self.skipTest('Neuronte CPU mask library is not built')
         fd = os.memfd_create('zell-test', 0)

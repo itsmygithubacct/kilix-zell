@@ -41,10 +41,10 @@ def load_display():
 
 def renderer_paths():
     app = Path(__file__).resolve().parents[1]
-    home = Path(os.environ.get('NEURONTE_HOME', Path.home()/'projects/neuronte'))
-    weights = app/'weights/neuronte-split-v4.nrt'
+    home = Path(os.environ.get('NEURONTE_HOME', Path.home()/'projects/neuronte-v2'))
+    weights = app/'weights/neuronte-split-v9.nrt'
     library = app/'lib/libneuronte.so'
-    return (Path(os.environ.get('ZELL_NEURONTE_WEIGHTS', weights if weights.is_file() else home/'weights/neuronte-split-v4.nrt')),
+    return (Path(os.environ.get('ZELL_NEURONTE_WEIGHTS', weights if weights.is_file() else home/'weights/neuronte-split-v9.nrt')),
             Path(os.environ.get('ZELL_NEURONTE_LIBRARY', library if library.is_file() else home/'build/libneuronte.so')))
 
 
