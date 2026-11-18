@@ -333,6 +333,22 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual((room.focus, room.zoom, self.rooms.dirty, self.said), (0, None, False, []))
         self.assertFalse(any(p.closed or p.sent for p in room.panes()))
 
+    def test_a_room_line_undoes_a_stray_zoom_before_taking_the_focus(self):
+        # A zoom that reached this room although Zell had it for another:
+        # Zell's room line (zoom, then focus) sets both back.
+        self.rooms.line('S 10 40 20')
+        room = self.rooms.rooms[10]
+        self.rooms.line('Z 1')
+        self.assertEqual((room.zoom, room.focus), (1, 1))
+        for text in ('S 10 40 20', 'Z -1', 'F 0'):
+            self.rooms.line(text)
+        self.assertEqual((room.zoom, room.focus), (None, 0))
+        # In the old order the focus was refused under the zoom.
+        self.rooms.line('Z 1')
+        for text in ('S 10 40 20', 'F 0', 'Z -1'):
+            self.rooms.line(text)
+        self.assertEqual((room.zoom, room.focus), (None, 1))
+
     def test_keys_go_to_the_focused_pane_of_the_shown_room_only(self):
         self.rooms.line('S 10 40 20')
         room = self.rooms.rooms[10]

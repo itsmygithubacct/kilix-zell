@@ -2448,9 +2448,9 @@ static void test_pane_rooms(void){
     {
         char line[80];
         pane_click(&s,349,70);
-        assert(zell_panes_room_line(ZELL_ROOM_PANES_RIGHT,120,32,line,sizeof line)==(int)strlen("S 10 120 32\nF 1\nZ 1\n"));
-        assert(!strcmp(line,"S 10 120 32\nF 1\nZ 1\n"));
-        assert(zell_panes_room_line(ZELL_ROOM_PANES_LEFT,50,9,line,sizeof line)>0&&!strcmp(line,"S 9 50 9\nF 0\nZ -1\n"));
+        assert(zell_panes_room_line(ZELL_ROOM_PANES_RIGHT,120,32,line,sizeof line)==(int)strlen("S 10 120 32\nZ 1\nF 1\n"));
+        assert(!strcmp(line,"S 10 120 32\nZ 1\nF 1\n"));
+        assert(zell_panes_room_line(ZELL_ROOM_PANES_LEFT,50,9,line,sizeof line)>0&&!strcmp(line,"S 9 50 9\nZ -1\nF 0\n"));
         assert(zell_panes_room_line(0,120,32,line,sizeof line)==2&&!strcmp(line,"H\n"));
         pane_click(&s,830,70);
         strcat(want,"Z 1\nZ -1\n");assert(!strcmp(zell_panes_pending(),want));
@@ -2987,7 +2987,7 @@ static void test_pane_io(void){
         char line[80];int cols,rows;
         zell_scene_resize(&s,1200,700);
         zell_panes_cells(1200,700,&cols,&rows);
-        assert(zell_panes_room_line(ZELL_ROOM_PANES_RIGHT,cols,rows,line,sizeof line)>0&&!strcmp(line,"S 10 150 38\nF 0\nZ -1\n"));
+        assert(zell_panes_room_line(ZELL_ROOM_PANES_RIGHT,cols,rows,line,sizeof line)>0&&!strcmp(line,"S 10 150 38\nZ -1\nF 0\n"));
         zell_panes_test_room(&s);
         assert(!strstr(zell_panes_pending(),"S 10 150 38"));
         zell_panes_test_drain();

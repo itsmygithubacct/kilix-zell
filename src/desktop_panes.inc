@@ -836,7 +836,10 @@ static void pn_reap(void){
 int zell_panes_room_line(int room,int cols,int rows,char *out,size_t capacity){
     int slot=pn_slot(room);
     if(slot<0)return snprintf(out,capacity,"H\n");
-    return snprintf(out,capacity,"S %d %d %d\nF %d\nZ %d\n",room,cols,rows,pn.focus[slot],pn.zoom[slot]);
+    /* Zoom before focus: a zoom the helper has that Zell does not (a line
+     * that reached the room shown before) is undone first, so the focus,
+     * which the helper refuses for a pane hidden by a zoom, is taken. */
+    return snprintf(out,capacity,"S %d %d %d\nZ %d\nF %d\n",room,cols,rows,pn.zoom[slot],pn.focus[slot]);
 }
 static void pn_room_send(zell_scene *s);
 void zell_panes_pump(zell_scene *s){
