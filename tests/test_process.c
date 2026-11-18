@@ -921,7 +921,7 @@ static void test_paste_question(void){
         before=strlen(zell_panes_pending());
         desktop_input_feed(&scene,"\033[11~",5);
         read_controls(&scene,&controls);
-        assert(zell_panes_hotkeys_open()&&zell_panes_hotkeys_top()==0);
+        assert(zell_panes_hotkeys_open()&&zell_panes_hotkeys_top(480)==0);
         desktop_input_feed(&scene,"ab\033[1;3C\033[9;5u",14);
         read_controls(&scene,&controls);
         assert(zell_panes_hotkeys_open()&&!strcmp(zell_panes_pending()+before,"")&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==1);
@@ -931,16 +931,16 @@ static void test_paste_question(void){
             assert(fit<zell_panes_hotkeys_lines);
             desktop_input_feed(&scene,"\033[B\033[B\033[A",9);
             read_controls(&scene,&controls);
-            assert(zell_panes_hotkeys_top()==1);
+            assert(zell_panes_hotkeys_top(480)==1);
             desktop_input_feed(&scene,"\033[F",3);
             read_controls(&scene,&controls);
-            assert(zell_panes_hotkeys_top()==zell_panes_hotkeys_lines-fit);
+            assert(zell_panes_hotkeys_top(480)==zell_panes_hotkeys_lines-fit);
             desktop_input_feed(&scene,"\033[6~\033[5~",8);
             read_controls(&scene,&controls);
-            assert(zell_panes_hotkeys_top()==zell_panes_hotkeys_lines-fit-(fit-1));
+            assert(zell_panes_hotkeys_top(480)==zell_panes_hotkeys_lines-fit-(fit-1));
             desktop_input_feed(&scene,"\033[H",3);
             read_controls(&scene,&controls);
-            assert(zell_panes_hotkeys_top()==0&&zell_panes_hotkeys_open());
+            assert(zell_panes_hotkeys_top(480)==0&&zell_panes_hotkeys_open());
             scene.height=height;
         }
         desktop_input_feed(&scene,"\033[27u",5);

@@ -3280,12 +3280,19 @@ static void test_pane_io(void){
         s.width=960;s.height=480;
         int fit=zell_panes_hotkeys_fit(480);
         zell_panes_hotkeys_show(true);
-        zell_panes_hotkeys_scroll(&s,-5);assert(zell_panes_hotkeys_top()==0);
-        zell_panes_hotkeys_scroll(&s,1000);assert(zell_panes_hotkeys_top()==zell_panes_hotkeys_lines-fit);
+        zell_panes_hotkeys_scroll(&s,-5);assert(zell_panes_hotkeys_top(480)==0);
+        zell_panes_hotkeys_scroll(&s,1000);assert(zell_panes_hotkeys_top(480)==zell_panes_hotkeys_lines-fit);
         /* The wheel scrolls it, and nothing under it. */
-        assert(zell_panes_pointer(&s,64u,500,300,false)&&zell_panes_hotkeys_top()==zell_panes_hotkeys_lines-fit-3);
-        assert(zell_panes_pointer(&s,65u,500,300,false)&&zell_panes_hotkeys_top()==zell_panes_hotkeys_lines-fit);
-        zell_panes_hotkeys_show(false);zell_panes_hotkeys_show(true);assert(zell_panes_hotkeys_top()==0);
+        assert(zell_panes_pointer(&s,64u,500,300,false)&&zell_panes_hotkeys_top(480)==zell_panes_hotkeys_lines-fit-3);
+        assert(zell_panes_pointer(&s,65u,500,300,false)&&zell_panes_hotkeys_top(480)==zell_panes_hotkeys_lines-fit);
+        /* Scrolled to its end, then a Zell tall enough for all of it: from
+         * the first line; one a little taller, from no further than fits. */
+        assert(zell_panes_hotkeys_top(all)==0&&zell_panes_hotkeys_top(600)==zell_panes_hotkeys_lines-zell_panes_hotkeys_fit(600));
+        s.height=all;zell_panes_hotkeys_scroll(&s,-1);assert(zell_panes_hotkeys_top(all)==0);
+        s.height=480;zell_panes_hotkeys_scroll(&s,1000);s.height=600;zell_panes_hotkeys_scroll(&s,-1);
+        assert(zell_panes_hotkeys_top(600)==zell_panes_hotkeys_lines-zell_panes_hotkeys_fit(600)-1);
+        s.height=480;
+        zell_panes_hotkeys_show(false);zell_panes_hotkeys_show(true);assert(zell_panes_hotkeys_top(480)==0);
         zell_panes_hotkeys_show(false);
         s.width=saved_w;s.height=saved_h;
     }

@@ -311,10 +311,15 @@ int zell_panes_hotkeys_fit(int height){
     int fit=room/ZELL_PANES_HOTKEYS_LINE_H-1;
     return fit<1?1:fit;
 }
-int zell_panes_hotkeys_top(void){return pn.hotkeys_top;}
+/* Its first line shown in a Zell `height` tall: where it was scrolled to,
+ * or, scrolled in a shorter Zell, no further down than leaves it full. */
+int zell_panes_hotkeys_top(int height){
+    int last=zell_panes_hotkeys_lines-zell_panes_hotkeys_fit(height);
+    return pn.hotkeys_top>last?last:pn.hotkeys_top;
+}
 void zell_panes_hotkeys_scroll(const zell_scene *s,int lines){
     int last=zell_panes_hotkeys_lines-zell_panes_hotkeys_fit(s->height);
-    int top=pn.hotkeys_top+lines;
+    int top=zell_panes_hotkeys_top(s->height)+lines;
     pn.hotkeys_top=top>last?last:top;
     if(pn.hotkeys_top<0)pn.hotkeys_top=0;
 }

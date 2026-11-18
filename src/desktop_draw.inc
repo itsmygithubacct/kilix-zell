@@ -559,7 +559,7 @@ static void desktop_panes_button(sr_canvas *c,zell_rect r,const char *label,uint
  * for them all, the lines from its top and a line saying there are more. */
 static void desktop_panes_hotkeys(sr_canvas *c){
  int line_h=ZELL_PANES_HOTKEYS_LINE_H,keys_w=27*8,w=c->w-32<820?c->w-32:820;
- int fit=zell_panes_hotkeys_fit(c->h),top=zell_panes_hotkeys_top(),more=fit<zell_panes_hotkeys_lines;
+ int fit=zell_panes_hotkeys_fit(c->h),top=zell_panes_hotkeys_top(c->h),more=fit<zell_panes_hotkeys_lines;
  int h=(fit+more)*line_h+ZELL_PANES_HOTKEYS_EDGES;
  if(w<120||h>c->h-ZELL_PANES_WALK_H-8)return;
  int x=(c->w-w)/2,y=ZELL_PANES_WALK_H+8;

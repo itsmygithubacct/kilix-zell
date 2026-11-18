@@ -401,7 +401,9 @@ class View:
         lines, at = [], None
         if terminal.alternate_screen():
             # A full-screen program is laid out for its own width: not
-            # wrapped, but shown a window's width at a time from its cursor.
+            # wrapped, but shown a window's width at a time from its cursor,
+            # which is always followed: that screen keeps no scrollback.
+            self.top, self.move = None, 0
             self.ox = follow(self.ox, cx, cols, tcols)
             lines = [(row, self.ox, max(0, min(cols, tcols - self.ox))) for row in range(trows)]
             if cy < trows:
@@ -431,7 +433,7 @@ class View:
             elif row >= trows:
                 at_top = len(lines) + row - trows
             else:
-                at_top = max(i for i, (r, c, _w) in enumerate(lines) if r < row or (r == row and c <= start))
+                at_top = max((i for i, (r, c, _w) in enumerate(lines) if r < row or (r == row and c <= start)), default=0)
             self.oy = min(max(0, at_top + self.move), last)
             back_down = self.move > 0 and live and self.oy == last
             self.move = 0
@@ -457,6 +459,8 @@ class View:
             parts.append(f'not sent: {error}')
         if back:
             parts.append(f'{back} lines back')
+        elif self.top is not None:
+            parts.append('held: wheel down or type to follow')
         if self.ox:
             parts.append(f'from column {self.ox + 1}')
         parts += ['Ctrl-] leaves', self.title, f'{tcols}x{trows}']

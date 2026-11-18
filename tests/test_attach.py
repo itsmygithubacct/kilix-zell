@@ -387,6 +387,32 @@ class ViewTests(unittest.TestCase):
         self.view.pointer(64, 3, 3, False, 30, 7)
         self.assertEqual(self.term.back, 3)
 
+    def test_a_held_view_says_so_and_a_full_screen_program_drops_it(self):
+        self.term.cols = 60
+        self.term.screen = [f'{row}' + 'x' * 50 for row in range(6)]
+        self.term.cursor = (0, 5)
+        _text, drawn = self.view.paint(30, 7, [])
+        self.assertNotIn('held', drawn[-1])
+        for _ in range(3):
+            self.view.pointer(64, 3, 3, False, 30, 7)
+            _text, drawn = self.view.paint(30, 7, [])
+        self.assertEqual((self.view.top, self.term.back), ((0, 0), 0))
+        self.assertIn('held', drawn[-1])
+        # The program goes to its alternate screen, its cursor far right:
+        # the view follows it, and says nothing is held.
+        self.term.alternate = True
+        self.term.cursor = (55, 4)
+        _text, drawn = self.view.paint(30, 7, [])
+        self.assertEqual((self.view.top, self.view.ox), (None, 26))
+        self.assertNotIn('held', drawn[-1])
+        self.term.cursor = (0, 0)
+        self.view.paint(30, 7, [])
+        self.assertEqual((self.view.oy, self.view.ox), (0, 0))
+        # Back on the main screen, the cursor's lines.
+        self.term.alternate, self.term.cursor = False, (0, 5)
+        self.view.paint(30, 7, [])
+        self.assertEqual((self.view.oy, self.view.top), (5, None))
+
     def test_scrolled_back_it_shows_from_the_top_and_says_so(self):
         self.term.kept_above, self.term.back = 40, 12
         _text, drawn = self.view.paint(30, 8, [])
