@@ -23,6 +23,8 @@
 #define PN_QUEUE 65536
 /* Pasted bytes per line to the helper (twice that in hex). */
 #define PN_PASTE_CHUNK 2048
+/* Typed while a paste goes at most, in K lines. */
+#define PN_AFTER_MAX 8192
 /* Base64 of one copy, at most. */
 #define PN_COPY_MAX (1u<<20)
 #define PN_COPY_HEAD "\033]52;c;"
@@ -88,6 +90,9 @@ typedef struct {
     char *copy;
     size_t copy_n;
     bool copy_ready,copy_bad;
+    /* K lines typed while a paste goes, sent after its end line. */
+    char after[PN_AFTER_MAX];
+    size_t after_n;
 } pn_state;
 
 #define PN_START {.in_fd=-1,.out_fd=-1,.frame_fd=-1,.zoom={-1,-1},.grab=-1,.bar_grab=-1,.bar_hover=-1,.motion_pane=-1}
@@ -298,6 +303,11 @@ void zell_panes_key(const unsigned char *bytes,size_t count){
     line[at++]='K';
     for(size_t i=0;i<count;i++){line[at++]=hex[bytes[i]>>4];line[at++]=hex[bytes[i]&15u];}
     line[at++]='\n';
+    /* Typed after a paste that is still going: it follows the paste. */
+    if(pn.paste_n||pn.after_n){
+        if(pn.after_n+at<=sizeof pn.after){memcpy(pn.after+pn.after_n,line,at);pn.after_n+=at;}
+        return;
+    }
     pn_send(line,at);
 }
 /* Pane index gets the keys, unless the helper cannot be told. */
@@ -436,15 +446,25 @@ bool zell_panes_pointer(zell_scene *s,unsigned buttons,int x,int y,bool release)
     pn_send_pointer(index,action,button,mods,px,py);
     return true;
 }
+static void pn_notice(int room,int index,const char *text){
+    snprintf(pn.notice,sizeof pn.notice,"%s",text);
+    pn.notice_room=room;pn.notice_pane=index;pn.notice_until=zell_notice_clock_ms()+PN_NOTICE_MS;
+}
 bool zell_panes_paste(const zell_scene *s,const char *bytes,size_t count){
-    if(!ZELL_ROOM_IS_PANES(s->room)||!pn.keys_pane||(!bytes&&count))return false;
+    if(!ZELL_ROOM_IS_PANES(s->room)||!pn.keys_pane)return false;
     int slot=pn_slot(s->room),index=pn.focus[slot];
+    /* No bytes and a count past the cap: one the input scanner dropped. */
+    if(!bytes&&count<=ZELL_PANES_PASTE_MAX)return false;
     if(!count)return true;
     /* One paste at a time; one too long is not cut but refused. */
-    if(pn.paste_n&&(pn.paste_room!=s->room||pn.paste_pane!=index))return false;
-    if(count>ZELL_PANES_PASTE_MAX||pn.paste_n>ZELL_PANES_PASTE_MAX-count){
-        snprintf(pn.notice,sizeof pn.notice,"The paste is over %u MiB and was not sent.",ZELL_PANES_PASTE_MAX>>20);
-        pn.notice_room=s->room;pn.notice_pane=index;pn.notice_until=zell_notice_clock_ms()+PN_NOTICE_MS;
+    if(pn.paste_n&&(pn.paste_room!=s->room||pn.paste_pane!=index)){
+        pn_notice(s->room,index,"Another pane's paste is still being sent. Paste again.");
+        return false;
+    }
+    if(!bytes||count>ZELL_PANES_PASTE_MAX||pn.paste_n>ZELL_PANES_PASTE_MAX-count){
+        char text[64];
+        snprintf(text,sizeof text,"The paste is over %u MiB and was not sent.",ZELL_PANES_PASTE_MAX>>20);
+        pn_notice(s->room,index,text);
         return false;
     }
     if(pn.paste_n+count>pn.paste_cap){
@@ -471,7 +491,7 @@ static void pn_paste_drain(void){
             line[at++]='.';line[at++]='\n';
             if(!pn_send(line,(size_t)at))return;
             pn.paste_n=pn.paste_at=0;
-            return;
+            break;
         }
         size_t take=pn.paste_n-pn.paste_at;
         if(take>PN_PASTE_CHUNK)take=PN_PASTE_CHUNK;
@@ -483,8 +503,10 @@ static void pn_paste_drain(void){
         if(!pn_send(line,(size_t)at))return;
         pn.paste_at+=take;
     }
+    /* Then what was typed meanwhile, whole when the queue takes it. */
+    if(pn.after_n&&pn_send(pn.after,pn.after_n))pn.after_n=0;
 }
-size_t zell_panes_paste_left(void){return pn.paste_n-pn.paste_at+(pn.paste_n?1:0);}
+size_t zell_panes_paste_left(void){return pn.paste_n-pn.paste_at+(pn.paste_n?1:0)+pn.after_n;}
 void zell_panes_test_drain(void){pn_paste_drain();}
 bool zell_panes_scroll_key(const zell_scene *s,uint32_t key,uint32_t modifiers){
     if(!ZELL_ROOM_IS_PANES(s->room)||!pn.keys_pane||(modifiers&~PN_MOD_LOCKS)!=PN_MOD_SHIFT)return false;
@@ -532,6 +554,8 @@ static bool pn_base64(const char *text){
  * bad or too long one is dropped whole. */
 static void pn_copy_line(const char *text){
     if(!strcmp(text,".")){
+        /* Already ended: another end adds nothing. */
+        if(pn.copy_ready)return;
         if(!pn.copy_bad&&pn.copy_n>sizeof PN_COPY_HEAD-1){pn.copy[pn.copy_n++]='\a';pn.copy_ready=true;}
         else pn.copy_n=0;
         pn.copy_bad=false;
@@ -587,7 +611,7 @@ static void pn_forget_helper(void){
     memset(pn.title,0,sizeof pn.title);
     pn.agent_count=0;pn.notice[0]=0;
     memset(pn.bar_known,0,sizeof pn.bar_known);
-    pn.paste_n=pn.paste_at=0;pn.copy_n=0;pn.copy_ready=pn.copy_bad=false;
+    pn.paste_n=pn.paste_at=0;pn.after_n=0;pn.copy_n=0;pn.copy_ready=pn.copy_bad=false;
     pn.grab=pn.bar_grab=pn.bar_hover=pn.motion_pane=-1;
 }
 static bool pn_start(void){

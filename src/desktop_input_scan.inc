@@ -25,7 +25,11 @@ static void zi_pasting(zell_input *in,const zell_input_sinks *sinks,char ch){
     if(ch==zi_paste_end[in->end_match]){
         if(++in->end_match<sizeof zi_paste_end-1)return;
         in->pasting=false;in->end_match=0;
-        if(!in->paste_over&&sinks->paste)sinks->paste(sinks->user,in->paste,in->paste_n);
+        /* One over the cap is said as no bytes and a count past it. */
+        if(sinks->paste){
+            if(!in->paste_over)sinks->paste(sinks->user,in->paste,in->paste_n);
+            else sinks->paste(sinks->user,NULL,(size_t)ZELL_INPUT_PASTE_MAX+1u);
+        }
         in->paste_n=0;in->paste_over=false;
         return;
     }
@@ -44,7 +48,7 @@ static void zi_pointer(zell_input *in,const zell_input_sinks *sinks){
 void zell_input_feed(zell_input *in,const zell_input_sinks *sinks,const char *bytes,size_t count,int64_t now){
     for(size_t i=0;i<count;i++){
         char ch=bytes[i];
-        if(in->pasting){zi_pasting(in,sinks,ch);continue;}
+        if(in->pasting){in->changed=now;zi_pasting(in,sinks,ch);continue;}
         if(!in->used&&ch!='\033'){
             /* A run of plain keys goes on together. */
             size_t j=i;
@@ -68,6 +72,10 @@ void zell_input_feed(zell_input *in,const zell_input_sinks *sinks,const char *by
     }
 }
 void zell_input_idle(zell_input *in,const zell_input_sinks *sinks,int64_t now){
+    /* A paste whose end never came: dropped, and the keys are keys again. */
+    if(in->pasting&&now-in->changed>ZELL_INPUT_PASTE_IDLE_MS){
+        in->pasting=false;in->end_match=0;in->paste_n=0;in->paste_over=false;
+    }
     if(in->used&&!in->pasting&&now-in->changed>ZELL_INPUT_ESCAPE_MS){
         /* Keys that stopped short go on as they are; half a pointer
          * report is dropped. */

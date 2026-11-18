@@ -74,8 +74,10 @@ CLEAR_LINE = b'\x05\x15'
 # double or triple click.
 WHEEL_ROWS = 3
 CLICK_SECONDS = 0.4
-# Copied text at most, and base64 characters a Y line.
+# Copied text at most, rows read for it at most, and base64 characters a Y
+# line.
 COPY_MAX = 256 * 1024
+COPY_ROWS = 20000
 COPY_CHUNK = 3000
 # A paste at most, and how much of one waits in a pane's own queue at once.
 PASTE_MAX = 4 << 20
@@ -145,32 +147,72 @@ def word_char(text):
     return bool(text) and (text.isalnum() or text in '_-./~:@%+=#?&')
 
 
-def selected_spans(pane):
-    """{row shown: (first column, last column)} of a pane's selection."""
+def read_rows(terminal, first_row, last_row):
+    """{row: its cells' text} for rows first_row to last_row as the scrollbar
+    counts them, on screen or not: the view is moved to read them, then put
+    back (to the live rows if it was there). At most COPY_ROWS rows."""
+    kept, first, shown = terminal.scrollbar()
+    last_row = min(last_row, first_row + COPY_ROWS - 1, kept - 1)
+    out = {}
+    if first <= first_row and last_row < first + shown:
+        rows = terminal.rows_text()
+        return {row: rows[row - first] for row in range(first_row, last_row + 1)}
+    try:
+        at = first_row
+        while at <= last_row:
+            terminal.scroll_to(at)
+            now = terminal.scrollbar()[1]
+            for index, row in enumerate(terminal.rows_text()):
+                if first_row <= now + index <= last_row:
+                    out[now + index] = row
+            if now + shown > last_row or now + shown <= at:
+                break
+            at = now + shown
+    finally:
+        if first + shown >= kept:
+            terminal.scroll_bottom()
+        else:
+            terminal.scroll_to(first)
+    return out
+
+
+def selection_ends(pane):
+    """A pane's selection as ((first row, column), (last row, column)), rows
+    as the scrollbar counts them, grown to whole words or lines; None if
+    there is none."""
     selection = getattr(pane, 'selection', None)
     if selection is None:
-        return {}
+        return None
     terminal = pane.terminal
     if selection.alternate != terminal.alternate_screen():
         pane.selection = None
-        return {}
+        return None
     (start_row, start_col), (end_row, end_col) = selection.ends()
     if selection.mode == 'char' and (start_row, start_col) == (end_row, end_col):
-        return {}
-    first = terminal.scrollbar()[1]
-    rows = None
+        return None
     if selection.mode == 'word':
-        rows = terminal.rows_text()
-        if 0 <= start_row - first < len(rows):
-            line = rows[start_row - first]
+        line = read_rows(terminal, start_row, start_row).get(start_row)
+        if line:
+            start_col = min(start_col, len(line) - 1)
             while start_col > 0 and word_char(line[start_col]) and word_char(line[start_col - 1]):
                 start_col -= 1
-        if 0 <= end_row - first < len(rows):
-            line = rows[end_row - first]
+        line = read_rows(terminal, end_row, end_row).get(end_row)
+        if line:
+            end_col = min(end_col, len(line) - 1)
             while end_col + 1 < len(line) and word_char(line[end_col]) and word_char(line[end_col + 1]):
                 end_col += 1
     if selection.mode == 'line':
         start_col, end_col = 0, pane.cols - 1
+    return (start_row, start_col), (end_row, end_col)
+
+
+def selected_spans(pane):
+    """{row shown: (first column, last column)} of a pane's selection."""
+    ends = selection_ends(pane)
+    if ends is None:
+        return {}
+    (start_row, start_col), (end_row, end_col) = ends
+    first = pane.terminal.scrollbar()[1]
     spans = {}
     for row in range(max(start_row, first), min(end_row, first + pane.rows - 1) + 1):
         left = start_col if row == start_row else 0
@@ -180,14 +222,20 @@ def selected_spans(pane):
 
 
 def selected_text(pane):
-    """The selection's text as shown: rows joined by newlines, each with
-    its trailing blanks gone."""
-    spans = selected_spans(pane)
-    if not spans:
+    """The selection's text, the rows scrolled out of view too: rows joined
+    by newlines, each with its trailing blanks gone."""
+    ends = selection_ends(pane)
+    if ends is None:
         return ''
-    rows = pane.terminal.rows_text()
-    lines = [''.join(rows[row][left:right + 1]).rstrip() for row, (left, right) in sorted(spans.items())
-             if 0 <= row < len(rows)]
+    (start_row, start_col), (end_row, end_col) = ends
+    rows = read_rows(pane.terminal, start_row, end_row)
+    lines = []
+    for row in range(start_row, end_row + 1):
+        if row not in rows:
+            continue
+        left = start_col if row == start_row else 0
+        right = end_col if row == end_row else pane.cols - 1
+        lines.append(''.join(rows[row][left:right + 1]).rstrip())
     return '\n'.join(lines)
 
 
@@ -370,6 +418,14 @@ class Rooms:
         return workspace, index
 
     def line(self, text):
+        """One line from Zell. A pane's terminal failing on it changes
+        nothing else: the line is dropped."""
+        try:
+            self.take(text)
+        except PANE_ERRORS:
+            self.dirty = True
+
+    def take(self, text):
         if text.startswith('K'):
             workspace = self.rooms.get(self.shown)
             try:
@@ -380,12 +436,9 @@ class Rooms:
                 pane = workspace.selected
                 # Typing shows the live rows again and ends a selection.
                 self.to_live(pane)
-                try:
-                    pane.send(data)
-                except PANE_ERRORS:
-                    # A shell that has not read a megabyte of input loses
-                    # what is typed until it reads again.
-                    pass
+                # A shell that has not read a megabyte of input loses what
+                # is typed until it reads again.
+                self.send(pane, data)
             return
         words = text.split()
         if not words:
@@ -490,6 +543,16 @@ class Rooms:
             self.dirty = True
 
     def send(self, pane, data):
+        """Bytes for a pane's program; after the rest of a paste going to it,
+        so nothing lands inside the paste's frame."""
+        if not data:
+            return
+        if pane in self.backlog:
+            self.backlog[pane].extend(data)
+            return
+        self.write(pane, data)
+
+    def write(self, pane, data):
         try:
             pane.send(data)
         except PANE_ERRORS:
@@ -605,7 +668,7 @@ class Rooms:
             while data and pane.fd is not None and len(getattr(pane, 'pending', b'')) < PASTE_STEP:
                 step = bytes(data[:PASTE_STEP])
                 del data[:PASTE_STEP]
-                self.send(pane, step)
+                self.write(pane, step)
             if not data or pane.fd is None:
                 del self.backlog[pane]
 

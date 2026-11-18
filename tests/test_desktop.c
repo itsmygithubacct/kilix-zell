@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <fcntl.h>
 #include <unistd.h>
 
 /* Largest per-channel difference between two pixels. */
@@ -2547,7 +2548,10 @@ static void scan_pointer(void *user,unsigned buttons,int x,int y,bool release){
     scan_note(user,text,(size_t)n);
 }
 static void scan_paste(void *user,const char *bytes,size_t count){
-    char text[32];int n=snprintf(text,sizeof text,"V%zu[",count);
+    char text[32];int n;
+    /* No bytes: one over the cap, said by its count. */
+    if(!bytes){n=snprintf(text,sizeof text,"X%zu",count);scan_note(user,text,(size_t)n);return;}
+    n=snprintf(text,sizeof text,"V%zu[",count);
     scan_note(user,text,(size_t)n);scan_note(user,bytes,count<200?count:200);scan_note(user,"]",1);
 }
 static const char *scan(zell_input *in,scan_log *l,const char *bytes,int64_t now){
@@ -2600,10 +2604,18 @@ static void test_input_scan(void){
     l.n=0;l.log[0]=0;
     scan(&in,&l,"\033[<0;1",400);zell_input_idle(&in,&sinks,431);assert(!l.n);
     assert(!strcmp(scan(&in,&l,"q",432),"K[q]"));
-    /* A paste is not cut short by the 30 ms. */
+    /* A paste is not cut short by the 30 ms, nor by 5 seconds while its
+     * bytes keep coming. */
     l.n=0;l.log[0]=0;
-    scan(&in,&l,"\033[200~abc",500);zell_input_idle(&in,&sinks,9000);assert(!l.n&&zell_input_pasting(&in));
-    assert(!strcmp(scan(&in,&l,"\033[201~",9001),"V3[abc]"));
+    scan(&in,&l,"\033[200~abc",500);zell_input_idle(&in,&sinks,5500);assert(!l.n&&zell_input_pasting(&in));
+    scan(&in,&l,"d",5500);zell_input_idle(&in,&sinks,10500);assert(!l.n&&zell_input_pasting(&in));
+    assert(!strcmp(scan(&in,&l,"\033[201~",10500),"V4[abcd]"));
+    /* 5 seconds with nothing: its end is lost. It is dropped, and what comes
+     * next is keys again. */
+    l.n=0;l.log[0]=0;
+    scan(&in,&l,"\033[200~abc\033[20",500);zell_input_idle(&in,&sinks,5501);
+    assert(!l.n&&!zell_input_pasting(&in));
+    assert(!strcmp(scan(&in,&l,"q",5502),"K[q]"));
     /* One past the cap is dropped whole; one at it goes. */
     {
         size_t big=ZELL_INPUT_PASTE_MAX;
@@ -2614,7 +2626,7 @@ static void test_input_scan(void){
         assert(!strncmp(l.log,"V4194304[ppp",12));
         l.n=0;l.log[0]=0;
         scan(&in,&l,"\033[200~",0);zell_input_feed(&in,&sinks,text,big,0);scan(&in,&l,"q\033[201~z",0);
-        assert(!strcmp(l.log,"K[z]"));
+        assert(!strcmp(l.log,"X4194305K[z]"));
         free(text);
     }
     zell_input_free(&in);
@@ -2777,23 +2789,43 @@ static void test_pane_io(void){
         assert(second-pending-4==(ptrdiff_t)(7+4096+1)&&third-second==(ptrdiff_t)(7+4096+1)&&end-third==(ptrdiff_t)(7+6+1));
         /* Bytes 4096 to 4098 are 4096%251 = 80 on. */
         assert(!strncmp(third,"P 10 2 505152\n",14)&&!strcmp(end,"P 10 2 .\n"));
-        /* Another pane's paste waits for this one; an empty one is nothing. */
+        /* Another pane's paste waits for this one, and its pane says so; an
+         * empty one is nothing. */
         assert(zell_panes_paste(&s,"a",1));
         pane_click(&s,10,300);
         assert(!zell_panes_paste(&s,"b",1)&&zell_panes_paste(&s,"",0));
+        assert(!strcmp(zell_panes_notice(ZELL_ROOM_PANES_RIGHT,0),"Another pane's paste is still being sent. Paste again."));
         free(text);
     }
+    /* Keys typed while a paste goes follow its end, in order. */
+    zell_panes_test_reset();
+    place_room(&s,1,0,0);zell_panes_enter(&s,ZELL_ROOM_PANES_RIGHT);pane_click(&s,10,300);
+    assert(zell_panes_paste(&s,"ab",2));
+    zell_panes_key((const unsigned char *)"x",1);zell_panes_key((const unsigned char *)"\r",1);
+    /* (pane 0 had the focus already: no F line) */
+    assert(!strcmp(zell_panes_pending(),"")&&zell_panes_paste_left()==3+8);
+    zell_panes_test_drain();
+    assert(!strcmp(zell_panes_pending(),"P 10 0 6162\nP 10 0 .\nK78\nK0d\n")&&!zell_panes_paste_left());
+    zell_panes_key((const unsigned char *)"y",1);
+    assert(!strcmp(zell_panes_pending(),"P 10 0 6162\nP 10 0 .\nK78\nK0d\nK79\n"));
+    /* A paste the input scanner dropped as too long: said, nothing sent. */
+    assert(!zell_panes_paste(&s,NULL,5)&&!zell_panes_notice(ZELL_ROOM_PANES_RIGHT,0));
+    assert(!zell_panes_paste(&s,NULL,ZELL_PANES_PASTE_MAX+1u));
+    assert(!strcmp(zell_panes_notice(ZELL_ROOM_PANES_RIGHT,0),"The paste is over 4 MiB and was not sent.")&&!zell_panes_paste_left());
     /* With the queue full, the paste waits; none of it is lost. */
     zell_panes_test_reset();
     place_room(&s,1,0,0);zell_panes_enter(&s,ZELL_ROOM_PANES_RIGHT);pane_click(&s,10,300);
     {
         unsigned char bytes[400];memset(bytes,'k',sizeof bytes);
         size_t before;
-        assert(zell_panes_paste(&s,"abc",3));
         do{before=strlen(zell_panes_pending());zell_panes_key(bytes,sizeof bytes);}while(strlen(zell_panes_pending())>before);
         do{before=strlen(zell_panes_pending());zell_panes_key(bytes,1);}while(strlen(zell_panes_pending())>before);
+        assert(zell_panes_paste(&s,"abc",3));
         zell_panes_test_drain();
         assert(strlen(zell_panes_pending())==before&&zell_panes_paste_left()==4);
+        /* Keys now wait behind it, counted with it. */
+        zell_panes_key((const unsigned char *)"z",1);
+        assert(strlen(zell_panes_pending())==before&&zell_panes_paste_left()==4+4);
     }
     /* Not in a pane room, and not while Kilix has the keys. */
     {
@@ -2832,6 +2864,10 @@ static void test_pane_io(void){
         zell_panes_test_line("Y eA==");zell_panes_test_line("Y .");
         seq=zell_panes_copy_sequence(&n);
         assert(seq&&n==12&&!memcmp(seq,"\033]52;c;eA==\a",12));
+        /* More ends add nothing to a copy that has ended. */
+        for(int i=0;i<3000;i++)zell_panes_test_line("Y .");
+        seq=zell_panes_copy_sequence(&n);
+        assert(seq&&n==12&&!memcmp(seq,"\033]52;c;eA==\a",12));
         /* A newer copy before main wrote it wins. */
         zell_panes_test_line("Y eQ==");zell_panes_test_line("Y .");
         seq=zell_panes_copy_sequence(&n);
@@ -2861,6 +2897,9 @@ static void test_pane_io(void){
         size_t n=0;
         static char longline[6000];
         assert(pipe(fds)==0);
+        /* Non-blocking, as the helper's pipe is: a read with nothing there
+         * returns. */
+        assert(fcntl(fds[0],F_SETFL,O_NONBLOCK)==0);
         memset(longline,'A',sizeof longline);longline[0]='Y';longline[1]=' ';longline[sizeof longline-1]='\n';
         assert(write(fds[1],longline,sizeof longline)==(ssize_t)sizeof longline);
         assert(write(fds[1],"Y .\n",4)==4);

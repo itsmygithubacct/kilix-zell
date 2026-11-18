@@ -82,7 +82,13 @@ class Terminal:
         return b'[' + data + b']'
 
     def rows_text(self):
-        rows = self.text or [''] * self.owner.rows
+        # `history`, when set, is every row kept; the ones shown are read.
+        history = getattr(self, 'history', None)
+        if history is not None:
+            first = self.scrollbar()[1]
+            rows = history[first:first + self.owner.rows]
+        else:
+            rows = self.text or [''] * self.owner.rows
         return [list(row.ljust(self.owner.cols)[:self.owner.cols]) for row in rows]
 
 
@@ -779,6 +785,41 @@ class ScrollMouseTests(unittest.TestCase):
         self.assertEqual(pieces, -(-len(panes.base64.b64encode(text.encode())) // panes.COPY_CHUNK))
         self.assertTrue(all(len(line) <= panes.COPY_CHUNK + 2 for line in self.said))
 
+    def test_a_copy_takes_the_rows_scrolled_out_of_view(self):
+        self.first.cols = 40
+        self.term.history = [f'line {row}' for row in range(120)]
+        # Pressed on the top row shown (100), scrolled up, let go at row 10.
+        self.rooms.line('M 0 0 1 0 0 0')
+        self.term.first = 10
+        self.rooms.line('M 0 2 1 0 24 0')
+        self.rooms.line('M 0 1 1 0 24 0')
+        text, _pieces = copied(self.said)
+        lines = text.split('\n')
+        self.assertEqual(len(lines), 91)
+        self.assertEqual(lines[:2], ['e 10', 'line 11'])
+        self.assertEqual(lines[-1], 'l')
+        self.assertEqual(self.said[-1], 'N 9 0 Copied 91 lines.')
+        # The view is put back where it was.
+        self.assertEqual(self.term.first, 10)
+        # From the live rows, back to the live rows.
+        self.said.clear()
+        self.term.first = 0
+        self.rooms.line('M 0 0 1 0 0 0')
+        self.term.first = 100
+        self.rooms.line('M 0 2 1 0 8 16')
+        self.rooms.line('M 0 1 1 0 8 16')
+        lines = copied(self.said)[0].split('\n')
+        self.assertEqual((len(lines), lines[0], lines[-1]), (102, 'line 0', 'li'))
+        self.assertEqual(self.term.first, 100)
+        self.assertEqual(self.term.calls[-1], ('bottom',))
+
+    def test_rows_read_for_a_copy_are_capped(self):
+        self.term.kept, self.term.first = 30000, 29980
+        self.term.history = [str(row) for row in range(30000)]
+        rows = panes.read_rows(self.term, 0, 29999)
+        self.assertEqual((len(rows), min(rows), max(rows)), (panes.COPY_ROWS, 0, panes.COPY_ROWS - 1))
+        self.assertEqual(self.term.first, 29980)
+
     def test_a_selection_ends_when_the_screen_changes(self):
         self.term.text = ['abcdef']
         self.rooms.line('M 0 0 1 0 0 0')
@@ -844,6 +885,37 @@ class ScrollMouseTests(unittest.TestCase):
             self.rooms.poll(1.0)
         self.assertEqual(b''.join(self.first.sent), b'[' + data + b']')
         self.assertEqual(self.rooms.backlog, {})
+
+    def test_keys_typed_during_a_long_paste_follow_it(self):
+        data = b'x' * (3 * panes.PASTE_STEP)
+        self.term.modes = {1000, 1006}
+        self.rooms.line('P 9 0 ' + data.hex())
+        self.first.pending = bytearray(panes.PASTE_STEP)
+        self.rooms.line('P 9 0 .')
+        self.rooms.line('K0d')
+        self.rooms.line('M 0 0 1 0 9 17')
+        self.assertEqual(self.first.sent, [])
+        for _ in range(10):
+            self.first.pending.clear()
+            self.rooms.poll(1.0)
+        self.assertEqual(b''.join(self.first.sent), b'[' + data + b']\r<0;1;0;9;17>')
+        # With the paste gone, keys go straight in again.
+        self.rooms.line('K61')
+        self.assertEqual(self.first.sent[-1], b'a')
+
+    def test_a_terminal_failing_on_a_line_drops_only_that_line(self):
+        self.term.modes = {1000}
+
+        def broken(*_args):
+            raise RuntimeError('Cannot read parser replies')
+        self.term.mouse = broken
+        self.rooms.line('M 0 0 1 0 9 17')
+        self.term.scrollbar = broken
+        self.rooms.line('W 0 up')
+        self.rooms.line('V 0 3')
+        del self.term.scrollbar
+        self.rooms.line('K61')
+        self.assertEqual(self.first.sent, [b'a'])
 
 
 class RealTerminalTests(unittest.TestCase):

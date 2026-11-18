@@ -309,6 +309,8 @@ int zell_theater_present(const void *map,size_t map_bytes);
 #define ZELL_INPUT_PASTE_MAX (4u<<20)
 /* An escape held this long with nothing after it goes on as keys. */
 #define ZELL_INPUT_ESCAPE_MS 30
+/* A paste with no byte for this long has lost its end: it is dropped. */
+#define ZELL_INPUT_PASTE_IDLE_MS 5000
 typedef struct {
     void (*keys)(void *user,const char *bytes,size_t count);
     void (*pointer)(void *user,unsigned buttons,int x,int y,bool release);
