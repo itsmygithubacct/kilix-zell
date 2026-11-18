@@ -179,8 +179,19 @@ bool zell_panes_keys_to_pane(void);
  * he has the keys. */
 enum { ZELL_PANES_KEY_NONE, ZELL_PANES_KEY_PANE, ZELL_PANES_KEY_PRESS };
 int zell_panes_route(bool press_key);
-/* Kilix presses the button under his feet; false if there is none. */
+/* Kilix presses what he aims at (zell_panes_aim); false if nothing. */
 bool zell_panes_press(zell_scene *s);
+/* What Enter presses where Kilix stands: of an agent button (index,
+ * agent), the plaque in a pane's middle (index) and a title-bar button
+ * below him (index, button), the one whose middle is nearest him; else the
+ * pane itself (index), or nothing. Nothing while a pane has the keys. */
+enum { ZELL_PANES_AIM_NONE, ZELL_PANES_AIM_AGENT, ZELL_PANES_AIM_PAD, ZELL_PANES_AIM_CHROME, ZELL_PANES_AIM_PANE };
+int zell_panes_aim(const zell_scene *s,int *index,int *which);
+/* The plaque: ZELL_PANES_PAD_W wide at the pane's middle, on panes at least
+ * ZELL_PANES_PAD_MIN wide; w is 0 otherwise. */
+#define ZELL_PANES_PAD_W 48
+#define ZELL_PANES_PAD_MIN 160
+void zell_panes_pad_rect(const zell_scene *s,int index,zell_rect *r);
 /* The latest picture of the shown room, or NULL. */
 const uint32_t *zell_panes_frame(int room,int *width,int *height);
 /* Why there is no picture, or "". */
@@ -311,6 +322,8 @@ int zell_theater_present(const void *map,size_t map_bytes);
 #define ZELL_INPUT_ESCAPE_MS 30
 /* A paste with no byte for this long has lost its end: it is dropped. */
 #define ZELL_INPUT_PASTE_IDLE_MS 5000
+/* The count given with no bytes for a paste whose end never came. */
+#define ZELL_INPUT_PASTE_UNENDED ((size_t)-1)
 typedef struct {
     void (*keys)(void *user,const char *bytes,size_t count);
     void (*pointer)(void *user,unsigned buttons,int x,int y,bool release);

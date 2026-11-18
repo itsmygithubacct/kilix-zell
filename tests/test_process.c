@@ -639,6 +639,12 @@ static void test_contract_frames(zell_scene *scene){
     peer_reap(&mon,&mon_svc);
 }
 
+/* The outer terminal's bytes as desktop_input_read gives them to the input
+ * scanner, with Zell's own sinks. */
+static void desktop_input_feed(zell_scene *s,const char *bytes,size_t count){
+    zell_input_sinks sinks={desktop_keys,desktop_pointer,desktop_paste,s};
+    zell_input_feed(&pointer_input,&sinks,bytes,count,now_ms());
+}
 int main(void)
 {
     zell_proc proc = {.out_fd = -1, .err_fd = -1};
@@ -747,7 +753,7 @@ int main(void)
         read_controls(&scene,&control);assert(!control.run);
     }
     /* Pixel mouse reports never become typed text, including split reports. */
-    kittykb_input_init(&keyboard.input);pointer_input=(desktop_input){0};
+    kittykb_input_init(&keyboard.input);zell_input_free(&pointer_input);
     const char mouse[]="\033[<35;20;50M";
     desktop_input_feed(&scene,mouse,sizeof mouse-1);
     assert(scene.mouse_valid&&scene.mouse_x==19&&scene.mouse_y==49);

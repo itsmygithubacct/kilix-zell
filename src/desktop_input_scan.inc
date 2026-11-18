@@ -75,6 +75,8 @@ void zell_input_idle(zell_input *in,const zell_input_sinks *sinks,int64_t now){
     /* A paste whose end never came: dropped, and the keys are keys again. */
     if(in->pasting&&now-in->changed>ZELL_INPUT_PASTE_IDLE_MS){
         in->pasting=false;in->end_match=0;in->paste_n=0;in->paste_over=false;
+        /* Said as no bytes and ZELL_INPUT_PASTE_UNENDED. */
+        if(sinks->paste)sinks->paste(sinks->user,NULL,ZELL_INPUT_PASTE_UNENDED);
     }
     if(in->used&&!in->pasting&&now-in->changed>ZELL_INPUT_ESCAPE_MS){
         /* Keys that stopped short go on as they are; half a pointer

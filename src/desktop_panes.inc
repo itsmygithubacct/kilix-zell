@@ -90,9 +90,13 @@ typedef struct {
     char *copy;
     size_t copy_n;
     bool copy_ready,copy_bad;
-    /* K lines typed while a paste goes, sent after its end line. */
+    /* Lines queued while a paste goes (keys, focus, clicks, zoom,
+     * restart), sent after its end line, in order. */
     char after[PN_AFTER_MAX];
     size_t after_n;
+    /* Where he walked in: Enter presses nothing there until he moves. */
+    int rest_room;
+    float rest_x;
 } pn_state;
 
 #define PN_START {.in_fd=-1,.out_fd=-1,.frame_fd=-1,.zoom={-1,-1},.grab=-1,.bar_grab=-1,.bar_hover=-1,.motion_pane=-1}
@@ -156,6 +160,7 @@ void zell_panes_enter(zell_scene *s,int room){
     pn.keys_pane=false;pn.confirm_room=0;pn.entering=true;
     pn.grab=pn.bar_grab=pn.bar_hover=pn.motion_pane=-1;
     pn_place(s);
+    pn.rest_room=room;pn.rest_x=s->x;
 }
 void zell_panes_leave(zell_scene *s){
     int side=zell_panes_exit_side(s->room);
@@ -268,26 +273,47 @@ int zell_panes_pane_at(const zell_scene *s,int x){
     for(int i=0;i<count-1;i++)if(x<(pn_left(cols,count,i)+pn_width(cols,count,i)+1)*8)return i;
     return count-1;
 }
-/* Left to right from 12 pixels into the pane's part of the walkway (104
- * when the way back is at its left, so Kilix does not come in standing on
- * one), 6 apart; one that would pass 8 pixels short of its end is not
- * shown, nor any after it. */
-void zell_panes_button_rect(const zell_scene *s,int index,int agent,zell_rect *r){
+/* The plaque in the middle of a pane's part of the walkway: Kilix standing
+ * there and pressing gives the pane the keys. None on a pane narrower than
+ * ZELL_PANES_PAD_MIN. */
+void zell_panes_pad_rect(const zell_scene *s,int index,zell_rect *r){
     zell_rect pane;zell_panes_pane_rect(s,index,&pane);
     *r=(zell_rect){0};
+    if(!pane.w||pane.w<ZELL_PANES_PAD_MIN)return;
+    *r=(zell_rect){pane.x+pane.w/2-ZELL_PANES_PAD_W/2,ZELL_PANES_BUTTON_Y,ZELL_PANES_PAD_W,ZELL_PANES_BUTTON_H};
+}
+/* Left to right from 12 pixels into the pane's part of the walkway (104
+ * when the way back is at its left, so Kilix does not come in standing on
+ * one), 6 apart, past the plaque in the middle; one that would pass 8
+ * pixels short of its end is not shown, nor any after it. */
+void zell_panes_button_rect(const zell_scene *s,int index,int agent,zell_rect *r){
+    zell_rect pane,pad;zell_panes_pane_rect(s,index,&pane);
+    *r=(zell_rect){0};
     if(!pane.w||agent<0||agent>=pn.agent_count)return;
+    zell_panes_pad_rect(s,index,&pad);
     int x=pane.x+(pane.x==0&&zell_panes_exit_side(s->room)<0?104:12);
     for(int i=0;i<=agent;i++){
         int w=(int)strlen(pn.agents[i].label)*8+16;
+        if(pad.w&&x<pad.x+pad.w+6&&x+w+6>pad.x)x=pad.x+pad.w+6;
         if(x+w>pane.x+pane.w-8)return;
         if(i==agent){*r=(zell_rect){x,ZELL_PANES_BUTTON_Y,w,ZELL_PANES_BUTTON_H};return;}
         x+=w+6;
     }
 }
 static bool pn_inside(zell_rect r,int x,int y){return r.w>0&&x>=r.x&&x<r.x+r.w&&y>=r.y&&y<r.y+r.h;}
-static bool pn_send(const char *text,size_t n){
+static bool pn_send_now(const char *text,size_t n){
     if(n==0||pn.queued+n>=sizeof pn.queue)return false;
     memcpy(pn.queue+pn.queued,text,n);pn.queued+=n;pn.queue[pn.queued]=0;
+    return true;
+}
+/* A line for the helper. While a paste is still being sent, it waits
+ * behind the paste with the others, so the helper sees them in the order
+ * they were made (keys typed then a click on another pane go where they
+ * were typed). False when it could not be queued. */
+static bool pn_send(const char *text,size_t n){
+    if(!pn.paste_n&&!pn.after_n)return pn_send_now(text,n);
+    if(n==0||pn.after_n+n>sizeof pn.after)return false;
+    memcpy(pn.after+pn.after_n,text,n);pn.after_n+=n;
     return true;
 }
 /* One formatted line; ok says whether it was queued. Zell changes what
@@ -304,10 +330,6 @@ void zell_panes_key(const unsigned char *bytes,size_t count){
     for(size_t i=0;i<count;i++){line[at++]=hex[bytes[i]>>4];line[at++]=hex[bytes[i]&15u];}
     line[at++]='\n';
     /* Typed after a paste that is still going: it follows the paste. */
-    if(pn.paste_n||pn.after_n){
-        if(pn.after_n+at<=sizeof pn.after){memcpy(pn.after+pn.after_n,line,at);pn.after_n+=at;}
-        return;
-    }
     pn_send(line,at);
 }
 /* Pane index gets the keys, unless the helper cannot be told. */
@@ -322,23 +344,82 @@ static void pn_start_agent(const zell_scene *s,int index,int agent){
     pn_sendf(ok,"A %d %s\n",index,pn.agents[agent].id);
     if(ok)pn_take(s,index);
 }
-bool zell_panes_press(zell_scene *s){
-    int count=zell_panes_count(s->room);
-    if(!count||pn.keys_pane)return false;
-    for(int index=0;index<count;index++)for(int agent=0;agent<pn.agent_count;agent++){
-        zell_rect b;zell_panes_button_rect(s,index,agent,&b);
-        if(b.w&&s->x>=(float)b.x&&s->x<(float)(b.x+b.w)){pn_start_agent(s,index,agent);return true;}
+/* A title-bar button of pane index, clicked or pressed by Kilix. False when
+ * the helper could not be told. */
+static bool pn_chrome(const zell_scene *s,int index,int button){
+    int slot=pn_slot(s->room);
+    bool ok=true;
+    if(button==ZELL_PANES_END){
+        pn_sendf(ok,"W %d bottom\n",index);
+    }else if(button==ZELL_PANES_ZOOM){
+        int zoomed=pn.zoom[slot]==index?-1:index;
+        pn_sendf(ok,"Z %d\n",zoomed);
+        if(ok)pn.zoom[slot]=zoomed;
+    }else if(button==ZELL_PANES_RESTART){
+        /* Once arms it; again within 3 seconds restarts the pane. */
+        if(zell_panes_confirming(s->room,index)){pn_sendf(ok,"X %d\n",index);if(ok)pn.confirm_room=0;}
+        else {pn.confirm_room=s->room;pn.confirm_pane=index;pn.confirm_until=zell_notice_clock_ms()+PN_CONFIRM_MS;}
     }
+    return ok;
+}
+static bool pn_under(zell_rect r,float x){return r.w>0&&x>=(float)r.x&&x<(float)(r.x+r.w);}
+/* What Enter would press where Kilix stands: of the agent buttons on the
+ * wall, the plaque and the title-bar buttons below him, the one whose
+ * middle is nearest him (on a narrow pane they overlap, and each is still
+ * reached at its middle); else the pane itself. */
+static void pn_nearer(zell_rect r,float x,int kind,int index,int which,float *best,int *aim,int *best_index,int *best_which){
+    if(!pn_under(r,x))return;
+    float d=x-((float)r.x+(float)r.w/2.f);
+    if(d<0)d=-d;
+    if(d>=*best)return;
+    *best=d;*aim=kind;*best_index=index;*best_which=which;
+}
+int zell_panes_aim(const zell_scene *s,int *index,int *which){
+    int count=zell_panes_count(s->room);
+    *index=*which=-1;
+    if(!count||pn.keys_pane)return ZELL_PANES_AIM_NONE;
+    /* Where he walked in nothing is aimed at (Restart can be there) until
+     * he moves. */
+    if(pn.rest_room==s->room&&s->x==pn.rest_x)return ZELL_PANES_AIM_NONE;
+    pn.rest_room=0;
+    int aim=ZELL_PANES_AIM_NONE;float best=1e9f;
+    for(int i=0;i<count;i++)for(int agent=0;agent<pn.agent_count;agent++){
+        zell_rect b;zell_panes_button_rect(s,i,agent,&b);
+        pn_nearer(b,s->x,ZELL_PANES_AIM_AGENT,i,agent,&best,&aim,index,which);
+    }
+    int pane=zell_panes_pane_at(s,(int)s->x);
+    if(pane>=0){
+        zell_rect pad;zell_panes_pad_rect(s,pane,&pad);
+        pn_nearer(pad,s->x,ZELL_PANES_AIM_PAD,pane,-1,&best,&aim,index,which);
+        for(int button=ZELL_PANES_ZOOM;button<=ZELL_PANES_END;button++){
+            zell_rect b;zell_panes_chrome_button(s,pane,button,&b);
+            pn_nearer(b,s->x,ZELL_PANES_AIM_CHROME,pane,button,&best,&aim,index,which);
+        }
+    }
+    if(aim!=ZELL_PANES_AIM_NONE)return aim;
+    if(pane<0)return ZELL_PANES_AIM_NONE;
+    *index=pane;
+    return ZELL_PANES_AIM_PANE;
+}
+bool zell_panes_press(zell_scene *s){
+    int index,which,aim=zell_panes_aim(s,&index,&which);
+    if(aim==ZELL_PANES_AIM_AGENT){pn_start_agent(s,index,which);return true;}
+    if(aim==ZELL_PANES_AIM_CHROME){(void)pn_chrome(s,index,which);return true;}
+    if(aim==ZELL_PANES_AIM_PAD||aim==ZELL_PANES_AIM_PANE){pn_take(s,index);return true;}
     return false;
 }
 bool zell_panes_click(zell_scene *s){
     if(!ZELL_ROOM_IS_PANES(s->room)||!s->mouse_click||!s->mouse_valid)return false;
     s->mouse_click=false;
-    int slot=pn_slot(s->room),x=s->mouse_x,y=s->mouse_y,count=zell_panes_count(s->room);
+    int x=s->mouse_x,y=s->mouse_y,count=zell_panes_count(s->room);
     if(y<ZELL_PANES_WALK_H){
-        for(int index=0;index<count;index++)for(int agent=0;agent<pn.agent_count;agent++){
-            zell_rect b;zell_panes_button_rect(s,index,agent,&b);
-            if(pn_inside(b,x,y)){pn_start_agent(s,index,agent);return true;}
+        for(int index=0;index<count;index++){
+            for(int agent=0;agent<pn.agent_count;agent++){
+                zell_rect b;zell_panes_button_rect(s,index,agent,&b);
+                if(pn_inside(b,x,y)){pn_start_agent(s,index,agent);return true;}
+            }
+            zell_rect pad;zell_panes_pad_rect(s,index,&pad);
+            if(pn_inside(pad,x,y)){pn_take(s,index);return true;}
         }
         pn.keys_pane=false;
         return true;
@@ -346,23 +427,13 @@ bool zell_panes_click(zell_scene *s){
     int index=zell_panes_pane_at(s,x);
     if(index<0)return true;
     if(y<ZELL_PANES_CELLS_Y){
-        zell_rect zoom,restart,end;
-        zell_panes_chrome_button(s,index,ZELL_PANES_ZOOM,&zoom);
-        zell_panes_chrome_button(s,index,ZELL_PANES_RESTART,&restart);
-        zell_panes_chrome_button(s,index,ZELL_PANES_END,&end);
-        bool ok=true;
-        if(pn_inside(end,x,y)){
-            pn_sendf(ok,"W %d bottom\n",index);
-        }else if(pn_inside(zoom,x,y)){
-            int zoomed=pn.zoom[slot]==index?-1:index;
-            pn_sendf(ok,"Z %d\n",zoomed);
-            if(ok)pn.zoom[slot]=zoomed;
-        }else if(pn_inside(restart,x,y)){
-            /* Once arms it; again within 3 seconds restarts the pane. */
-            if(zell_panes_confirming(s->room,index)){pn_sendf(ok,"X %d\n",index);if(ok)pn.confirm_room=0;}
-            else {pn.confirm_room=s->room;pn.confirm_pane=index;pn.confirm_until=zell_notice_clock_ms()+PN_CONFIRM_MS;}
+        for(int button=ZELL_PANES_ZOOM;button<=ZELL_PANES_END;button++){
+            zell_rect b;zell_panes_chrome_button(s,index,button,&b);
+            if(pn_inside(b,x,y)){
+                if(!pn_chrome(s,index,button))return true;
+                break;
+            }
         }
-        if(!ok)return true;
     }
     pn_take(s,index);
     return true;
@@ -454,11 +525,21 @@ bool zell_panes_paste(const zell_scene *s,const char *bytes,size_t count){
     if(!ZELL_ROOM_IS_PANES(s->room)||!pn.keys_pane)return false;
     int slot=pn_slot(s->room),index=pn.focus[slot];
     /* No bytes and a count past the cap: one the input scanner dropped. */
+    if(!bytes&&count==ZELL_INPUT_PASTE_UNENDED){
+        pn_notice(s->room,index,"The paste never ended and was not sent.");
+        return false;
+    }
     if(!bytes&&count<=ZELL_PANES_PASTE_MAX)return false;
     if(!count)return true;
     /* One paste at a time; one too long is not cut but refused. */
     if(pn.paste_n&&(pn.paste_room!=s->room||pn.paste_pane!=index)){
         pn_notice(s->room,index,"Another pane's paste is still being sent. Paste again.");
+        return false;
+    }
+    /* Lines made since the last paste still wait behind it: this one
+     * would go before them. */
+    if(pn.after_n){
+        pn_notice(s->room,index,"The last paste is still being sent. Paste again.");
         return false;
     }
     if(!bytes||count>ZELL_PANES_PASTE_MAX||pn.paste_n>ZELL_PANES_PASTE_MAX-count){
@@ -489,7 +570,7 @@ static void pn_paste_drain(void){
         if(at<0)return;
         if(pn.paste_at==pn.paste_n){
             line[at++]='.';line[at++]='\n';
-            if(!pn_send(line,(size_t)at))return;
+            if(!pn_send_now(line,(size_t)at))return;
             pn.paste_n=pn.paste_at=0;
             break;
         }
@@ -500,11 +581,11 @@ static void pn_paste_drain(void){
             line[at++]=hex[ch>>4];line[at++]=hex[ch&15u];
         }
         line[at++]='\n';
-        if(!pn_send(line,(size_t)at))return;
+        if(!pn_send_now(line,(size_t)at))return;
         pn.paste_at+=take;
     }
     /* Then what was typed meanwhile, whole when the queue takes it. */
-    if(pn.after_n&&pn_send(pn.after,pn.after_n))pn.after_n=0;
+    if(pn.after_n&&pn_send_now(pn.after,pn.after_n))pn.after_n=0;
 }
 size_t zell_panes_paste_left(void){return pn.paste_n-pn.paste_at+(pn.paste_n?1:0)+pn.after_n;}
 void zell_panes_test_drain(void){pn_paste_drain();}

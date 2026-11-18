@@ -570,19 +570,29 @@ static void desktop_panes_room(const zell_scene *s,sr_canvas *c){
  sr_fill_rect(c,0,34,(float)c->w,(float)(ZELL_PANES_WALK_H-36),0x26343cu,1);
  for(int x=0;x<c->w;x+=32)sr_fill_rect(c,(float)x,34,1,(float)(ZELL_PANES_WALK_H-36),0x1b272eu,1);
  sr_fill_rect(c,0,(float)(ZELL_PANES_WALK_H-2),(float)c->w,2,typing?0x2a3a44u:0xd9ba79u,1);
+ /* What Enter would press where Kilix stands is lit, and only that. */
+ int aim_index,aim_which,aim=zell_panes_aim(s,&aim_index,&aim_which);
  for(int index=0;index<count;index++){
   zell_rect bar;zell_panes_chrome_rect(s,index,&bar);
   if(!bar.w)continue;
   for(int agent=0;agent<zell_panes_agent_count();agent++){
    zell_rect b;zell_panes_button_rect(s,index,agent,&b);
    if(!b.w)break;
-   bool under=!typing&&s->x>=(float)b.x&&s->x<(float)(b.x+b.w);
+   bool under=aim==ZELL_PANES_AIM_AGENT&&aim_index==index&&aim_which==agent;
    desktop_panes_button(c,b,zell_panes_agent_label(agent),under?0x2f5a4cu:0x1f3444u,under?0x9ff0c8u:0x5f8faeu,0xe8f2f6u);
   }
-  /* The title bar: brightest on the pane that has the keys. */
+  zell_rect pad;zell_panes_pad_rect(s,index,&pad);
+  if(pad.w){
+   bool under=aim==ZELL_PANES_AIM_PAD&&aim_index==index;
+   desktop_panes_button(c,pad,"Type",under?0x5a4a24u:0x1b2a33u,under?0xd9ba79u:0x4f6a7au,under?0xffffffu:0xb9c8d0u);
+  }
+  /* The title bar: brightest on the pane that has the keys; edged in gold
+   * on the pane Enter would give them to. */
   bool focused=index==focus,keys=focused&&typing;
   sr_fill_rect(c,(float)bar.x,(float)bar.y,(float)bar.w,(float)bar.h,keys?0x2f5878u:focused?0x23394bu:0x18242eu,1);
   if(keys)sr_fill_rect(c,(float)bar.x,(float)bar.y,3,(float)bar.h,0xd9ba79u,1);
+  if((aim==ZELL_PANES_AIM_PANE||aim==ZELL_PANES_AIM_PAD)&&aim_index==index)
+   sr_fill_rect(c,(float)bar.x,(float)bar.y,(float)bar.w,2,0xd9ba79u,1);
   zell_rect zoom_b,restart_b,end_b;
   zell_panes_chrome_button(s,index,ZELL_PANES_ZOOM,&zoom_b);zell_panes_chrome_button(s,index,ZELL_PANES_RESTART,&restart_b);
   zell_panes_chrome_button(s,index,ZELL_PANES_END,&end_b);
@@ -593,11 +603,18 @@ static void desktop_panes_room(const zell_scene *s,sr_canvas *c){
   else snprintf(text,sizeof text,"%d %s",index+1,title[0]?title:"shell");
   int room_for=(end_b.w?end_b.x:zoom_b.w?zoom_b.x:bar.x+bar.w)-bar.x-16;
   desktop_text(c,bar.x+8,bar.y+2,text,notice?0xe5ad87u:keys?0xffffffu:0x9fb4c0u,room_for);
-  if(end_b.w)desktop_panes_button(c,end_b,"End",0x2f5a4cu,0x9ff0c8u,0xe8f2f6u);
-  if(zoom_b.w)desktop_panes_button(c,zoom_b,zoom==index?"Unzoom":"Zoom",0x1f3444u,0x5f8faeu,0xd6e4ec);
+  bool aimed=aim==ZELL_PANES_AIM_CHROME&&aim_index==index;
+  if(end_b.w){
+   bool under=aimed&&aim_which==ZELL_PANES_END;
+   desktop_panes_button(c,end_b,"End",under?0x3f7a64u:0x2f5a4cu,under?0xffffffu:0x9ff0c8u,0xe8f2f6u);
+  }
+  if(zoom_b.w){
+   bool under=aimed&&aim_which==ZELL_PANES_ZOOM;
+   desktop_panes_button(c,zoom_b,zoom==index?"Unzoom":"Zoom",under?0x2f5a4cu:0x1f3444u,under?0x9ff0c8u:0x5f8faeu,0xd6e4ec);
+  }
   if(restart_b.w){
-   bool sure=zell_panes_confirming(s->room,index);
-   desktop_panes_button(c,restart_b,sure?"Sure?":"Restart",sure?0x6a2c2cu:0x1f3444u,sure?0xe5ad87u:0x5f8faeu,0xd6e4ec);
+   bool sure=zell_panes_confirming(s->room,index),under=aimed&&aim_which==ZELL_PANES_RESTART;
+   desktop_panes_button(c,restart_b,sure?"Sure?":"Restart",sure?0x6a2c2cu:under?0x2f5a4cu:0x1f3444u,sure?0xe5ad87u:under?0x9ff0c8u:0x5f8faeu,0xd6e4ec);
   }
  }
  if(pixels){

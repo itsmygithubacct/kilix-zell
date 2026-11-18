@@ -6,26 +6,26 @@ static zell_input pointer_input;
 /* Bytes for the key decoder, in order: keys, and pastes outside the pane
  * rooms, which can be longer than its queue. They go in as it has room;
  * more input is read only once they have all gone. */
-static char *typed;
+static char *typed_bytes;
 static size_t typed_n,typed_cap;
 static void typed_add(const char *bytes,size_t count){
  if(!count||count>ZELL_INPUT_PASTE_MAX+4096u-typed_n)return;
  if(typed_n+count>typed_cap){
   size_t cap=typed_cap?typed_cap:4096;
   while(cap<typed_n+count)cap*=2;
-  char *grown=realloc(typed,cap);
+  char *grown=realloc(typed_bytes,cap);
   if(!grown)return;
-  typed=grown;typed_cap=cap;
+  typed_bytes=grown;typed_cap=cap;
  }
- memcpy(typed+typed_n,bytes,count);typed_n+=count;
+ memcpy(typed_bytes+typed_n,bytes,count);typed_n+=count;
 }
 static void typed_feed(void){
  size_t room=KITTYKB_EVENT_QUEUE_CAPACITY-keyboard.input.queue_count;
  /* A byte is at most one event. */
  if(!typed_n||room<2)return;
  size_t take=typed_n<room-1?typed_n:room-1;
- kittykb_input_feed(&keyboard.input,typed,take);
- memmove(typed,typed+take,typed_n-take);typed_n-=take;
+ kittykb_input_feed(&keyboard.input,typed_bytes,take);
+ memmove(typed_bytes,typed_bytes+take,typed_n-take);typed_n-=take;
 }
 static void desktop_keys(void *user,const char *bytes,size_t count){
  (void)user;typed_add(bytes,count);typed_feed();
