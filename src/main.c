@@ -856,9 +856,10 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
 
     /* In a pane room the keys are a pane's after a click on it, every key
      * of them; after a click on the walkway they are Kilix's: the arrows
-     * walk him and Enter or Space presses the button he stands on. */
+     * walk him, with Shift run him, and Enter or Space presses the button
+     * he stands on. */
     if(scene->desktop&&ZELL_ROOM_IS_PANES(scene->room)){
-        controls->run=false;
+        controls->run=controls->run&&!zell_panes_keys_to_pane();
         controls->move_x=controls->move_y=0;
         /* Alt with the arrows moves between the panes and the walkway: he
          * does not walk then. */

@@ -246,6 +246,12 @@ static void theater_install_note(zell_scene *s,int code){
     s->theater_install_code=code;
     s->theater_install_request=false;
 }
+/* The services that can open the floating terminal get its shared surface:
+ * the private ones, the Workshop computer, and the Command Center's screens,
+ * which show Kilix panes in it. */
+static bool service_has_surface(int station,bool sensitive){
+    return sensitive||station==ZELL_WORKSHOP_COMPUTER||(station>=ZELL_COMMAND_SCREEN_FIRST&&station<=ZELL_COMMAND_SCREEN_LAST);
+}
 static void service_start_mode(desktop_service *p,zell_scene *s,bool monitor){
     int generation=0;
     /* Replacing the floating terminal abandons an install that was using it. */
@@ -281,7 +287,7 @@ static void service_start_mode(desktop_service *p,zell_scene *s,bool monitor){
     snprintf(station,sizeof station,"%d",monitor?-1:s->station);snprintf(action,sizeof action,"%d",s->menu_index);
     if(pipe(to_child)!=0)goto failed;
     if(pipe(from_child)!=0){close(to_child[0]);close(to_child[1]);goto failed;}
-    if(!monitor&&(p->sensitive||workshop)){
+    if(!monitor&&service_has_surface(s->station,p->sensitive)){
         p->frame_fd=(int)syscall(SYS_memfd_create,"zell-terminal",0);
         if(p->frame_fd>=0&&ftruncate(p->frame_fd,(off_t)ZELL_TERMINAL_BYTES)==0){
             p->frame_map=mmap(NULL,ZELL_TERMINAL_BYTES,PROT_READ|PROT_WRITE,MAP_SHARED,p->frame_fd,0);

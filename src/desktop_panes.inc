@@ -188,12 +188,14 @@ int zell_panes_tick(zell_scene *s,const zell_controls *c){
     if(dx!=0.f)pn.entering=false;
     if(pn.entering){int direction=s->direction;pn_place(s);if(dy!=0.f)s->direction=direction;}
     pn_bounds(s,&x0,&x1);
-    /* Along the walkway only: up and down turn him. */
+    /* Along the walkway only: up and down turn him. Shift runs him, at
+     * once: there is nothing on the walkway to run into. */
     if(dx!=0.f){
-        float speed=ZELL_WALK_SPEED*zell_desktop_speed_factor(s);
+        s->running=c->run;
+        float speed=(s->running?ZELL_RUN_SPEED:ZELL_WALK_SPEED)*zell_desktop_speed_factor(s);
         s->direction=dx<0?2:3;
         s->x+=dx>0?speed:-speed;
-        s->step_ticks++;s->step=(s->step_ticks/7)%2;
+        s->step_ticks++;s->step=(s->step_ticks/(s->running?3:7))%2;
     }else{
         if(dy!=0.f)s->direction=dy<0?1:0;
         s->step=0;s->step_ticks=0;

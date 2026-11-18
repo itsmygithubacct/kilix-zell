@@ -23,6 +23,9 @@
 #define ZELL_LIBRARY_HATCH 55
 /* The Command Center's shell computer, in its bottom left corner. */
 #define ZELL_COMMAND_COMPUTER 56
+/* The Command Center's controller and four worker screens. */
+#define ZELL_COMMAND_SCREEN_FIRST 15
+#define ZELL_COMMAND_SCREEN_LAST 19
 #define ZELL_ZOOM_TICKS 22
 #define ZELL_CAVE_STATIONS 15
 /* Where the Neuronte lever is drawn, relative to its floor interaction point. */

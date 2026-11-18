@@ -3180,6 +3180,18 @@ static void test_pane_io(void){
         for(int i=0;i<4;i++)assert(zell_panes_move(&s,-1,0)&&s.x==along[i]&&!zell_panes_keys_to_pane());
         assert(zell_panes_move(&s,0,-1)&&s.x==120.f&&!zell_panes_keys_to_pane());
         assert(!strcmp(zell_panes_pending(),want));
+        /* Shift runs him along the walkway; let go, he walks. */
+        {
+            zell_controls c={0};
+            float factor=zell_desktop_speed_factor(&s);
+            c.move_x=1;c.run=true;
+            assert(zell_panes_tick(&s,&c)==1&&s.running&&fabsf(s.x-(120.f+ZELL_RUN_SPEED*factor))<.01f&&s.direction==3);
+            c.run=false;
+            assert(zell_panes_tick(&s,&c)==1&&!s.running&&fabsf(s.x-(120.f+(ZELL_RUN_SPEED+ZELL_WALK_SPEED)*factor))<.01f);
+            c.move_x=0;c.run=true;
+            assert(zell_panes_tick(&s,&c)==1&&!s.running);
+            s.x=120.f;
+        }
         /* Down: the pane he is over gets the keys. */
         assert(zell_panes_move(&s,0,1));
         strcat(want,"F 0\n");assert(!strcmp(zell_panes_pending(),want)&&zell_panes_keys_to_pane()&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==0);

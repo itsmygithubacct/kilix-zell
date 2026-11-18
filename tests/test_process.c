@@ -647,6 +647,27 @@ static void desktop_input_feed(zell_scene *s,const char *bytes,size_t count){
 }
 /* A paste of more than one line waits, said, for Enter; any other key, a
  * click or eight seconds drop it; Shift alone does not answer. */
+/* The Command Center's screens show Kilix panes in the floating terminal:
+ * their service is given its shared surface, as the Workshop computer's is;
+ * a station that never opens it is not. */
+static void test_service_surfaces(void){
+    int stations[]={ZELL_COMMAND_SCREEN_FIRST,ZELL_COMMAND_SCREEN_LAST,ZELL_WORKSHOP_COMPUTER,ZELL_COMMAND_COMPUTER,10};
+    bool surface[]={true,true,true,true,false};
+    for(int i=0;i<5;i++){
+        static zell_scene scene;
+        memset(&scene,0,sizeof scene);
+        scene.desktop=true;scene.room=1;scene.station=stations[i];
+        desktop_service svc={.in_fd=-1,.out_fd=-1,.frame_fd=-1};
+        service_start(&svc,&scene);
+        assert(svc.pid>0);
+        assert((svc.frame_map!=NULL)==surface[i]&&(svc.frame_fd>=0)==surface[i]);
+        assert((scene.terminal_pixels!=NULL)==surface[i]);
+        service_stop(&svc);
+        free(scene.terminal_pixels);scene.terminal_pixels=NULL;
+    }
+    assert(service_has_surface(ZELL_COMMAND_SCREEN_FIRST+2,false)&&!service_has_surface(ZELL_COMMAND_SCREEN_LAST+1,false));
+    assert(!service_has_surface(ZELL_COMMAND_SCREEN_FIRST-1,false)&&service_has_surface(10,true));
+}
 static void test_paste_question(void){
     zell_scene scene;
     kittykb_event event;
@@ -777,20 +798,45 @@ static void test_paste_question(void){
         desktop_input_feed(&scene,"\033[1;3D\033[1;3A",12);
         read_controls(&scene,&controls);
         assert(!zell_panes_keys_to_pane()&&scene.x==120.f&&!strcmp(zell_panes_pending()+before,"F 1\nF 0\n"));
-        /* On the walkway, Alt held, Left takes him over the next pane but
-         * he does not walk. */
+        /* Held keys are known only from a terminal that reports releases,
+         * as kitty does once asked: so here, until the paste tests. */
+        uint8_t support=keyboard.input.support;uint32_t flags=keyboard.input.terminal_flags;
+        keyboard.input.support=(uint8_t)KITTYKB_SUPPORT_AVAILABLE;
+        keyboard.input.terminal_flags|=KITTYKB_FLAG_REPORT_EVENTS|KITTYKB_FLAG_REPORT_ALL_KEYS;
+        /* On the walkway, Alt held, Right takes him over the next pane but
+         * he does not walk, though Right is held. */
         char held[64];
         int n=snprintf(held,sizeof held,"\033[%d;3:1u\033[1;3:1C",KITTYKB_KEY_LEFT_ALT);
         desktop_input_feed(&scene,held,(size_t)n);
         read_controls(&scene,&controls);
-        assert(scene.x==364.f&&controls.move_x==0&&!zell_panes_keys_to_pane());
+        assert(scene.x==364.f&&!zell_panes_keys_to_pane());
+        read_controls(&scene,&controls);
+        assert(kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_RIGHT)&&kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_LEFT_ALT));
+        assert(controls.move_x==0&&scene.x==364.f);
         n=snprintf(held,sizeof held,"\033[1;3:3C\033[%d;1:3u",KITTYKB_KEY_LEFT_ALT);
         desktop_input_feed(&scene,held,(size_t)n);
         read_controls(&scene,&controls);
+        /* Shift held: he runs. */
+        n=snprintf(held,sizeof held,"\033[%d;2:1u\033[1;2:1C",KITTYKB_KEY_LEFT_SHIFT);
+        desktop_input_feed(&scene,held,(size_t)n);
+        read_controls(&scene,&controls);
+        read_controls(&scene,&controls);
+        assert(controls.run&&controls.move_x==1);
+        n=snprintf(held,sizeof held,"\033[1;2:3C\033[%d;1:3u",KITTYKB_KEY_LEFT_SHIFT);
+        desktop_input_feed(&scene,held,(size_t)n);
+        read_controls(&scene,&controls);
+        read_controls(&scene,&controls);
+        assert(!controls.run&&controls.move_x==0);
+        assert(!kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_RIGHT)&&!kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_LEFT_SHIFT));
+        keyboard.input.support=support;keyboard.input.terminal_flags=flags;
         desktop_input_feed(&scene,"\033[1;3B",6);
         read_controls(&scene,&controls);
         assert(zell_panes_keys_to_pane()&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==1);
         assert(!strstr(zell_panes_pending()+before,"K"));
+        /* Ctrl with Alt and an arrow is the pane's, as a key. */
+        desktop_input_feed(&scene,"\033[1;7C",6);
+        read_controls(&scene,&controls);
+        assert(zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==1&&strchr(zell_panes_pending()+before,'K'));
         /* Back to pane 0, as the paste tests that follow expect. */
         scene.mouse_valid=true;scene.mouse_click=true;scene.mouse_x=10;scene.mouse_y=300;
         assert(zell_desktop_click(&scene)&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==0);
@@ -944,6 +990,7 @@ int main(void)
     kittykb_event typed;assert(kittykb_input_next(&keyboard.input,&typed)&&typed.key=='a');
     desktop_input_feed(&scene,"\033[A",3);
     assert(kittykb_input_next(&keyboard.input,&typed)&&typed.key==KITTYKB_KEY_UP);
+    test_service_surfaces();
     test_paste_question();
     test_terminal_transport(&scene);
     test_menu_and_mana(&scene);
