@@ -366,34 +366,30 @@ static bool workshop_seat_tick(zell_scene *s,const zell_controls *c){
  }
  return false;
 }
-static int downstairs_room(int station){
- if(station==13)return 1;
- if(station==14)return 2;
- if(station==42)return 3;
- if(station==43)return 4;
- if(station==ZELL_GAME_HATCH)return 5;
- if(station==ZELL_THEATER_HATCH)return 6;
- if(station==ZELL_MEDITATION_HATCH)return 7;
- if(station==ZELL_LIBRARY_HATCH)return 8;
+const zell_cave_hatch zell_cave_hatches[ZELL_DOWNSTAIRS_ROOMS+1]={
+ [1]={ZELL_COMMAND_HATCH,    ZELL_ART_COMMAND_HATCH_OPEN,    "Command center"},
+ [2]={ZELL_LAUNDRY_HATCH,    ZELL_ART_LAUNDRY_HATCH_OPEN,    "Laundry room"},
+ [3]={ZELL_VAULT_HATCH,      ZELL_ART_VAULT_HATCH_OPEN,      "Vault"},
+ [4]={ZELL_WORKSHOP_HATCH,   ZELL_ART_WORKSHOP_HATCH_OPEN,   "Workshop"},
+ [5]={ZELL_GAME_HATCH,       ZELL_ART_GAME_HATCH_OPEN,       "Game room"},
+ [6]={ZELL_THEATER_HATCH,    ZELL_ART_THEATER_HATCH_OPEN,    "Movie theater"},
+ [7]={ZELL_MEDITATION_HATCH, ZELL_ART_MEDITATION_HATCH_OPEN, "Meditation"},
+ [8]={ZELL_LIBRARY_HATCH,    ZELL_ART_LIBRARY_HATCH_OPEN,    "Library"}
+};
+int zell_hatch_room(int station){
+ for(int room=1;room<=ZELL_DOWNSTAIRS_ROOMS;room++)
+  if(zell_cave_hatches[room].station==station)return room;
  return 0;
-}
-static int cave_hatch_for(int room){
- if(room==1)return 13;
- if(room==2)return 14;
- if(room==3)return 42;
- if(room==4)return 43;
- if(room==5)return ZELL_GAME_HATCH;
- if(room==6)return ZELL_THEATER_HATCH;
- if(room==7)return ZELL_MEDITATION_HATCH;
- if(room==8)return ZELL_LIBRARY_HATCH;
- return 13;
 }
 static void open_station(zell_scene *s,int n){
  if(n==ZELL_WORKSHOP_COMPUTER){workshop_begin_hop(s);return;}
  s->running=false;s->run_charge=0;s->run_blocked=true;s->station=n;s->menu_index=0;s->menu_hold=0;
- if(n==28||downstairs_room(n)){
-  if(n==28){int hatch=cave_hatch_for(s->room);s->room=0;s->x=zell_stations[hatch].x*ZELL_WORLD_W;s->y=zell_stations[hatch].y*ZELL_WORLD_H+50;}
-  else {s->room=downstairs_room(n);s->x=ZELL_WORLD_W*.50f;s->y=ZELL_WORLD_H*ZELL_ROOM_ENTRY_Y;}
+ int room=zell_hatch_room(n);
+ if(n==28||room){
+  if(n==28){
+   int hatch=s->room>=1&&s->room<=ZELL_DOWNSTAIRS_ROOMS?zell_cave_hatches[s->room].station:ZELL_COMMAND_HATCH;
+   s->room=0;s->x=zell_stations[hatch].x*ZELL_WORLD_W;s->y=zell_stations[hatch].y*ZELL_WORLD_H+50;
+  }else{s->room=room;s->x=ZELL_WORLD_W*.50f;s->y=ZELL_WORLD_H*ZELL_ROOM_ENTRY_Y;}
   /* The glass waits for a new confirmed read. The toggle does not guess. */
   if(s->room==1){s->coding_yolo_ready=false;s->coding_yolo_refresh=true;}
   s->mode=ZELL_MODE_WALK;s->step_ticks=0;s->desktop_launch=false;return;
@@ -601,17 +597,26 @@ void zell_terminal_restore(zell_scene *s){
  workshop_mirror_terminal(s);
 }
 static bool rect_holds(const zell_rect *r,int x,int y){return x>=r->x&&x<r->x+r->w&&y>=r->y&&y<r->y+r->h;}
-/* Same foot as desktop_hatch: 14px under the station point, centered on x.
- * The open cell is taller, so the hit uses whichever sheet is present. */
-static void hatch_world_rect(int station,zell_rect *hit){
- const zell_station *p=&zell_stations[station];
- int x=(int)(p->x*(float)ZELL_WORLD_W),y=(int)(p->y*(float)ZELL_WORLD_H);
- int closed=p->art,open=closed+(ZELL_ART_GAME_HATCH_OPEN-ZELL_ART_GAME_HATCH);
- const zell_art *a=zell_art_get(closed),*b=zell_art_get(open);
- int height=76,width=76;
- if(a&&a->height>0){height=a->height;width=height*a->width/a->height;}
- if(b&&b->height>height){height=b->height;if(b->width>0)width=height*b->width/b->height;}
- hit->x=x-width/2;hit->y=y+14-height;hit->w=width;hit->h=height;
+static zell_rect hatch_world_rect(const zell_station *station,const zell_art *art){
+ int x=(int)(station->x*(float)ZELL_WORLD_W),y=(int)(station->y*(float)ZELL_WORLD_H);
+ int w=art?art->width:76,h=art?art->height:76;
+ return (zell_rect){x-w/2,y+ZELL_HATCH_FOOT_OFFSET-h,w,h};
+}
+static int clicked_hatch(const zell_scene *s,int x,int y){
+ int near=zell_desktop_near(s),margin=-1;
+ /* A raised lid can reach the row above. Prefer the painted sprite at
+  * the pointer, in front-to-back order, then the forgiving frame bounds. */
+ for(int room=ZELL_DOWNSTAIRS_ROOMS;room>0;room--){
+  const zell_cave_hatch *hatch=&zell_cave_hatches[room];
+  const zell_station *p=&zell_stations[hatch->station];
+  const zell_art *art=zell_art_get(hatch->station==near?hatch->open_art:p->art);
+  zell_rect drawn=hatch_world_rect(p,art);
+  if(!rect_holds(&drawn,x,y))continue;
+  if(art&&(art->pixels[(y-drawn.y)*drawn.w+x-drawn.x]>>24)>32)
+   return hatch->station;
+  if(margin<0)margin=hatch->station;
+ }
+ return margin;
 }
 void zell_monitor_layout(int screen,zell_rect *frame,zell_rect *display){
  if(screen<0||screen>=5){*frame=*display=(zell_rect){0};return;}
@@ -684,11 +689,8 @@ bool zell_desktop_click(zell_scene *s){
    zell_rect hit={88+i*21,298,21,77};
    if(rect_holds(&hit,ix,iy)){s->mouse_click=false;open_station(s,ids[i]);return true;}
   }
-  for(int station=ZELL_GAME_HATCH;station<=ZELL_LIBRARY_HATCH;station++){
-   zell_rect hit;hatch_world_rect(station,&hit);
-   if(!rect_holds(&hit,ix,iy))continue;
-   s->mouse_click=false;open_station(s,station);return true;
-  }
+  int hatch=clicked_hatch(s,ix,iy);
+  if(hatch>=0){s->mouse_click=false;open_station(s,hatch);return true;}
  }
  if(s->room!=1)return false;
  for(int i=0;i<3;i++){

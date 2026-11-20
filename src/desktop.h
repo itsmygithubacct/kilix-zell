@@ -16,11 +16,17 @@
 #define ZELL_WORKSHOP_COMPUTER 49
 #define ZELL_FLEET_BOARD 50
 #define ZELL_FLOOR_PANEL 51
-/* Cave hatches for the four approved rooms, one row above the old four. */
+/* Cave hatches, in the two rows leading downstairs. */
+#define ZELL_COMMAND_HATCH 13
+#define ZELL_LAUNDRY_HATCH 14
+#define ZELL_VAULT_HATCH 42
+#define ZELL_WORKSHOP_HATCH 43
 #define ZELL_GAME_HATCH 52
 #define ZELL_THEATER_HATCH 53
 #define ZELL_MEDITATION_HATCH 54
 #define ZELL_LIBRARY_HATCH 55
+#define ZELL_DOWNSTAIRS_ROOMS 8
+#define ZELL_HATCH_FOOT_OFFSET 14
 /* The Command Center's shell computer, in its bottom left corner. */
 #define ZELL_COMMAND_COMPUTER 56
 /* The Command Center's controller and four worker screens. */
@@ -42,6 +48,10 @@ typedef struct { int art, offset_x, offset_y; } zell_actor_pose;
 /* actor -1 is Kilix; 0..5 are cave staff, 6/7 Git Wizard/Pilot. */
 zell_actor_pose zell_desktop_pose(const zell_scene *s, int actor);
 extern const zell_station zell_stations[ZELL_STATIONS];
+/* Indexed by destination room (1..8). The closed art is on the station. */
+typedef struct { int station, open_art; const char *label; } zell_cave_hatch;
+extern const zell_cave_hatch zell_cave_hatches[ZELL_DOWNSTAIRS_ROOMS+1];
+int zell_hatch_room(int station);
 void zell_desktop_camera(const zell_scene *s, int *x, int *y);
 void zell_desktop_init(zell_scene *s);
 void zell_desktop_enter_hall(zell_scene *s);

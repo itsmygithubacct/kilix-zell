@@ -87,7 +87,7 @@ static void desktop_hatch(sr_canvas *c,int art,int x,int y,bool selected,const c
  /* Each cutout is compiled at the height it is drawn at. */
  const zell_art *cut=zell_art_get(art);int height=cut?cut->height:76;
  if(selected)sr_fill_ellipse(c,(float)x,(float)(y+2),54,12,0x80e5c4u,.55f);
- desktop_art(c,art,x,y+14,height);
+ desktop_art(c,art,x,y+ZELL_HATCH_FOOT_OFFSET,height);
  if(selected)desktop_label(c,x,y+28,label,0xa8f3d5u);
 }
 static void desktop_monitor(const zell_scene *s,sr_canvas *c,int index,int cx,int cy,bool selected){
@@ -387,10 +387,10 @@ static void desktop_cave(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
  for(int i=0;i<ZELL_STATIONS&&s->room==0;i++){
   if(!zell_desktop_station_visible(s,i)||zell_desktop_station_in_front(s,i)!=front)continue;
   const zell_station *p=&zell_stations[i];int x=(int)(p->x*(float)ZELL_WORLD_W)-cx,y=(int)(p->y*(float)ZELL_WORLD_H)-cy;
-  if(i>=ZELL_GAME_HATCH&&i<=ZELL_LIBRARY_HATCH){
-   int art=p->art+(i==near?(ZELL_ART_GAME_HATCH_OPEN-ZELL_ART_GAME_HATCH):0);
-   const char *label=i==ZELL_GAME_HATCH?"Game room":i==ZELL_THEATER_HATCH?"Movie theater":i==ZELL_MEDITATION_HATCH?"Meditation":"Library";
-   desktop_hatch(c,art,x,y,i==near,label);
+  int room=zell_hatch_room(i);
+  if(room){
+   const zell_cave_hatch *hatch=&zell_cave_hatches[room];
+   desktop_hatch(c,i==near?hatch->open_art:p->art,x,y,i==near,hatch->label);
    continue;
   }
   if(i>=ZELL_WORKSHOP_COMPUTER)continue;
@@ -402,7 +402,6 @@ static void desktop_cave(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
   /* The later staff stand as the first six do: a shadow, and no name until
    * Kilix is beside them, when the last line here gives it. */
   if(i>=32&&i<42){sr_fill_ellipse(c,(float)x,(float)y,23,7,0x071719u,.45f);desktop_art(c,p->art+(s->flame_tick/20+i)%4,x,y,h);}
-  if(i==13||i==14||i==42||i==43){desktop_hatch(c,p->art,x,y,i==near,i==13?"Command center":i==14?"Laundry room":i==42?"Vault":"Workshop");continue;}
   /* The lever hangs on the east wall beside the shell desk, mirrored to face
    * the room. Its interaction point stays on the reachable floor edge. */
   if(i==12){desktop_art_mirrored(c,ZELL_ART_SWITCH,x,y+22,62);if(i!=near)desktop_label(c,x,y+28,"N-SHELL",0x91e9d8u);}

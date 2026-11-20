@@ -10,9 +10,10 @@ Characters and furniture keep their size. The camera follows Kilix in those
 rooms, so a smaller pane shows less of the room. A hatch row in the cave opens
 four more rooms: the game room, the movie theater, the meditation room, and
 the library. Those rooms fit between the top bar and the status line, including
-in a large window. Walk onto a hatch to enter, and walk south through the
-doorway to return to the cave. Work areas sit along the walls, leaving the
-central floor open.
+in a large window. In both rows, the nearest hatch lifts its lid as Kilix
+approaches and closes as he walks away. Press Enter beside a hatch or click
+it to go downstairs. Walk south through the doorway to return to the cave.
+Work areas sit along the walls, leaving the central floor open.
 
 ## Start
 
@@ -355,9 +356,8 @@ library; `KILIX_ZELL_NEURONTE_DISPLAY` and `ZELL_NEURONTE_LIBRARY` can select th
 
 ### Downstairs rooms
 
-Four floor hatches lead to the **Command Center**, **Laundry**, **Vault**, and
-**Workshop**. Enter interacts;
-the downstairs stair hatch returns to the cave. The Command Center has no
+The lower row of floor hatches leads to the **Command Center**, **Vault**,
+**Workshop**, and **Laundry**, from left to right. The Command Center has no
 stairs: Kilix leaves it by walking off the bottom of its floor, anywhere
 between the Command computer in the bottom left corner and the Key Master in
 the bottom right; nothing marks that edge. Up the strip beside the screens on

@@ -752,7 +752,6 @@ static void panel_scene(zell_scene *s){
     s->room=1;s->x=768;s->y=400;s->mode=ZELL_MODE_WALK;
     zell_room_view_identity(s);
 }
-#ifndef ZELL_RENDER_NEURONTE
 static uint32_t canvas_px(const sr_canvas *c,int x,int y){return c->px[(size_t)y*(size_t)c->w+(size_t)x];}
 static int rect_diffs(const sr_canvas *a,const sr_canvas *b,zell_rect r){
     int n=0;
@@ -760,6 +759,7 @@ static int rect_diffs(const sr_canvas *a,const sr_canvas *b,zell_rect r){
         if(canvas_px(a,x,y)!=canvas_px(b,x,y))n++;
     return n;
 }
+#ifndef ZELL_RENDER_NEURONTE
 static int rim_diffs(const sr_canvas *a,const sr_canvas *b,zell_rect frame,zell_rect glass){
     int n=0;
     for(int y=frame.y;y<frame.y+frame.h;y++)for(int x=frame.x;x<frame.x+frame.w;x++){
@@ -925,6 +925,58 @@ static int hatch_rim_gap(const zell_art *art){
         for(int x=0;x<art->width;x++)if((row[x]>>24)>=128)return gap;
     }
     return -1;
+}
+
+static void test_lower_hatches(void){
+    const int stations[]={ZELL_COMMAND_HATCH,ZELL_LAUNDRY_HATCH,ZELL_VAULT_HATCH,ZELL_WORKSHOP_HATCH};
+    zell_scene s;
+    sr_canvas away,near;
+    zell_scene_init(&s,ZELL_WORLD_W,ZELL_WORLD_H);
+    zell_desktop_init(&s);
+    assert(sr_canvas_init(&away,s.width,s.height)&&sr_canvas_init(&near,s.width,s.height));
+    s.x=768;s.y=940;
+    zell_room_view_identity(&s);
+    zell_draw(&s,&away);
+    for(int i=0;i<4;i++){
+        int station=stations[i];
+        const zell_station *p=&zell_stations[station];
+        const zell_art *closed=zell_art_get(p->art);
+        assert(closed);
+        int x=(int)(p->x*ZELL_WORLD_W),y=(int)(p->y*ZELL_WORLD_H);
+        int foot=y+ZELL_HATCH_FOOT_OFFSET,top=foot-closed->height;
+        zell_rect lid={x-25,top-17,50,14},well={x-25,top+20,50,25};
+        s.x=(float)(x+84);s.y=(float)y;
+        assert(zell_desktop_near(&s)==station);
+        zell_draw(&s,&near);
+        assert(rect_diffs(&away,&near,lid)>300);
+        assert(rect_diffs(&away,&near,well)>600);
+        /* The opaque front sill stays on the same floor pixels. */
+        int checked=0;
+        for(int row=closed->height-6;row<closed->height;row++){
+            for(int col=15;col<closed->width-15;col++){
+                if((closed->pixels[row*closed->width+col]>>24)<248)continue;
+                int px=x-closed->width/2+col,py=top+row;
+                assert(pixel_gap(canvas_px(&away,px,py),canvas_px(&near,px,py))<=8);
+                checked++;
+            }
+        }
+        assert(checked>100);
+        s.x=768;s.y=940;
+        zell_draw(&s,&near);
+        assert(rect_diffs(&away,&near,lid)==0&&rect_diffs(&away,&near,well)==0);
+        /* The floor above a closed hatch becomes clickable as the lid rises. */
+        s.mouse_valid=true;
+        click_world(&s,(float)x,(float)(top-10));
+        assert(!zell_desktop_click(&s));
+        for(int opened=0;opened<=1;opened++){
+            s.x=opened?(float)(x+84):768.f;s.y=opened?(float)y:940.f;
+            click_world(&s,(float)x,(float)(opened?top-10:y-16));
+            assert(zell_desktop_click(&s)&&s.room==i+1);
+            s.room=0;s.mode=ZELL_MODE_WALK;
+            zell_room_view_identity(&s);
+        }
+    }
+    sr_canvas_free(&away);sr_canvas_free(&near);
 }
 
 static void test_four_rooms(void){
@@ -3862,6 +3914,7 @@ int main(void) {
     zell_neuronte_close();
 #endif
     test_room_fit();
+    test_lower_hatches();
     test_four_rooms();
     test_fleet_board();
     test_notice_deadlines();
