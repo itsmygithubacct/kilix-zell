@@ -25,7 +25,7 @@ SHEETS = (
     ('walk', [84] * 16),
     ('command_center', [None]),
     ('laundry', [None]),
-    ('room_props', [76, 76, 142, 142, 310, 235, 164, 62]),
+    ('room_props', [None, None, 142, 142, 310, 235, 164, 62]),
     ('staff', [128] * 8),
     ('key_master', [128] * 4),
     ('weather', [88] * 8),
@@ -33,7 +33,7 @@ SHEETS = (
     ('craft_staff', [112] * 20),
     ('vault', [None]),
     ('workshop', [None]),
-    ('extra_room_props', [76, 76, 142, 142]),
+    ('extra_room_props', [None, None, 142, 142]),
     # Delivered round-two sheets. Cells keep a shared anchor. None keeps the
     # painted cell size. Alpha cleanup still clears sub-visible glass.
     ('floor_panels', [None] * 8),
@@ -42,8 +42,7 @@ SHEETS = (
     ('workshop_stool', [None]),
     # Four rooms, appended after the stool so earlier art ids stay put.
     # None keeps the painted canvas. Foregrounds stay on that full-size
-    # anchor. main() sets hatch heights so their compiled width matches
-    # the command hatch.
+    # anchor. main() fits each hatch to the common cave hatch width.
     ('game_room', [None]),
     ('theater_room', [None]),
     ('meditation_room', [None]),
@@ -56,18 +55,14 @@ SHEETS = (
     ('cave_hatches_open', [None] * 4),
 )
 
-# Each new lid and stairwell fits the stationary sill of its original hatch.
-# In atlas order: closed sheet and cell, top and bottom of the painted well
-# as fractions of the open cutout, then the opening traced in world pixels.
+# Width in world pixels. Each Vault or Workshop entry gives the limits of its
+# painted stairwell and the outline of the opening in its original floor frame.
+CAVE_HATCH_WIDTH = 136
 CAVE_HATCH_OPENINGS = (
-    ('room_props', 0, .51, .89, ((24, 10), (111, 10), (120, 62), (82, 62),
-                                 (79, 56), (55, 56), (52, 62), (15, 62))),
-    ('extra_room_props', 0, .51, .86, ((25, 14), (111, 14), (122, 76), (86, 76),
-                                       (81, 65), (55, 65), (49, 76), (16, 76))),
-    ('extra_room_props', 1, .52, .85, ((23, 15), (112, 15), (120, 69), (77, 69),
-                                       (76, 66), (61, 66), (60, 69), (15, 69))),
-    ('room_props', 1, .535, .90, ((24, 10), (111, 10), (120, 62), (82, 62),
-                                  (79, 56), (55, 56), (52, 62), (15, 62))),
+    (.51, .86, ((25, 14), (111, 14), (122, 76), (86, 76),
+                (81, 65), (55, 65), (49, 76), (16, 76))),
+    (.52, .85, ((23, 15), (112, 15), (120, 69), (77, 69),
+                (76, 66), (61, 66), (60, 69), (15, 69))),
 )
 
 HEADER = MARK + '''#ifndef ZELL_DESKTOP_ART_H
@@ -173,12 +168,12 @@ def load_images():
                                              (y + 1) * image.height // 4))))
     images.extend(Image.open(ROOM_ASSETS / name).convert('RGBA')
                   for name in ('command-center.png', 'laundry.png'))
+    images.extend(fixed_cells('cave-hatch-panels.png', 2, 1))
     sheet = Image.open(ROOM_ASSETS / 'room-props.png').convert('RGBA')
-    for row in range(2):
-        for col in range(4):
-            images.append(cutout(sheet.crop((col * sheet.width // 4, row * sheet.height // 2,
-                                            (col + 1) * sheet.width // 4,
-                                            (row + 1) * sheet.height // 2))))
+    for cell in range(2, 8):
+        row, col = divmod(cell, 4)
+        images.append(cutout(sheet.crop((col * sheet.width // 4, row * sheet.height // 2,
+                                        (col + 1) * sheet.width // 4, (row + 1) * sheet.height // 2))))
     frames = []
     for name, rows in (('staff.png', 2), ('key-master.png', 1)):
         sheet = Image.open(ROOM_ASSETS / name).convert('RGBA')
@@ -292,10 +287,10 @@ def hatch_rim_gap(picture):
     return size[1] - solid[3]
 
 
-def open_cave_hatch(closed, height, opened, well_top, well_bottom, aperture):
+def open_cave_hatch(closed, opened, well_top, well_bottom, aperture):
     """Hang the new lid behind the original back rail and fit the stairs inside its sill."""
-    width = round(closed.width * height / closed.height)
-    base = closed.convert('RGBa').resize((width, height), Image.Resampling.LANCZOS)
+    base = closed.copy()
+    width, height = base.size
     paint = opened.convert('RGBa')
     sw, sh = paint.size
     hinge = round(well_top * sh)
@@ -321,6 +316,29 @@ def open_cave_hatch(closed, height, opened, well_top, well_bottom, aperture):
     # pixels directly so the stone, rivets and front latch are identical.
     frame.paste(base.crop((0, back, width, height)), (0, lid_height))
     return frame
+
+
+def paint_hatch_panel(frame, panel, top, bottom):
+    """Project a flat lid face between two horizontal rails of the stone hatch."""
+    left, right, y = top
+    end_left, end_right, end_y = bottom
+    x = min(left, end_left)
+    width, height = max(right, end_right) - x, end_y - y
+    scale = 4
+    size = (scale * width, scale * height)
+    tile = panel.convert('RGBA').resize(size, Image.Resampling.LANCZOS)
+    # Pillow maps output pixels back to the tile. The projected width and the
+    # left edge both vary linearly from the first rail to the second.
+    u = tile.width / (right - left)
+    taper = (end_right - end_left) / (right - left)
+    inverse = (u / scale, -u * (end_left - left) / size[1], u * (x - left),
+               0, taper, 0, 0, (taper - 1) / size[1])
+    face = tile.transform(size, Image.Transform.PERSPECTIVE, inverse, Image.Resampling.BICUBIC)
+    patch = frame.crop((x, y, x + width, end_y)).convert('RGBA')
+    patch.alpha_composite(face.resize((width, height), Image.Resampling.LANCZOS))
+    result = frame.copy()
+    result.paste(patch.convert('RGBa'), (x, y))
+    return result
 
 
 def sheet_source(name, pictures):
@@ -350,23 +368,26 @@ def main():
     for name, cells in SHEETS:
         sheets[name] = range(offset, offset + len(cells))
         offset += len(cells)
-    # The four cave hatches are drawn at one width. The Vault and Workshop
-    # hatches are squarer than the first two, so they are taller at that width.
-    command = sheets['room_props'][0]
-    width = images[command].width * heights[command] / images[command].height
-    for index in sheets['extra_room_props'][:2]:
-        heights[index] = round(width * images[index].height / images[index].width)
-    for index, (sheet, cell, top, bottom, aperture) in zip(sheets['cave_hatches_open'], CAVE_HATCH_OPENINGS):
-        closed = sheets[sheet][cell]
-        images[index] = open_cave_hatch(images[closed], heights[closed], images[index], top, bottom, aperture)
+    vault, workshop = sheets['extra_room_props'][:2]
+    command_open, vault_open, workshop_open, laundry_open = sheets['cave_hatches_open']
+    for closed, raised, opening in zip((vault, workshop), (vault_open, workshop_open), CAVE_HATCH_OPENINGS):
+        source = images[closed]
+        height = round(CAVE_HATCH_WIDTH * source.height / source.width)
+        width = round(height * source.width / source.height)
+        images[closed] = source.convert('RGBa').resize((width, height), Image.Resampling.LANCZOS)
+        images[raised] = open_cave_hatch(images[closed], images[raised], *opening)
+    # The Workshop supplies both physical poses. Only the panel between its
+    # rails changes, so the hinge, stone blocks and stairwell keep their angles.
+    for closed, raised in zip(sheets['room_props'][:2], (command_open, laundry_open)):
+        panel = images[closed]
+        images[closed] = paint_hatch_panel(images[workshop], panel, (29, 107, 24), (22, 113, 70))
+        images[raised] = paint_hatch_panel(images[workshop_open], panel, (32, 103, 16), (36, 99, 46))
     room_hatches = sheets['room_hatches']
-    command_width = max(1, round(images[command].width * heights[command] / images[command].height))
     for index in room_hatches:
-        heights[index] = round(width * images[index].height / images[index].width)
+        heights[index] = round(CAVE_HATCH_WIDTH * images[index].height / images[index].width)
         compiled_width = max(1, round(images[index].width * heights[index] / images[index].height))
-        if compiled_width != command_width:
-            raise ValueError('room hatch width %d != command hatch width %d'
-                             % (compiled_width, command_width))
+        if compiled_width != CAVE_HATCH_WIDTH:
+            raise ValueError('room hatch width %d != %d' % (compiled_width, CAVE_HATCH_WIDTH))
     compiled = [premultiplied_pixels(im, height) for im, height in zip(images, heights)]
     # Zell draws each frame from its bottom edge. Give the painted stone
     # rim the same margin in both poses, keeping the entire raised lid.

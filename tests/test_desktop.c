@@ -927,8 +927,30 @@ static int hatch_rim_gap(const zell_art *art){
     return -1;
 }
 
+/* These two doors use the Workshop's stonework and hinges. In either pose
+ * the only pixels that change are inside the room-specific lid panel. */
+static void check_hatch_panel(int art,int frame_art,zell_rect panel){
+    const zell_art *door=zell_art_get(art),*frame=zell_art_get(frame_art);
+    assert(door&&frame&&door->width==frame->width&&door->height==frame->height);
+    int changed=0;
+    for(int y=0;y<door->height;y++){
+        for(int x=0;x<door->width;x++){
+            int pixel=y*door->width+x;
+            if(door->pixels[pixel]==frame->pixels[pixel])continue;
+            assert(x>=panel.x&&x<panel.x+panel.w&&y>=panel.y&&y<panel.y+panel.h);
+            changed++;
+        }
+    }
+    assert(changed>panel.w*panel.h/2);
+}
+
 static void test_lower_hatches(void){
     const int stations[]={ZELL_COMMAND_HATCH,ZELL_LAUNDRY_HATCH,ZELL_VAULT_HATCH,ZELL_WORKSHOP_HATCH};
+    for(int room=1;room<=2;room++){
+        const zell_cave_hatch *hatch=&zell_cave_hatches[room];
+        check_hatch_panel(zell_stations[hatch->station].art,ZELL_ART_WORKSHOP_HATCH,(zell_rect){20,21,96,52});
+        check_hatch_panel(hatch->open_art,ZELL_ART_WORKSHOP_HATCH_OPEN,(zell_rect){30,14,76,34});
+    }
     zell_scene s;
     sr_canvas away,near;
     zell_scene_init(&s,ZELL_WORLD_W,ZELL_WORLD_H);
@@ -3639,7 +3661,9 @@ int main(void) {
         for(int frame=0;frame<4;frame++)assert(seen[frame]==1);
     }
     /* Large screens are clickable even when the player is across the room. */
+    zell_scene_init(&s,ZELL_WORLD_W,ZELL_WORLD_H);zell_desktop_init(&s);
     s.room=1;s.mode=ZELL_MODE_WALK;s.mouse_valid=true;
+    zell_room_view_identity(&s);
     for(int screen=0;screen<5;screen++){
         zell_rect frame,display;zell_monitor_layout(screen,&frame,&display);
         assert(frame.w>=(screen?320:420)&&display.w>=249);
@@ -3648,7 +3672,18 @@ int main(void) {
         assert(zell_desktop_click(&s)&&s.station==15+screen&&s.mode==ZELL_MODE_DESK);
         s.mode=ZELL_MODE_WALK;
     }
-    s.room=0;s.mouse_click=true;assert(!zell_desktop_click(&s));
+    /* In the cave, worker 2's screen center is empty floor. Worker 4's is
+     * on the Laundry hatch, which leads downstairs at that same point. */
+    s.room=0;zell_room_view_identity(&s);
+    {
+        zell_rect frame,display;
+        zell_monitor_layout(2,&frame,&display);
+        click_world(&s,(float)(display.x+display.w/2),(float)(display.y+display.h/2));
+        assert(!zell_desktop_click(&s));
+        zell_monitor_layout(4,&frame,&display);
+        click_world(&s,(float)(display.x+display.w/2),(float)(display.y+display.h/2));
+        assert(zell_desktop_click(&s)&&s.room==2&&s.mode==ZELL_MODE_WALK);
+    }
     zell_scene_init(&s,640,400);zell_desktop_init(&s);
     c=(zell_controls){.move_x=1};
     for (int frame=0;frame<4;frame++) {

@@ -10,6 +10,7 @@ These changes are not in the 0.1.1 runtime archive that Plebian-OS 0.2.3 pins.
 - Select the first 16 usable glyph bundles by filename even in directories with hundreds of listed bundles.
 - Keep the stone rims of the game room, movie theater, meditation and library hatches in place as their lids open and close.
 - Give the Command Center, Vault, Workshop and Laundry hatches raised lids and visible stairs. All eight cave hatches accept Enter nearby or a click.
+- Set the Command Center and Laundry lids into the same stone surround as the Workshop, at its closed and raised angles.
 - Keep the health tests independent of the machine they run on. The combined health test read the live restart check and failed wherever a newer kernel or driver was waiting. A second test covers the restart cap.
 - Compile the Neuronte objects again when a build names another Neuronte checkout or weights file. The earlier build kept the objects from the previous checkout.
 - Name the Neuronte commit 0.1.1 was reviewed against, and say where the release carries Zell.
