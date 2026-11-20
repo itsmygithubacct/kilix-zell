@@ -789,17 +789,24 @@ static void pump(zell_proc *proc, zell_turn *turn, zell_scene *scene)
     finish_output(turn, scene, status);
 }
 
-static unsigned typed_character(const kittykb_event *event)
+static size_t typed_text(const kittykb_event *event, char *out)
 {
-    if (event->text_length > 0 && event->text[0] >= 32 && event->text[0] <= 126) {
-        return event->text[0];
+    size_t count = 0;
+    if (event->text_length > 0) {
+        for (size_t i = 0; i < event->text_length; i++) {
+            if (event->text[i] >= 32 && event->text[i] <= 126)
+                out[count++] = (char)event->text[i];
+        }
+        return count;
     }
     if ((event->modifiers & KITTYKB_MOD_SHIFT) != 0 &&
         event->shifted_key >= 32 && event->shifted_key <= 126) {
-        return event->shifted_key;
+        out[0] = (char)event->shifted_key;
+        return 1;
     }
     if (event->key >= 32 && event->key <= 126) {
-        return event->key;
+        out[0] = (char)event->key;
+        return 1;
     }
     return 0;
 }
@@ -983,7 +990,10 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
                      kittykb_input_key_down(&keyboard.input, (uint32_t)'S')))) {
         controls->move_y += 1;
     }
-    while (next_key(&event)) {
+    /* A text field may take many edits per frame. Stop at a command so
+     * later keys are interpreted in the screen that the command opens. */
+    size_t edits = 0;
+    while (sizeof controls->edits - edits > KITTYKB_MAX_TEXT_CODEPOINTS && next_key(&event)) {
         if (event.action == KITTYKB_ACTION_RELEASE) {
             continue;
         }
@@ -1008,15 +1018,12 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
         } else if (event.key == KITTYKB_KEY_F11 &&
                    event.action == KITTYKB_ACTION_PRESS) {
             controls->fullscreen_key = true;
-        } else if (event.key == KITTYKB_KEY_BACKSPACE &&
-                   typing) {
-            controls->backspace = true;
-        } else if (typing) {
-            unsigned character = typed_character(&event);
-            if (character != 0) {
-                controls->character = character;
-            }
+        } else if (typing && !page_keys) {
+            if (event.key == KITTYKB_KEY_BACKSPACE) controls->edits[edits++] = '\b';
+            else edits += typed_text(&event, controls->edits + edits);
         }
+        if (page_keys || controls->launcher || controls->cancel || controls->confirm || controls->fullscreen_key)
+            break;
     }
 }
 

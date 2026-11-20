@@ -1269,7 +1269,7 @@ static void test_theater(void){
     assert(nrow>=1&&rows[0].w>0);
     s.mouse_click=true;s.mouse_x=rows[0].x+2;s.mouse_y=rows[0].y+2;
     assert(zell_desktop_click(&s)&&zell_theater_typing(&s));
-    memset(&c,0,sizeof c);c.character='f';
+    memset(&c,0,sizeof c);strcpy(c.edits,"f");
     assert(zell_desktop_tick(&s,&c)==1&&!zell_theater_fullscreen());
     memset(&c,0,sizeof c);c.confirm=true;
     assert(zell_desktop_tick(&s,&c)==1);
@@ -3497,7 +3497,7 @@ int main(void) {
     c=(zell_controls){.confirm=true};zell_scene_tick(&s,&c);
     assert(s.service_send&&strcmp(s.service_reply,"1\n")==0&&s.service_phase==0);
     s.service_send=false;s.service_phase=1;
-    c=(zell_controls){.character='a'};zell_scene_tick(&s,&c);
+    c=(zell_controls){.edits="a"};zell_scene_tick(&s,&c);
     assert(strcmp(s.service_input,"a")==0);
     c=(zell_controls){.cancel=true};zell_scene_tick(&s,&c);
     assert(s.service_send&&s.service_reply[0]==27);

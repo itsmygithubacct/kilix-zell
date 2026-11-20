@@ -1007,26 +1007,24 @@ static void th_send_key(zell_scene *s,const zell_controls *c){
     if(n>0&&(size_t)n<sizeof line)zell_theater_submit(s,line);
 }
 int zell_theater_input(zell_scene *s,const zell_controls *c){
-    char *field;
-    size_t cap,n;
     th_pump(s);
     if(!s||!c)return 0;
     /* The station terminal owns the keyboard, including phase 5. */
     if(s->mode==ZELL_MODE_SERVICE)return 0;
+    bool editing=th.focus&&c->edits[0];
+    if(editing){
+        if(th.focus==2)zell_edit_text(th.url,sizeof th.url,c->edits);
+        else zell_edit_text(th.path,sizeof th.path,c->edits);
+    }
     if(th.fullscreen&&c->cancel){th_set_fullscreen(s,false);return 1;}
     if(c->fullscreen_key&&(th.items>0||th.fullscreen||th.menu)){th_set_fullscreen(s,!th.fullscreen);return 1;}
     if(th.focus&&c->cancel){th.focus=0;return 1;}
     if(th.page_keys&&th.browser[0]&&!th.focus&&c->key_press){th_send_key(s,c);return 1;}
-    if(th.focus&&(c->backspace||(c->character>=32&&c->character<127)||c->confirm)){
-        field=th.focus==2?th.url:th.path;
-        cap=th.focus==2?sizeof th.url:sizeof th.path;
-        n=strlen(field);
-        if(c->backspace){if(n)field[n-1]=0;}
-        else if(c->character>=32&&c->character<127){if(n+1<cap){field[n]=(char)c->character;field[n+1]=0;}}
-        else if(th.focus==1)th_open_path(s,"file",th.path);
+    if(th.focus&&c->confirm){
+        if(th.focus==1)th_open_path(s,"file",th.path);
         return 1;
     }
-    return 0;
+    return editing;
 }
 bool zell_theater_typing(const zell_scene *s){(void)s;return th.focus==1||th.focus==2;}
 void zell_theater_shutdown(void){

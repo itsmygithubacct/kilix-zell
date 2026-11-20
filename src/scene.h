@@ -86,8 +86,8 @@ typedef struct zell_controls {
     bool launcher;
     bool confirm;
     bool cancel;
-    bool backspace;
-    unsigned character;
+    /* Printable ASCII and backspaces in the order they were typed. */
+    char edits[256];
     /* F11. Letter f stays a typed character for theater fields. */
     bool fullscreen_key;
     /* One press for the focused theater browser. Releases are not forwarded. */
@@ -224,6 +224,7 @@ void zell_switch_point(int width, int height, float *x, float *y);
 bool zell_near_switch(const zell_scene *scene);
 
 /* One simulation step. True when Kilix has walked off the bottom. */
+bool zell_edit_text(char *field, size_t capacity, const char *edits);
 bool zell_scene_tick(zell_scene *scene, const zell_controls *controls);
 
 bool zell_scene_take_request(zell_scene *scene, zell_request *request);

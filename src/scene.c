@@ -481,16 +481,23 @@ static void move_menu(zell_scene *scene, int delta)
     }
 }
 
-static void type_character(zell_scene *scene, unsigned character)
+bool zell_edit_text(char *field, size_t capacity, const char *edits)
 {
-    if (character < 32 || character > 126) {
-        return;
+    if (!edits[0]) return false;
+    size_t length = strlen(field);
+    bool changed = false;
+    for (; *edits; edits++) {
+        if (*edits == '\b' && length > 0) {
+            length--;
+        } else if (*edits >= ' ' && *edits <= '~' && length + 1 < capacity) {
+            field[length++] = *edits;
+        } else {
+            continue;
+        }
+        changed = true;
     }
-    if (scene->question_len >= (int)sizeof scene->question - 1) {
-        return;
-    }
-    scene->question[scene->question_len++] = (char)character;
-    scene->question[scene->question_len] = '\0';
+    field[length] = '\0';
+    return changed;
 }
 
 /* One crossing burns for a little over a second and costs a heart now,
@@ -628,6 +635,10 @@ bool zell_scene_tick(zell_scene *scene, const zell_controls *controls)
         }
         return end_tick(scene);
     }
+    if ((scene->mode == ZELL_MODE_TYPE || scene->mode == ZELL_MODE_QUESTION) &&
+        zell_edit_text(scene->question, sizeof scene->question, controls->edits)) {
+        scene->question_len = (int)strlen(scene->question);
+    }
     if (controls->cancel) {
         if (scene->mode == ZELL_MODE_TYPE) {
             scene->mode = ZELL_MODE_QUESTION;
@@ -666,14 +677,6 @@ bool zell_scene_tick(zell_scene *scene, const zell_controls *controls)
             scene->mode = ZELL_MODE_WALK;
         }
         return end_tick(scene);
-    }
-    if (scene->mode == ZELL_MODE_TYPE || scene->mode == ZELL_MODE_QUESTION) {
-        if (controls->backspace && scene->question_len > 0) {
-            scene->question[--scene->question_len] = '\0';
-        }
-        if (controls->character != 0) {
-            type_character(scene, controls->character);
-        }
     }
     if (scene->mode == ZELL_MODE_TYPE) {
         if (controls->confirm && scene->question_len > 0) {

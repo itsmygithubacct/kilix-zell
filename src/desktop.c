@@ -417,6 +417,7 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
  if(s->mode==ZELL_MODE_SERVICE){
   /* A focused terminal keeps the Workshop seat. Movement does not hop down. */
   if(s->service_phase==5)return 1;
+  if(s->service_phase==1)zell_edit_text(s->service_input,sizeof s->service_input,c->edits);
   if(s->service_phase==4&&(c->confirm||c->cancel)){s->mode=ZELL_MODE_DESK;return 1;}
   if(c->cancel){
    if(s->service_phase==0)s->service_cancel=true;
@@ -428,11 +429,6 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
    else {s->service_scroll+=c->move_y;int limit=zell_service_scroll_limit(s);if(s->service_scroll<0)s->service_scroll=0;if(s->service_scroll>limit)s->service_scroll=limit;}
    s->menu_hold=5;
   }else if(s->menu_hold>0)s->menu_hold--;
-  if(s->service_phase==1){
-   size_t n=strlen(s->service_input);
-   if(c->backspace&&n)s->service_input[--n]=0;
-   if(c->character>=32&&c->character<=126&&n+1<sizeof s->service_input){s->service_input[n]=(char)c->character;s->service_input[n+1]=0;}
-  }
   if(c->confirm&&s->service_phase>0){
    if(s->service_phase==2)snprintf(s->service_reply,sizeof s->service_reply,"%d\n",s->service_index);
    else snprintf(s->service_reply,sizeof s->service_reply,"%s\n",s->service_phase==1?s->service_input:"");
@@ -519,12 +515,7 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
   return 1;
  }
  if(s->mode!=ZELL_MODE_DESK&&s->mode!=ZELL_MODE_LAUNCHER)return 0;
- if(s->mode==ZELL_MODE_LAUNCHER){
-  size_t len=strlen(s->launcher_query);bool changed=false;
-  if(c->backspace&&len){s->launcher_query[--len]=0;changed=true;}
-  if(c->character>=32&&c->character<=126&&len+1<sizeof s->launcher_query){s->launcher_query[len]=(char)c->character;s->launcher_query[len+1]=0;changed=true;}
-  if(changed)s->menu_index=0;
- }
+ if(s->mode==ZELL_MODE_LAUNCHER&&zell_edit_text(s->launcher_query,sizeof s->launcher_query,c->edits))s->menu_index=0;
  int count=s->mode==ZELL_MODE_LAUNCHER?zell_desktop_launcher_count(s):zell_desktop_actions(s->station);
  if(c->cancel){s->mode=ZELL_MODE_WALK;return 1;}
  if(c->move_y&&s->menu_hold==0&&count){s->menu_index=(s->menu_index+c->move_y+count)%count;s->menu_hold=9;}else if(s->menu_hold>0)s->menu_hold--;

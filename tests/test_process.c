@@ -645,6 +645,46 @@ static void desktop_input_feed(zell_scene *s,const char *bytes,size_t count){
     zell_input_sinks sinks={desktop_keys,desktop_pointer,desktop_paste,s};
     zell_input_feed(&pointer_input,&sinks,bytes,count,now_ms());
 }
+
+static void test_text_fields_receive_queued_keys(void)
+{
+    zell_scene scene;
+    zell_controls controls;
+    const char search[] = "\twiz";
+    const char reply[] = "\033[200~Roomxx\033[201~\177\177 \033[111;1;111:110:101u\r";
+
+    zell_scene_init(&scene, 960, 600);
+    zell_desktop_start(&scene);
+    kittykb_input_init(&keyboard.input);
+    desktop_input_feed(&scene, search, sizeof search - 1);
+    while (keyboard.input.queue_count) {
+        read_controls(&scene, &controls);
+        zell_scene_tick(&scene, &controls);
+    }
+    assert(scene.mode == ZELL_MODE_LAUNCHER && !strcmp(scene.launcher_query, "wiz"));
+
+    scene.mode = ZELL_MODE_SERVICE;
+    scene.service_phase = 1;
+    desktop_input_feed(&scene, reply, sizeof reply - 1);
+    while (keyboard.input.queue_count) {
+        read_controls(&scene, &controls);
+        zell_scene_tick(&scene, &controls);
+    }
+    assert(scene.service_send && !strcmp(scene.service_reply, "Room one\n"));
+
+    /* Several Kitty text events can fill a batch before the queue is empty. */
+    scene.mode = ZELL_MODE_QUESTION;
+    const char eight[] = "\033[120;1;120:120:120:120:120:120:120:120u";
+    for (int i = 0; i < 40; i++) desktop_input_feed(&scene, eight, sizeof eight - 1);
+    desktop_input_feed(&scene, "\177\177yz", 4);
+    while (keyboard.input.queue_count) {
+        read_controls(&scene, &controls);
+        zell_scene_tick(&scene, &controls);
+    }
+    assert(scene.question_len == (int)sizeof scene.question - 1);
+    assert(strspn(scene.question, "x") == sizeof scene.question - 3);
+    assert(!strcmp(scene.question + scene.question_len - 2, "yz"));
+}
 /* A paste of more than one line waits, said, for Enter; any other key, a
  * click or eight seconds drop it; Shift alone does not answer. */
 /* The Command Center's screens show Kilix panes in the floating terminal:
@@ -1038,7 +1078,7 @@ int main(void)
         assert(now_ms()<deadline);service_pump(&service,&scene);
         if(scene.service_phase==1){
             assert(strcmp(scene.service_title,"Name?")==0);
-            zell_controls control={.character='a'};zell_scene_tick(&scene,&control);
+            zell_controls control={.edits="a"};zell_scene_tick(&scene,&control);
             control=(zell_controls){.confirm=true};zell_scene_tick(&scene,&control);
         }
         struct timespec pause={.tv_nsec=1000000};nanosleep(&pause,NULL);
@@ -1120,6 +1160,7 @@ int main(void)
     assert(kittykb_input_next(&keyboard.input,&typed)&&typed.key==KITTYKB_KEY_UP);
     test_service_surfaces();
     test_app_keys();
+    test_text_fields_receive_queued_keys();
     test_paste_question();
     test_terminal_transport(&scene);
     test_menu_and_mana(&scene);
