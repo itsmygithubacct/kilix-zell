@@ -52,6 +52,7 @@ static int body_near(const zell_scene *s,float x,float y){
 static void walk_into_rect(zell_scene *s,float x0,float y0,float x1,float y1){
     float mid_x=(x0+x1)*0.5f,mid_y=(y0+y1)*0.5f;
     float goal_x=(float)ZELL_WORLD_W*0.50f,goal_y=(float)ZELL_WORLD_H*0.55f;
+    if(s->room==1){goal_x=mid_x;goal_y=y1+24.f;}
     int along_x=fabsf(goal_x-mid_x)<fabsf(goal_y-mid_y);
     float span=along_x?(x1-x0):(y1-y0);
     int steps=(int)(span/20.f);if(steps<2)steps=2;
@@ -97,9 +98,10 @@ static void walk_into_rect(zell_scene *s,float x0,float y0,float x1,float y1){
 /* Deleting the tick's zell_desktop_blocked call lets this walk pass the screen. */
 static void test_obstacles(void){
     zell_scene s;
-    static const int expect_count[5]={2,1,0,4,7};
+    static const int expect_count[5]={2,1+ZELL_FLOOR_PANELS,0,4,7};
     for(int room=0;room<5;room++){
-        place_room(&s,room,(float)ZELL_WORLD_W*.50f,(float)ZELL_WORLD_H*.80f);
+        float start_y=room==1?ZELL_COMMAND_LANDING_Y:(float)ZELL_WORLD_H*.80f;
+        place_room(&s,room,(float)ZELL_WORLD_W*.50f,start_y);
         assert(!zell_desktop_blocked(&s,s.x,s.y));
         assert(zell_desktop_block_count(&s)==expect_count[room]);
         int blocks=zell_desktop_block_count(&s);
@@ -114,12 +116,12 @@ static void test_obstacles(void){
             walk_into_rect(&s,x0,y0,x1,y1);
         }
         /* Outside the corridor the south clamp still holds, including the cave. */
-        place_room(&s,room,(float)ZELL_WORLD_W*.30f,(float)ZELL_WORLD_H*.80f);
+        place_room(&s,room,(float)ZELL_WORLD_W*.30f,start_y);
         zell_controls south={.move_y=1};
         for(int tick=0;tick<80&&s.room==room;tick++)zell_scene_tick(&s,&south);
         if(room==1||room==2)assert(s.room==0&&!s.leave);
         else assert(s.room==room&&!s.leave&&s.y<=(float)ZELL_WORLD_H*.91f+1.f);
-        place_room(&s,room,(float)ZELL_WORLD_W*.50f,(float)ZELL_WORLD_H*.80f);
+        place_room(&s,room,(float)ZELL_WORLD_W*.50f,start_y);
         int ticks=0;
         while(s.room==room&&!s.leave&&ticks<200){zell_scene_tick(&s,&south);ticks++;}
         if(room==0)assert(s.leave&&s.room==0);
@@ -161,17 +163,28 @@ static void test_obstacles(void){
     s.room_view.scale=0.5f;s.room_view.offset_x=40;s.room_view.offset_y=-15;
     assert(zell_desktop_blocked(&s,foot_x,edge-1.f));
     assert(!zell_desktop_blocked(&s,(float)ZELL_WORLD_W*.50f,(float)ZELL_WORLD_H*.84f));
-    /* Floor-panel rims are walkable. Their circles are not walls. */
-    zell_rect sw;zell_command_switch_layout(0,&sw);
-    float panel_x=(float)sw.x+(float)sw.w*0.5f;
-    float panel_y=(float)sw.y+(float)sw.h*0.5f;
-    place_room(&s,1,panel_x,(float)sw.y-4.f);
-    assert(!zell_desktop_blocked(&s,s.x,s.y));
-    assert(!zell_desktop_blocked(&s,panel_x,panel_y));
-    zell_controls across={.move_y=1};
-    /* He stops short of the room's open bottom edge, which would take him out. */
-    for(int tick=0;tick<80&&s.y<=880.f;tick++)zell_scene_tick(&s,&across);
-    assert(s.room==1&&s.y>880.f);
+    /* A sprint from either side of each panel stops clear of the frame. */
+    for(int i=0;i<ZELL_FLOOR_PANELS;i++){
+        zell_rect panel;zell_floor_panel_layout(i,&panel,NULL);
+        float cx=(float)panel.x+(float)panel.w*.5f;
+        float front=(float)(panel.y+panel.h+ZELL_FOOT_RADIUS_Y);
+        float back=(float)(panel.y-ZELL_FOOT_RADIUS_Y);
+        place_room(&s,1,cx,ZELL_COMMAND_LANDING_Y);
+        zell_controls up={.move_y=-1,.run=true};
+        for(int tick=0;tick<25;tick++)zell_scene_tick(&s,&up);
+        assert(s.room==1&&s.x==cx&&s.y>=front&&s.y<front+ZELL_WALK_SPEED&&!s.running);
+        zell_controls slide={.move_x=1,.move_y=-1,.run=true};
+        for(int tick=0;tick<8;tick++)zell_scene_tick(&s,&slide);
+        assert(s.x>cx+10.f&&s.y>=front&&s.y<front+ZELL_WALK_SPEED);
+        if(i<2){
+            zell_controls use={.confirm=true};zell_scene_tick(&s,&use);
+            assert(s.station==46+i&&s.mode==ZELL_MODE_DESK&&s.desktop_launch);
+        }
+        place_room(&s,1,cx,back-12.f);
+        zell_controls down={.move_y=1,.run=true};
+        for(int tick=0;tick<25;tick++)zell_scene_tick(&s,&down);
+        assert(s.room==1&&s.x==cx&&s.y<back&&s.y>=back-ZELL_WALK_SPEED&&!s.running);
+    }
     /* The DJ, the librarian, and the workshop seat stay reachable. */
     place_room(&s,0,960.f,820.f);
     assert(!zell_desktop_blocked(&s,s.x,s.y));
@@ -840,7 +853,7 @@ static void test_floor_panels(void){
     s.mouse_x=spare.x+spare.w/2;s.mouse_y=spare.y+4;
     assert(zell_desktop_click(&s)&&s.station==3&&s.mode==ZELL_MODE_WALK&&!s.desktop_launch&&!s.mouse_click);
     s.x=zell_stations[ZELL_FLOOR_PANEL].x*(float)ZELL_WORLD_W;
-    s.y=zell_stations[ZELL_FLOOR_PANEL].y*(float)ZELL_WORLD_H;
+    s.y=zell_stations[ZELL_FLOOR_PANEL].y*(float)ZELL_WORLD_H+ZELL_FOOT_RADIUS_Y;
     assert(zell_desktop_near(&s)==ZELL_FLOOR_PANEL);
     c=(zell_controls){.confirm=true};zell_scene_tick(&s,&c);
     assert(s.station==ZELL_FLOOR_PANEL&&s.mode==ZELL_MODE_WALK&&!s.desktop_launch);
@@ -2084,6 +2097,13 @@ static void test_command_openings(void){
             assert(s.room==1&&!s.command_focus&&s.x==ZELL_WORLD_W*.5f);
             assert(s.y>=ZELL_COMMAND_OPENING_TOP&&s.y<ZELL_COMMAND_OPENING_BOTTOM);
             if(route==2){
+                /* The narrow center seam stops him. Go around the outer end
+                 * of the panel row and follow the wall to the same tunnel. */
+                zell_rect panel;zell_floor_panel_layout(2,&panel,NULL);
+                for(int i=0;i<100;i++)zell_scene_tick(&s,&north);
+                float front=(float)(panel.y+panel.h+ZELL_FOOT_RADIUS_Y);
+                assert(s.y>=front&&s.y<front+ZELL_WALK_SPEED);
+                for(int i=0;i<250&&fminf(s.x,ZELL_WORLD_W-s.x)>ZELL_COMMAND_RETURN_X;i++)zell_scene_tick(&s,&out);
                 for(int i=0;i<150;i++)zell_scene_tick(&s,&north);
                 assert(s.y>=edge&&s.y<edge+ZELL_WALK_SPEED);
                 for(int i=0;i<500;i++)zell_scene_tick(&s,&out);
@@ -2118,7 +2138,7 @@ static void test_command_openings(void){
         for(int i=0;i<40;i++)zell_scene_tick(&s,&out);
         assert(s.room==1&&fminf(s.x,ZELL_WORLD_W-s.x)>=ZELL_COMMAND_SIDE_WALL);
     }
-    assert(zell_desktop_block_count(&s)==1&&zell_desktop_north(1)==edge);
+    assert(zell_desktop_block_count(&s)==1+ZELL_FLOOR_PANELS&&zell_desktop_north(1)==edge);
     place_room(&s,1,ZELL_WORLD_W*.4f,ZELL_WORLD_H*.95f);
     for(int i=0;i<40&&s.room==1;i++)zell_scene_tick(&s,&south);
     assert(s.room==0&&!s.leave);

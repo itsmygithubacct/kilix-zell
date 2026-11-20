@@ -39,6 +39,9 @@
 #define ZELL_SWITCH_WALL_DY 6
 #define ZELL_WALK_SPEED 4.0f
 #define ZELL_RUN_SPEED 10.0f
+/* Kilix's planted feet, in world pixels around his position. */
+#define ZELL_FOOT_RADIUS_X 17
+#define ZELL_FOOT_RADIUS_Y 5
 #define ZELL_MODE_DESK 6
 #define ZELL_MODE_LAUNCHER 7
 #define ZELL_MODE_SERVICE 8
@@ -68,7 +71,7 @@ bool zell_desktop_station_visible(const zell_scene *s,int station);
 #define ZELL_STAIRS_CUTOUT_Y .87f
 #define ZELL_ROOM_ENTRY_Y .78f
 bool zell_desktop_on_stairs(const zell_scene *s);
-/* World-unit footprints. Screens come from the command layout, not a second table. */
+/* World-unit footprints. The Command Center uses its wall and floor-panel layouts. */
 bool zell_desktop_blocked(const zell_scene *s,float x,float y);
 /* North edge of the walkable floor. Rooms 1–4 keep the old corridor. */
 float zell_desktop_north(int room);

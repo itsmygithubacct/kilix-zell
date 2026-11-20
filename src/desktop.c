@@ -463,8 +463,8 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
     }
     for(int i=0;i<ZELL_STATIONS;i++){
      if(!zell_desktop_station_visible(s,i)||i==28||i==ZELL_WORKSHOP_COMPUTER)continue;
-     /* Only staff stand on the Command Center floor. The console bank has
-      * one footprint, and the four floor panels are flush with the stone. */
+     /* The wall and floor panels already contributed their rectangles.
+      * Only the Command Center staff need a separate body check. */
      if(s->room==1&&(i<29||i>31))continue;
      if(s->room==0&&i>=6&&!(i>=32&&i<=41))continue;
      float ax=s->x-zell_stations[i].x*ZELL_WORLD_W,ay=s->y-zell_stations[i].y*ZELL_WORLD_H;

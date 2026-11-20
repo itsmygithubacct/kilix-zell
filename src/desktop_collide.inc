@@ -1,5 +1,5 @@
 /* Furniture footprints measured from the room paintings. The Command Center
- * screen bank supplies its own surround. Floor-panel rims are not obstacles.
+ * adds the live display wall and the four floor panels below.
  * tools/room_grid.py prints this table; keep one brace per line. */
 typedef struct { int room; float x0,y0,x1,y1; } zell_block;
 static const zell_block zell_blocks[]={
@@ -30,7 +30,7 @@ static const zell_block zell_blocks[]={
 {8,1136.f,256.f,1496.f,592.f} /* library: right shelves */
 };
 #define ZELL_BLOCK_CAP 64
-_Static_assert(sizeof zell_blocks/sizeof zell_blocks[0] + 6 <= ZELL_BLOCK_CAP,
+_Static_assert(sizeof zell_blocks/sizeof zell_blocks[0] + 1 + ZELL_FLOOR_PANELS <= ZELL_BLOCK_CAP,
  "raise ZELL_BLOCK_CAP");
 typedef struct { float x0,y0,x1,y1; } zell_span;
 static bool span_has(float x,float y,float x0,float y0,float x1,float y1){
@@ -49,6 +49,13 @@ static int spans_for(const zell_scene *s,zell_span *out,int cap){
  if(s->room!=1)return n;
  zell_rect wall=zell_command_wall_bounds();
  if(n<cap)out[n++]=(zell_span){(float)wall.x,(float)wall.y,(float)(wall.x+wall.w),(float)(wall.y+wall.h)};
+ /* Movement tests the foot center. Allow for both feet at the frame edges
+  * so Kilix cannot squeeze through a gap narrower than his stance. */
+ for(int i=0;i<ZELL_FLOOR_PANELS&&n<cap;i++){
+  zell_rect panel;zell_floor_panel_layout(i,&panel,NULL);
+  out[n++]=(zell_span){(float)(panel.x-ZELL_FOOT_RADIUS_X),(float)(panel.y-ZELL_FOOT_RADIUS_Y),
+                      (float)(panel.x+panel.w+ZELL_FOOT_RADIUS_X),(float)(panel.y+panel.h+ZELL_FOOT_RADIUS_Y)};
+ }
  return n;
 }
 float zell_desktop_north(int room){

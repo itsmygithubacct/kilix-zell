@@ -372,10 +372,11 @@ The lower row of floor hatches leads to the **Command Center**, **Vault**,
 **Workshop**, and **Laundry**, from left to right. Walk off the bottom of
 the Laundry or Command Center to return to its hatch in the cave. In the
 Command Center, Git Wizard, Pilot and Key Master stand along the south edge.
-Above them, four black-glass floor panels show YOLO,
-Spare, agent updates and saved fleets. From the landing, walk straight left
-into the amber-lit tunnel for two panes, or straight right into the
-turquoise-lit tunnel for four. Both entrances are in the lower corners.
+Above them, four solid black-glass floor panels show YOLO, Spare, agent
+updates and saved fleets. Walk around either end to get behind them.
+From the landing, walk straight left into the amber-lit tunnel for two panes,
+or straight right into the turquoise-lit tunnel for four. Both entrances are
+in the lower corners.
 A pane room is one Kilix tab as wide and high as the Zell pane, past the
 1600x1000 cap the other rooms keep. Kilix can walk along the top. Above each
 pane is a button for every coding agent found on PATH. When the shell is at

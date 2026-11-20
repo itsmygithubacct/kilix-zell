@@ -498,7 +498,7 @@ static void desktop_world_layer(const zell_scene *s,sr_canvas *c,int cx,int cy){
   if(lift>0)shadow=1.f-0.55f*(float)lift/(float)ZELL_SEAT_LIFT_PEAK;
  }
  /* The shadow stays on the floor line and shrinks as the hop lifts him. */
- sr_fill_ellipse(c,s->x-(float)cx,s->y-(float)cy,17.f*shadow,5.f*shadow,0x071719u,.45f);
+ sr_fill_ellipse(c,s->x-(float)cx,s->y-(float)cy,ZELL_FOOT_RADIUS_X*shadow,ZELL_FOOT_RADIUS_Y*shadow,0x071719u,.45f);
  desktop_art(c,pose.art,(int)s->x-cx+pose.offset_x,(int)s->y-cy+pose.offset_y+seat_dy,height*3/4);
  if(s->room==4&&s->seated&&s->seat_ticks==ZELL_SEAT_HOP_TICKS)desktop_stool_front(c,cx,cy);
  if(desktop_room_foreground(s->room)>=0)desktop_registered_front(c,desktop_room_foreground(s->room),cx,cy);
