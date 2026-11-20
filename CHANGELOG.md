@@ -9,6 +9,7 @@ These changes are not in the 0.1.1 runtime archive that Plebian-OS 0.2.3 pins.
 - Register quick directional taps between frames.
 - Remove the Laundry staircase and its marker. Walking off the south edge returns Kilix to the Laundry hatch.
 - Keep the last 80 stamina remarks in Messages across restarts. The Stamina filter shows the process names from the original speech bubbles.
+- Apply conversation-history changes to open stations in every tab. Clearing the journal waits for any station report or Wizard reply already being saved.
 - Run immediately with Shift and steer while running. Increase walking and running speed throughout the desktop.
 - Add expiring process-load speech bubbles, a Messages history and an Updates panel with live maintenance terminals.
 - Equip Kilix with a bronze fire-cat shield on the standing and walking sprites.

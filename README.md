@@ -473,7 +473,8 @@ mark them done, reopen or remove them. The Noticeboard also enables, reads and
 clears conversation history. Saving full station reports and Wizard replies
 is off by default and requires a separate opt-in; Key Master and terminal
 contents are always excluded. Tasks and history use owner-only files in Zell's
-state directory. Reports can include personal information.
+state directory. Changing the conversation setting also affects stations
+already open in other tabs. Reports can include personal information.
 
 The Neuronte shell follows later pane resizes and preserves its running PTYs.
 Generated room backgrounds, hatches, stairs, monitor frames, drive bins and

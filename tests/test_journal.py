@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -15,7 +16,7 @@ import zell_journal as journal
 class JournalTests(unittest.TestCase):
     def test_opt_in_and_vault_exclusion(self):
         ui = SimpleNamespace(state_read=Mock(return_value={}), state_write=Mock())
-        self.assertIsNone(journal.recorder(ui, 1))
+        journal.recorder(ui, 1)('report', 'off by default')
         ui.state_read.return_value = {'enabled': True}
         for station in (-1, 9, 31):
             self.assertIsNone(journal.recorder(ui, station))
@@ -36,6 +37,29 @@ class JournalTests(unittest.TestCase):
                 journal.conversations(desktop)
             self.assertEqual(desktop.state_read(journal.HISTORY, []), [])
             self.assertFalse(wizard.exists())
+
+    def test_open_stations_share_history_and_honor_opt_out(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(desktop, 'BASE', Path(root)):
+            first, second = (journal.recorder(desktop, station) for station in (1, 2))
+            first('report', 'before opting in')
+            self.assertFalse((desktop.BASE/journal.HISTORY).exists())
+            with patch.object(desktop, 'choose', side_effect=['toggle', True, None]):
+                journal.conversations(desktop)
+
+            def report(i):
+                (first if i % 2 else second)('report', str(i))
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                list(pool.map(report, range(24)))
+            rows = desktop.state_read(journal.HISTORY, [])
+            self.assertCountEqual([row['text'] for row in rows], map(str, range(24)))
+            with patch.object(desktop, 'choose', side_effect=['toggle', None]):
+                journal.conversations(desktop)
+            first('report', 'after opting out')
+            self.assertEqual(desktop.state_read(journal.HISTORY, []), rows)
+            with patch.object(desktop, 'choose', side_effect=['clear', True, None]):
+                journal.conversations(desktop)
+            second('reply', 'after clearing')
+            self.assertEqual(desktop.state_read(journal.HISTORY, []), [])
 
     def test_tasks_persist_add_complete_and_remove(self):
         with tempfile.TemporaryDirectory() as root, patch.object(desktop, 'BASE', Path(root)), \

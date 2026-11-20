@@ -1,11 +1,31 @@
 """Private local tasks and opt-in station conversations; never vault content."""
+from contextlib import contextmanager
 import datetime
+import fcntl
 import json
+import os
 import uuid
 
 TASKS = 'tasks.json'
 HISTORY = 'conversations.json'
 SETTINGS = 'conversation-settings.json'
+
+
+@contextmanager
+def _conversation_lock(ui):
+    # Wizard replies use this same directory lock in history.c.
+    ui.BASE.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(ui.BASE, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
+def _enabled(ui):
+    settings = ui.state_read(SETTINGS, {})
+    return isinstance(settings, dict) and settings.get('enabled') is True
 
 
 def _rows(ui, name):
@@ -50,21 +70,22 @@ def recorder(ui, station):
     # notebook views are excluded to avoid recording vault metadata or history.
     if station in {-1, 9, 31} or station>=32:
         return None
-    settings = ui.state_read(SETTINGS, {})
-    if not isinstance(settings, dict) or settings.get('enabled') is not True:
-        return None
     def record(role, text):
-        rows = _rows(ui, HISTORY)
-        rows.append(dict(station=station, role=role, text=str(text)[:5500],
-                         time=datetime.datetime.now().isoformat(timespec='seconds')))
-        ui.state_write(HISTORY, rows[-100:])
+        if not _enabled(ui):
+            return
+        with _conversation_lock(ui):
+            # The setting may have changed while another tab held the lock.
+            if _enabled(ui):
+                rows = _rows(ui, HISTORY)
+                rows.append(dict(station=station, role=role, text=str(text)[:5500],
+                                 time=datetime.datetime.now().isoformat(timespec='seconds')))
+                ui.state_write(HISTORY, rows[-100:])
     return record
 
 
 def conversations(ui):
     while True:
-        settings = ui.state_read(SETTINGS, {})
-        enabled = isinstance(settings, dict) and settings.get('enabled') is True
+        enabled = _enabled(ui)
         action = ui.choose('Station conversations', [('Read saved conversations', 'read'),
             ('Stop saving conversations' if enabled else 'Enable local conversation history', 'toggle'),
             ('Clear saved conversations', 'clear')])
@@ -90,8 +111,10 @@ def conversations(ui):
                 'Key Master and terminal contents are always excluded. Reports may contain personal data.',
                 [('Enable history', True), ('Cancel', False)]) is not True:
                 continue
-            ui.state_write(SETTINGS, {'enabled': not enabled})
+            with _conversation_lock(ui):
+                ui.state_write(SETTINGS, {'enabled': not enabled})
         elif action == 'clear':
             if ui.choose('Clear saved conversations?', [('Cancel', False), ('Clear', True)]) is True:
-                ui.state_write(HISTORY, [])
-                (ui.BASE/'wizard-conversations.jsonl').unlink(missing_ok=True)
+                with _conversation_lock(ui):
+                    ui.state_write(HISTORY, [])
+                    (ui.BASE/'wizard-conversations.jsonl').unlink(missing_ok=True)
