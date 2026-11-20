@@ -302,7 +302,9 @@ stays open. Zell holds one floating window at a time.
 **Messages** at the bottom right collects Kilix's speech, Zell notices,
 desktop notification history and recent system journal messages. When CPU or memory
 headroom is low, Kilix occasionally names the busiest processes in a speech
-bubble. The bubble fades automatically. Use Older and Newer to read history.
+bubble. The bubble fades automatically. Choose **Stamina** in Messages to read
+Kilix's last 80 remarks, including their process names, across game restarts.
+Choose **All** for the combined history. Older and Newer scroll either list.
 
 **Updates** shows health, the elapsed days and hours since the last successful
 OS upgrade, the restart cap and the watched Git penalty. Expand **OS upgrade**

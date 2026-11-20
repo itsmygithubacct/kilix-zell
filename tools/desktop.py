@@ -499,10 +499,11 @@ def desktop(station,action):
             if spoken:
                 DIALOGUE.send('E',f'{spoken[0]}\tKilix\t{spoken[1]}')
             if time.monotonic()>=history_at:
-                rows=zell_messages.history()
-                for stamp,source,text in reversed(rows):
-                    if (stamp,source,text) not in sent and text:
-                        DIALOGUE.send('I',f'{stamp}\t{source}\t{text}')
+                rows=zell_messages.history(with_kind=True)
+                for row in reversed(rows):
+                    stamp,source,text,kind=row
+                    if row not in sent and text:
+                        DIALOGUE.send(kind,f'{stamp}\t{source}\t{text}')
                 sent=set(rows)
                 history_at=time.monotonic()+30
 

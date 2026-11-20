@@ -677,6 +677,8 @@ void zell_utility_rects(const zell_scene *s,zell_utility_layout *l){
  l->close=(zell_rect){x+bw-32,y+4,26,22};
  l->older=(zell_rect){x+bw-158,y+4,56,22};
  l->newer=(zell_rect){x+bw-98,y+4,56,22};
+ l->all=(zell_rect){x+12,y+34,44,22};
+ l->stamina=(zell_rect){x+62,y+34,78,22};
  int start=y+(h<330?77:104),row=h<420?21:25;
  int columns=h<300?2:1,cell=(bw-20)/columns;
  int rows=(ZELL_MAINT_ACTIONS+columns-1)/columns;
@@ -699,20 +701,44 @@ int zell_input_terminal(const zell_scene *s){
      ZELL_COMMAND_TERMS+s->utility_term-1:-1;
  return s->desktop&&s->room==1&&s->mode==ZELL_MODE_WALK?s->command_focus-1:-1;
 }
-void zell_message_add(zell_scene *s,int64_t stamp,const char *source,const char *text){
+static int message_view_count(const zell_scene *s){
+ if(!s->stamina_messages_only)return s->message_count;
+ int count=0;
+ for(int i=0;i<s->message_count;i++)if(s->messages[i].stamina)count++;
+ return count;
+}
+void zell_messages_scroll(zell_scene *s,int step){
+ int last=message_view_count(s)-1;
+ s->message_scroll+=step;
+ if(s->message_scroll>last)s->message_scroll=last;
+ if(s->message_scroll<0)s->message_scroll=0;
+}
+void zell_message_add(zell_scene *s,int64_t stamp,const char *source,const char *text,bool stamina){
  if(!text||!*text||stamp<=0)return;
- int pos=0;
+ int pos=0,view_pos=0,same=0,last_same=-1;
  for(int i=0;i<s->message_count;i++){
-  zell_message *m=&s->messages[i];
-  if(!strcmp(source,m->source)&&!strcmp(text,m->text)&&llabs(stamp-m->time)<10)return;
-  if(m->time>stamp)pos=i+1;
+  const zell_message *m=&s->messages[i];
+  if(m->stamina==stamina){
+   if(!strcmp(source,m->source)&&!strcmp(text,m->text)&&
+      (stamina?stamp==m->time:llabs(stamp-m->time)<10))return;
+   last_same=i;same++;
+  }
+  if(m->time>stamp){
+   pos=i+1;
+   if(!s->stamina_messages_only||m->stamina)view_pos++;
+  }
  }
- if(pos>=ZELL_MESSAGES)return;
- if(s->message_count<ZELL_MESSAGES)s->message_count++;
- memmove(&s->messages[pos+1],&s->messages[pos],(size_t)(s->message_count-pos-1)*sizeof s->messages[0]);
- zell_message *m=&s->messages[pos];m->time=stamp;
+ /* Each source group keeps its own oldest slot in this chronological list. */
+ bool full=same==(stamina?ZELL_STAMINA_MESSAGES:ZELL_SYSTEM_MESSAGES);
+ int end=full?last_same:s->message_count;
+ if(pos>end)return;
+ if(!full)s->message_count++;
+ memmove(&s->messages[pos+1],&s->messages[pos],(size_t)(end-pos)*sizeof s->messages[0]);
+ zell_message *m=&s->messages[pos];m->time=stamp;m->stamina=stamina;
  snprintf(m->source,sizeof m->source,"%.31s",source);snprintf(m->text,sizeof m->text,"%.319s",text);
- if(s->utility_panel==ZELL_MESSAGES_PANEL&&s->message_scroll>0&&pos<=s->message_scroll&&s->message_scroll<s->message_count-1)s->message_scroll++;
+ if(s->utility_panel==ZELL_MESSAGES_PANEL&&(!s->stamina_messages_only||stamina)&&
+    s->message_scroll>0&&view_pos<=s->message_scroll&&(!full||s->message_scroll<(s->stamina_messages_only?same-1:last_same)))
+  s->message_scroll++;
 }
 static bool utility_click(zell_scene *s){
  if(zell_theater_fullscreen())return false;
@@ -726,8 +752,10 @@ static bool utility_click(zell_scene *s){
  }else if(!s->utility_panel)return false;
  else if(!rect_holds(&l.box,x,y)||rect_holds(&l.close,x,y)){s->utility_panel=0;s->utility_term=0;}
  else if(s->utility_panel==ZELL_MESSAGES_PANEL){
-  if(rect_holds(&l.older,x,y)&&s->message_scroll+1<s->message_count)s->message_scroll++;
-  if(rect_holds(&l.newer,x,y)&&s->message_scroll>0)s->message_scroll--;
+  if(rect_holds(&l.all,x,y)||rect_holds(&l.stamina,x,y)){
+   s->stamina_messages_only=rect_holds(&l.stamina,x,y);s->message_scroll=0;
+  }else if(rect_holds(&l.older,x,y))zell_messages_scroll(s,1);
+  else if(rect_holds(&l.newer,x,y))zell_messages_scroll(s,-1);
  }else for(int i=0;i<ZELL_MAINT_ACTIONS;i++){
   if(!rect_holds(&l.action[i],x,y))continue;
   s->utility_term=s->utility_term==i+1?0:i+1;
@@ -1103,7 +1131,7 @@ void zell_notice_apply(zell_scene *s,const char *text){
  }
  if(s->notice_key[0]&&strcmp(incoming,s->notice_text)==0)return;
  snprintf(s->notice_text,sizeof s->notice_text,"%s",incoming);
- zell_message_add(s,(int64_t)time(NULL),"Zell",incoming);
+ zell_message_add(s,(int64_t)time(NULL),"Zell",incoming,false);
  notice_identity(s->notice_text,s->notice_key,sizeof s->notice_key);
  s->notice_until_ms=zell_notice_clock_ms()+8000;
 }

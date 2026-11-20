@@ -917,9 +917,7 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
             if(scene->utility_panel==ZELL_MESSAGES_PANEL){
                 int step=event.key==KITTYKB_KEY_DOWN?1:event.key==KITTYKB_KEY_UP?-1:
                     event.key==KITTYKB_KEY_PAGE_DOWN?5:event.key==KITTYKB_KEY_PAGE_UP?-5:0;
-                scene->message_scroll+=step;
-                if(scene->message_scroll>=scene->message_count)scene->message_scroll=scene->message_count-1;
-                if(scene->message_scroll<0)scene->message_scroll=0;
+                zell_messages_scroll(scene,step);
             }
         }
         return;

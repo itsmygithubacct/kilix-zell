@@ -33,8 +33,8 @@ enum {
     ZELL_QUESTION_CHOICES = ZELL_PRESET_COUNT + 1
 };
 
-enum { ZELL_MESSAGES=112 };
-typedef struct { int64_t time; char source[32],text[320]; } zell_message;
+enum { ZELL_SYSTEM_MESSAGES=112, ZELL_STAMINA_MESSAGES=80, ZELL_MESSAGES=ZELL_SYSTEM_MESSAGES+ZELL_STAMINA_MESSAGES };
+typedef struct { int64_t time; char source[32],text[320]; bool stamina; } zell_message;
 
 typedef struct zell_room_view {
     int logical_x, logical_y, logical_w, logical_h;
@@ -184,6 +184,7 @@ typedef struct zell_scene {
     bool seated;
     zell_room_view room_view;
     int utility_panel,utility_term,message_count,message_scroll;
+    bool stamina_messages_only;
     int64_t upgraded_at,bubble_until;
     char bubble[240];
     zell_message messages[ZELL_MESSAGES];

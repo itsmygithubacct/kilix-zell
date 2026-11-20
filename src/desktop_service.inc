@@ -31,7 +31,7 @@ static const struct { char kind; bool job; bool monitor; } zell_frame_registry[]
  {'R',true,false},{'O',true,false},{'T',true,false},
  {'G',false,true},{'H',false,true},{'F',false,true},{'U',false,true},
  {'V',false,true},{'Y',false,true},{'N',false,true},{'S',false,true},{'W',false,true},
- {'Z',false,true},{'I',false,true},{'E',false,true},
+ {'Z',false,true},{'I',false,true},{'E',false,true},{'e',false,true},
  {'A',false,true},{'J',false,true},{'D',false,true},{'B',false,true}
 };
 static int frame_origin_allowed(char kind,int origin){
@@ -125,11 +125,12 @@ static void service_frame(zell_scene *s,char *frame,int origin,int slot,int gene
             if(end!=decoded&&!*end&&stamp>=0)s->upgraded_at=stamp;
             return;
         }
-        if(kind=='I'||kind=='E'){
+        /* E speaks now. A lowercase e restores the same remark silently. */
+        if(kind=='I'||kind=='E'||kind=='e'){
             char *source,*body;long long stamp=strtoll(decoded,&source,10);
             if(stamp<=0||*source!='\t')return;
             body=strchr(++source,'\t');if(!body)return;
-            *body++=0;zell_message_add(s,stamp,source,body);
+            *body++=0;zell_message_add(s,stamp,source,body,kind!='I');
             if(kind=='E'){snprintf(s->bubble,sizeof s->bubble,"%.239s",body);s->bubble_until=zell_notice_clock_ms()+8500;}
             return;
         }

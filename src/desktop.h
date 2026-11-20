@@ -92,11 +92,12 @@ enum { ZELL_COMMAND_TERMS=6, ZELL_COMMAND_SHELL=5, ZELL_FLOOR_PANELS=4, ZELL_MAI
        ZELL_ALL_TERMS=ZELL_COMMAND_TERMS+ZELL_MAINT_ACTIONS };
 enum { ZELL_MESSAGES_PANEL=1, ZELL_UPDATES_PANEL=2 };
 typedef struct {
- zell_rect messages,updates,box,close,older,newer,action[ZELL_MAINT_ACTIONS],body;
+ zell_rect messages,updates,box,close,older,newer,all,stamina,action[ZELL_MAINT_ACTIONS],body;
 } zell_utility_layout;
 void zell_utility_rects(const zell_scene *s,zell_utility_layout *layout);
 bool zell_utility_hit(const zell_scene *s,int x,int y);
-void zell_message_add(zell_scene *s,int64_t stamp,const char *source,const char *text);
+void zell_message_add(zell_scene *s,int64_t stamp,const char *source,const char *text,bool stamina);
+void zell_messages_scroll(zell_scene *s,int step);
 int zell_input_terminal(const zell_scene *s);
 void zell_command_term_layout(int index,zell_rect *frame,zell_rect *body);
 zell_rect zell_command_wall_bounds(void);

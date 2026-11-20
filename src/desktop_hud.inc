@@ -69,16 +69,22 @@ static void desktop_utilities(const zell_scene *s,sr_canvas *c){
  hud_button(c,l.close,"X",false);
  if(s->utility_panel==ZELL_MESSAGES_PANEL){
   hud_button(c,l.older,"Older",false);hud_button(c,l.newer,"Newer",false);
-  int y=b.y+38;
-  if(!s->message_count)desktop_text(c,b.x+12,y,"No messages yet",0xaabdc0u,b.w-24);
-  for(int i=s->message_scroll;i<s->message_count&&y+36<b.y+b.h;i++){
-   const zell_message *m=&s->messages[i];time_t stamp=(time_t)m->time;
+  hud_button(c,l.all,"All",!s->stamina_messages_only);
+  hud_button(c,l.stamina,"Stamina",s->stamina_messages_only);
+  int y=b.y+65,skip=s->message_scroll;
+  bool any=false;
+  for(int i=0;i<s->message_count&&y+36<b.y+b.h;i++){
+   const zell_message *m=&s->messages[i];
+   if(s->stamina_messages_only&&!m->stamina)continue;
+   if(skip>0){skip--;continue;}
+   any=true;time_t stamp=(time_t)m->time;
    char when[32]="",head[80];struct tm local;
    if(localtime_r(&stamp,&local))strftime(when,sizeof when,"%b %d %H:%M",&local);
-   snprintf(head,sizeof head,"%s   %s",when,m->source);
+   snprintf(head,sizeof head,"%s   %s%s",when,m->source,m->stamina?" (stamina)":"");
    desktop_text(c,b.x+12,y,head,0x8bc5b0u,b.w-24);
    y=hud_wrap(c,b.x+12,y+18,b.w-24,b.y+b.h-5,m->text,0xe1e6e2u)+10;
   }
+  if(!any)desktop_text(c,b.x+12,y,s->stamina_messages_only?"No stamina remarks yet":"No messages yet",0xaabdc0u,b.w-24);
   return;
  }
  int x=b.x+12,y=b.y+34;

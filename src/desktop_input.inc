@@ -73,9 +73,7 @@ static void desktop_pointer(void *user,unsigned buttons,int x,int y,bool release
  /* Left press only: not motion (32), wheel (64) or extra buttons (128). */
  if(!release&&!(buttons&(3u|32u|64u|128u)))s->mouse_click=true;
  if(s->utility_panel==ZELL_MESSAGES_PANEL&&(buttons&64u)&&!release){
-  s->message_scroll+=(buttons&1u)?1:-1;
-  if(s->message_scroll>=s->message_count)s->message_scroll=s->message_count-1;
-  if(s->message_scroll<0)s->message_scroll=0;
+  zell_messages_scroll(s,(buttons&1u)?1:-1);
  }
  if(!s->utility_panel&&!zell_utility_hit(s,s->mouse_x,s->mouse_y)&&ZELL_ROOM_IS_PANES(s->room))(void)zell_panes_pointer(s,buttons,s->mouse_x,s->mouse_y,release);
 }

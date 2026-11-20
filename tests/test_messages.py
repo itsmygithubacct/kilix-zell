@@ -59,6 +59,16 @@ class Messages(unittest.TestCase):
         with patch.object(messages,'program_json',return_value=system),patch.object(messages.shutil,'which',return_value='journalctl'):
             self.assertEqual(messages.history(),[(4,'systemd','Service ready'),(3,'Calendar','Meeting Room 4'),(2,'Zell','Job finished')])
 
+    def test_stamina_remarks_replay_after_a_busy_system_history(self):
+        text='Memory is tight. renderer uses the most RAM.'
+        zell_os.write_state('speech-history.json',[{'time':i,'text':text} for i in range(1,85)])
+        zell_os.write_state('notices.json',[{'time':300+i,'text':f'Job {i}'} for i in range(80)])
+        notices=[(200+i,'Desktop',f'Event {i}') for i in range(40)]
+        with patch.object(messages,'notification_rows',return_value=notices),patch.object(messages.shutil,'which',return_value=None):
+            rows=messages.history(with_kind=True)
+        self.assertEqual(sum(kind=='I' for _,_,_,kind in rows),100)
+        self.assertEqual([row for row in rows if row[3]=='e'],[(i,'Kilix',text,'e') for i in range(84,4,-1)])
+
     def test_maintenance_uses_selected_action_and_cache_browser_stays_in_root(self):
         with patch('zell_update.main',return_value=7) as upgrade, patch.object(maintenance.subprocess,'call',return_value=0) as call:
             self.assertEqual(maintenance.main('upgrade'),7)

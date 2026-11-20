@@ -49,7 +49,17 @@ def notification_rows():
             pass
 
 
-def history():
+SPEECH_LIMIT = 80
+
+
+def saved_rows(filename, source, kind, limit):
+    records = read_state(filename, [])
+    for row in records[-limit:] if isinstance(records, list) else ():
+        if isinstance(row, dict) and isinstance(row.get('time'), (int, float)) and isinstance(row.get('text'), str):
+            yield int(row['time']), source, clean(row['text']), kind
+
+
+def history(*, with_kind=False):
     rows = list(notification_rows())
     if shutil.which('journalctl'):
         lines = program_json(['journalctl','-q','-b','-n','36','--no-pager','-o','json'])
@@ -60,12 +70,13 @@ def history():
                              clean(row.get('SYSLOG_IDENTIFIER') or 'System',24), clean(row['MESSAGE'])))
             except (ValueError, KeyError, TypeError):
                 continue
-    for filename, source in (('notices.json','Zell'), ('speech-history.json','Kilix')):
-        records = read_state(filename, [])
-        for row in records[-80:] if isinstance(records,list) else []:
-            if isinstance(row,dict) and isinstance(row.get('time'),(int,float)) and isinstance(row.get('text'),str):
-                rows.append((int(row['time']), source, clean(row['text'])))
-    return sorted(set(rows),reverse=True)[:100]
+    recent = {(stamp, source, text, 'I') for stamp, source, text in rows}
+    recent.update(saved_rows('notices.json', 'Zell', 'I', 80))
+    # A busy journal must leave room for the character's saved remarks.
+    retained = sorted(recent, reverse=True)[:100]
+    retained.extend(saved_rows('speech-history.json', 'Kilix', 'e', SPEECH_LIMIT))
+    retained.sort(reverse=True)
+    return retained if with_kind else [row[:3] for row in retained]
 
 
 class StaminaSpeech:
@@ -111,7 +122,7 @@ class StaminaSpeech:
             stamp = int(time.time())
             with locked():
                 rows = read_state('speech-history.json',[])
-                write_state('speech-history.json',((rows if isinstance(rows,list) else [])+[{'time':stamp,'text':text}])[-80:])
+                write_state('speech-history.json',((rows if isinstance(rows,list) else [])+[{'time':stamp,'text':text}])[-SPEECH_LIMIT:])
             self.last_spoke = now
             return stamp,text
         except (OSError, ValueError, IndexError, KeyError, ZeroDivisionError):

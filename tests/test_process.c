@@ -559,6 +559,8 @@ static void test_contract_frames(zell_scene *scene){
     send_text(&mon,&mon_svc,scene,'E',"101\tKilix\tMemory is tight. editor uses the most RAM.");
     assert(scene->message_count==messages+2&&strstr(scene->bubble,"editor"));
     assert(scene->bubble_until>zell_notice_clock_ms());
+    send_text(&mon,&mon_svc,scene,'e',"101\tKilix\tMemory is tight. editor uses the most RAM.");
+    assert(scene->message_count==messages+2);
     expect_numeric_menu(scene);
     assert(scene->provider_count==0&&scene->provider_generation==0);
     assert(scene->provider_check_generation==0&&scene->provider_check_running==0);
@@ -686,6 +688,37 @@ static void test_contract_frames(zell_scene *scene){
 static void desktop_input_feed(zell_scene *s,const char *bytes,size_t count){
     zell_input_sinks sinks={desktop_keys,desktop_pointer,desktop_paste,s};
     zell_input_feed(&pointer_input,&sinks,bytes,count,now_ms());
+}
+
+static void test_stamina_messages(void){
+    zell_scene s;
+    zell_scene_init(&s,960,680);zell_desktop_init(&s);
+    frame_peer peer=frame_peer_open();
+    desktop_service monitor=peer_service(&peer,true);
+    const char *remark="Memory is tight. editor uses the most RAM.";
+    send_text(&peer,&monitor,&s,'e',"100\tKilix\tMemory is tight. editor uses the most RAM.");
+    assert(!s.bubble[0]&&s.message_count==1&&s.messages[0].stamina&&!strcmp(s.messages[0].text,remark));
+    send_text(&peer,&monitor,&s,'E',"104\tKilix\tMemory is tight. editor uses the most RAM.");
+    assert(!strcmp(s.bubble,remark)&&s.message_count==2);
+    zell_notice_set_clock(s.bubble_until+1);
+    for(int i=0;i<ZELL_SYSTEM_MESSAGES+20;i++){
+        char text[32];snprintf(text,sizeof text,"Event %d",i);
+        zell_message_add(&s,200+i,"journal",text,false);
+    }
+    assert(s.message_count==ZELL_SYSTEM_MESSAGES+2);
+    zell_utility_layout dock;zell_utility_rects(&s,&dock);
+    s.mouse_valid=s.mouse_click=true;s.mouse_x=dock.messages.x+5;s.mouse_y=dock.messages.y+5;
+    assert(zell_desktop_click(&s)&&s.utility_panel==ZELL_MESSAGES_PANEL);
+    s.mouse_click=true;s.mouse_x=dock.stamina.x+5;s.mouse_y=dock.stamina.y+5;
+    assert(zell_desktop_click(&s)&&s.stamina_messages_only);
+    zell_messages_scroll(&s,1000);assert(s.message_scroll==1);
+    for(int i=0;i<ZELL_STAMINA_MESSAGES;i++)zell_message_add(&s,400+i,"Kilix",remark,true);
+    assert(s.message_count==ZELL_MESSAGES&&s.message_scroll==ZELL_STAMINA_MESSAGES-1);
+    assert(s.messages[ZELL_STAMINA_MESSAGES-1].time==400&&!strcmp(s.messages[0].text,remark));
+    s.mouse_click=true;s.mouse_x=dock.all.x+5;s.mouse_y=dock.all.y+5;
+    assert(zell_desktop_click(&s)&&!s.stamina_messages_only&&!s.message_scroll);
+    zell_messages_scroll(&s,1000);assert(s.message_scroll==ZELL_MESSAGES-1);
+    peer_reap(&peer,&monitor);
 }
 
 static bool wall_contains(int index,const char *text){
@@ -1296,6 +1329,7 @@ int main(void)
     test_service_surfaces();
     test_app_keys();
     test_command_wall();
+    test_stamina_messages();
     test_text_fields_receive_queued_keys();
     test_paste_question();
     test_terminal_transport(&scene);
