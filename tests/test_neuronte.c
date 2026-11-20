@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include "desktop.h"
+#include "desktop_assets.h"
 #include "draw_neuronte.h"
 #include "room.h"
 #include "scene.h"
@@ -376,88 +377,28 @@ static int like(uint32_t p, uint32_t rgb)
     return abs(dr) + abs(dg) + abs(db);
 }
 
-/* The stair marker downstairs is the net's down-pointing triangle, fitted
- * to the box the raster build's triangle has: 28 wide at a level top two
- * pixels under the band's top edge, 20 high, coming to a point below the
- * middle of the stairs. At the world's own size the room is not moved. The
- * Command Center's bottom edge still leads out but carries no marker. */
-static void test_stair_marker_is_a_triangle(void)
+/* At the native room size the former exit marker should show the floor
+ * painting, including any brass inlay that happens to be gold. */
+static void test_open_exits_show_the_floor(void)
 {
-    enum { W = ZELL_WORLD_W, H = ZELL_WORLD_H, ROWS = 32, REACH = 24 };
-    const uint32_t gold = 0xd7b56au;
-    const int top = (int)(0.93f * (float)H) + 2;
-    const int mid = (int)((ZELL_STAIRS_LEFT + ZELL_STAIRS_RIGHT) * 0.5f * (float)W);
-    int left[ROWS];
-    int right[ROWS];
-    zell_scene scene;
-    sr_canvas c;
-    int room;
-
-    expect(sr_canvas_init(&c, W, H), "marker canvas allocates");
-    expect(mid == 768 && top == 954, "the stairs are in the middle, the band near the foot");
-    for (room = 1; room <= 2; room++) {
-        int first = -1;
-        int last = -1;
-        int total = 0;
-        int grows = 0;
-        int off_centre = 0;
-        int row;
-        int x;
-
-        zell_scene_init(&scene, W, H);
+    sr_canvas canvas;
+    expect(sr_canvas_init(&canvas, ZELL_WORLD_W, ZELL_WORLD_H), "exit canvas allocates");
+    for (int room = 1; room <= 2; room++) {
+        zell_scene scene;
+        zell_scene_init(&scene, canvas.w, canvas.h);
         zell_desktop_init(&scene);
         scene.room = room;
-        scene.disk_count = 3;
-        scene.disks_ready = true;
-        scene.x = (float)W * 0.25f;
-        scene.y = (float)H * 0.50f;
-        zell_draw(&scene, &c);
-        for (row = 0; row < ROWS; row++) {
-            int y = top - 6 + row;
-
-            left[row] = -1;
-            right[row] = -2;
-            for (x = mid - REACH; x < mid + REACH; x++) {
-                if (like(c.px[y * W + x], gold) < 30) {
-                    left[row] = left[row] < 0 ? x : left[row];
-                    right[row] = x;
-                    total++;
-                }
-            }
-            if (left[row] >= 0) {
-                first = first < 0 ? row : first;
-                last = row;
+        zell_draw(&scene, &canvas);
+        const zell_art *art = zell_art_get(room == 1 ? ZELL_ART_COMMAND_ROOM : ZELL_ART_LAUNDRY_ROOM);
+        int changed = 0;
+        for (int y = 948; y < 980; y++) {
+            for (int x = 744; x < 792; x++) {
+                if (canvas.px[y * canvas.w + x] != art->pixels[y * art->width + x]) changed++;
             }
         }
-        if (room == 1) {
-            expect(first < 0 && total == 0, "the Command Center's way out is unmarked");
-            continue;
-        }
-        expect(first >= 0, "the marker is drawn");
-        if (first < 0) {
-            continue;
-        }
-        for (row = first; row <= last; row++) {
-            int width = right[row] - left[row] + 1;
-
-            if (row > first && width > right[row - 1] - left[row - 1] + 1) {
-                grows++;
-            }
-            /* Ink from left to right is the same distance either side of mid. */
-            if (width < 1 || abs(left[row] + right[row] + 1 - 2 * mid) > 2) {
-                off_centre++;
-            }
-        }
-        expect(abs(top - 6 + first - top) <= 1, "its top is two pixels under the band's edge");
-        expect(last - first + 1 >= 18 && last - first + 1 <= 21, "it is 20 rows high, less a faint one");
-        expect(right[first] - left[first] + 1 >= 24 && right[first] - left[first] + 1 <= 28,
-               "its top row is the widest, 28 less the soft ends");
-        expect(right[last] - left[last] + 1 <= 3, "it comes to a point at the foot");
-        expect(grows == 0, "no row is wider than the one above");
-        expect(off_centre == 0, "every row is centred on the stairs");
-        expect(total >= 230 && total <= 290, "its area is half its box");
+        expect(changed == 0, "the open south exit shows the room painting");
     }
-    sr_canvas_free(&c);
+    sr_canvas_free(&canvas);
 }
 
 /* The floating window's close button is the net's multiplication sign in
@@ -687,7 +628,7 @@ int main(void)
     test_sign_reads_voice();
     test_tiles_are_pixel_exact();
     test_framerate_is_shown();
-    test_stair_marker_is_a_triangle();
+    test_open_exits_show_the_floor();
     test_close_button_is_a_cross();
     test_ellipse_fills_its_box();
     test_screens_repeat();

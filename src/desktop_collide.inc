@@ -52,28 +52,28 @@ static int spans_for(const zell_scene *s,zell_span *out,int cap){
  return n;
 }
 float zell_desktop_north(int room){
- if(room==1)return (float)ZELL_COMMAND_OPENING_TOP;
+ if(room==1){
+  zell_rect wall=zell_command_wall_bounds();
+  return (float)(wall.y+wall.h);
+ }
  if(room==5)return 380.f;
  if(room==6)return 735.f;
  if(room==7||room==8)return 400.f;
  return (float)ZELL_WORLD_H*.32f;
 }
-/* Outside the arches the two side aisles have the same width all the way
- * down to the entrance. Only the stone jambs close in at their thresholds. */
-static bool command_wall(float x,float y){
- float side=fminf(x,(float)ZELL_WORLD_W-x);
- if(y>=(float)ZELL_COMMAND_OPENING_BOTTOM)return side<(float)ZELL_COMMAND_AISLE_EDGE;
- return side>(float)ZELL_COMMAND_DOOR_INNER;
+static bool command_tunnel_y(float y){
+ return y>=(float)ZELL_COMMAND_OPENING_TOP&&y<(float)ZELL_COMMAND_OPENING_BOTTOM;
 }
 static int command_passage(float x,float y){
- float side=fminf(x,(float)ZELL_WORLD_W-x);
- if(y>=(float)ZELL_COMMAND_OPENING_BOTTOM||side>(float)ZELL_COMMAND_DOOR_INNER)return 0;
- if(y>(float)ZELL_COMMAND_OPENING_TOP&&side>=(float)ZELL_COMMAND_OPENING_DEPTH)return 0;
- return x<(float)ZELL_WORLD_W/2?ZELL_ROOM_PANES_LEFT:ZELL_ROOM_PANES_RIGHT;
+ if(!command_tunnel_y(y))return 0;
+ if(x<=(float)ZELL_COMMAND_OPENING_DEPTH)return ZELL_ROOM_PANES_LEFT;
+ if(x>=(float)(ZELL_WORLD_W-ZELL_COMMAND_OPENING_DEPTH))return ZELL_ROOM_PANES_RIGHT;
+ return 0;
 }
 bool zell_desktop_blocked(const zell_scene *s,float x,float y){
  zell_span spans[ZELL_BLOCK_CAP];
- if(s&&s->room==1&&command_wall(x,y))return true;
+ if(s&&s->room==1&&!command_tunnel_y(y)&&
+    (x<(float)ZELL_COMMAND_SIDE_WALL||x>(float)(ZELL_WORLD_W-ZELL_COMMAND_SIDE_WALL)))return true;
  int n=spans_for(s,spans,ZELL_BLOCK_CAP);
  for(int i=0;i<n;i++)if(span_has(x,y,spans[i].x0,spans[i].y0,spans[i].x1,spans[i].y1))return true;
  return false;

@@ -5,13 +5,6 @@
 #include <time.h>
 #include <stdlib.h>
 #include <math.h>
-/* Two shapes the raster build draws with soft-raster's triangle and line.
- * The Neuronte build names its own bodies for them before it includes this. */
-#ifndef desktop_down_arrow
-static void desktop_down_arrow(sr_canvas *c,float mid,float half,float top,float tip,uint32_t rgb,float alpha){
- sr_fill_triangle(c,mid-half,top,mid+half,top,mid,tip,rgb,alpha);
-}
-#endif
 #ifndef desktop_cross
 static void desktop_cross(sr_canvas *c,int cx,int cy,int reach,uint32_t rgb){
  sr_line(c,(float)(cx-reach),(float)(cy-reach),(float)(cx+reach),(float)(cy+reach),2,rgb,1,0,0);
@@ -277,9 +270,7 @@ static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
   int x=(int)(zell_stations[i].x*ZELL_WORLD_W)-cx,y=(int)(zell_stations[i].y*ZELL_WORLD_H)-cy;
   if(i==ZELL_MANA_CONSOLE){desktop_mana_console(s,c,cx,cy);continue;}
   if(i>=46)continue;
-  /* Floor panels replace the old lever boxes. */
-  /* The Laundry paints its stairs. The Command Center has none. */
-  if(i==28){if(s->room==2)desktop_hatch(c,ZELL_ART_LAUNDRY_STAIRS,x,y,false,"");continue;}
+  if(i==28)continue;
   if(i>=29){
    zell_actor_pose staff=i<32?zell_desktop_pose(s,i-23):(zell_actor_pose){zell_stations[i].art+(s->flame_tick/20+i)%4,0,0};
    /* Staff are shown as the cave's first six are: a glow and a name only
@@ -323,14 +314,6 @@ static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
   if(i==near)desktop_label(c,x,y+40,"Enter: dig through drive",0xa8f3d5u);
  }
  if(!front&&s->room==2&&s->disk_count==0)desktop_label(c,ZELL_WORLD_W/2-cx,ZELL_WORLD_H/2-cy,s->disks_ready?"No eligible mounted disks found":"Reading mounted drives...",0xc9d8d2u);
- if(!front&&s->room==2){
-  float x0=ZELL_STAIRS_LEFT*(float)ZELL_WORLD_W-(float)cx;
-  float x1=ZELL_STAIRS_RIGHT*(float)ZELL_WORLD_W-(float)cx;
-  float y=0.93f*(float)ZELL_WORLD_H-(float)cy,mid=(x0+x1)*0.5f;
-  sr_fill_rect(c,x0,y,x1-x0,16,0x14201cu,.88f);
-  desktop_down_arrow(c,mid,14.f,y+2.f,y+22.f,0xd7b56au,.95f);
- }
-
 }
 static void desktop_vitals(const zell_scene *s,sr_canvas *c){
  int span=c->w-24;if(span>420)span=420;int width=(span-16)/3;

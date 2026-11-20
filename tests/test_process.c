@@ -715,7 +715,10 @@ static void test_command_wall(void){
         zell_command_term_pump(&s);
         assert(!zell_command_term_screen(0)->terminal.term);
         s.room=1;zell_room_view_identity(&s);
-        for(int i=0;i<ZELL_COMMAND_TERMS;i++)await_wall(&s,i,"wall$");
+        for(int i=0;i<ZELL_COMMAND_TERMS;i++){
+            await_wall(&s,i,"wall$");
+            assert(zell_command_term_screen(i)->terminal.cols>=60);
+        }
         kittykb_input_init(&keyboard.input);
         /* A press and release can both arrive between rendered frames. */
         s.x=ZELL_WORLD_W*.5f;s.y=ZELL_WORLD_H*.91f;

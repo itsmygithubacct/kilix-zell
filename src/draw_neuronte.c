@@ -8,7 +8,6 @@
  *   outlines        eighth blocks, placed so their ink is the outline
  *   thin bars       a full block stretched to the bar (cursor, lever)
  *   disc, ellipse   the black circle, fitted to the shape's box
- *   stair marker    the down-pointing triangle, fitted the same way
  *   close button    the multiplication sign, fitted the same way
  *   sprites, tiles  every pixel through 2 x 4 octant cells: the cell's
  *                   eight source pixels are its eight colours, and three
@@ -61,8 +60,8 @@ static int zn_state; /* 0 not tried, 1 open, -1 failed */
  * down-pointing triangle and the multiplication sign. Where each one's ink
  * sits in its cell is measured once from the open weights, and forgotten
  * when they are closed, since another file may be opened next. */
-enum { ZN_DISC, ZN_DOWN, ZN_CROSS, ZN_SHAPES };
-static const uint32_t zn_shape[ZN_SHAPES] = {0x25cfu, 0x25bcu, 0x00d7u};
+enum { ZN_DISC, ZN_CROSS, ZN_SHAPES };
+static const uint32_t zn_shape[ZN_SHAPES] = {0x25cfu, 0x00d7u};
 static float zn_boxes[ZN_SHAPES][4];
 static int zn_box_states[ZN_SHAPES]; /* 0 not tried, 1 measured, -1 failed */
 
@@ -447,14 +446,6 @@ static void zn_fill_circle(sr_canvas *c, float cx, float cy, float r,
     zn_fill_ellipse(c, cx, cy, r, r, rgb, alpha);
 }
 
-/* The stair marker: a triangle with a level top from mid - half to
- * mid + half, coming to a point at tip. */
-static void zn_down_arrow(sr_canvas *c, float mid, float half, float top, float tip,
-                          uint32_t rgb, float alpha)
-{
-    zn_fit(c, ZN_DOWN, mid - half, top, 2.0f * half, tip - top, rgb, alpha);
-}
-
 /* The close cross, in the square whose corners the raster build's two
  * strokes join: cx - reach to cx + reach, and the same down. */
 static void zn_cross(sr_canvas *c, int cx, int cy, int reach, uint32_t rgb)
@@ -615,7 +606,6 @@ static void zn_blit_scaled(sr_canvas *dst, const sr_canvas *src, int x, int y,
 #define sr_text_outlined zn_text_outlined
 #define sr_text_width_in(font, s, scale) zn_text_width((s), (scale))
 #define sr_font_height(font) ((void)(font), (int)ZN_CELL_H)
-#define desktop_down_arrow zn_down_arrow
 #define desktop_cross zn_cross
 
 #include "draw.c"

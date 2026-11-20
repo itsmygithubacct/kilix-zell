@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Shells for Zell's pane rooms, painted by Neuronte into a shared map.
 
-Through the Command Center's top corners are two rooms that are a Kilix tab
+Through the Command Center's lower corners are two rooms that are a Kilix tab
 each: two panes side by side on the left, four on the right, across the
 whole Zell pane. Zell draws the walkway and the panes' title bars; this
 helper paints the cells under them. Zell starts it beside itself the first

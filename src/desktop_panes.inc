@@ -1,4 +1,4 @@
-/* Pane rooms, through the Command Center's top corners: a Kilix tab of two
+/* Pane rooms, through the Command Center's lower corners: a Kilix tab of two
  * panes on the left and of four on the right, side by side, across the whole
  * Zell pane. Along the top is a walkway Kilix walks on, with buttons over
  * each pane that start a coding agent in it; under it each pane has a title
@@ -180,8 +180,8 @@ void zell_panes_leave(zell_scene *s){
     if(!side)return;
     /* Back in the tunnel of the opening he left by, facing the room. */
     s->room=1;pn_stand(s);
-    s->x=side>0?(float)ZELL_COMMAND_DOOR_CENTER:(float)(ZELL_WORLD_W-ZELL_COMMAND_DOOR_CENTER);
-    s->y=(float)(ZELL_COMMAND_OPENING_TOP+ZELL_COMMAND_OPENING_BOTTOM)*.5f;
+    s->x=side>0?(float)ZELL_COMMAND_RETURN_X:(float)(ZELL_WORLD_W-ZELL_COMMAND_RETURN_X);
+    s->y=ZELL_COMMAND_LANDING_Y;
     s->direction=side>0?3:2;
 }
 int zell_panes_tick(zell_scene *s,const zell_controls *c){

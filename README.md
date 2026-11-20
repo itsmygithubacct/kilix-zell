@@ -367,18 +367,18 @@ library; `KILIX_ZELL_NEURONTE_DISPLAY` and `ZELL_NEURONTE_LIBRARY` can select th
 ### Downstairs rooms
 
 The lower row of floor hatches leads to the **Command Center**, **Vault**,
-**Workshop**, and **Laundry**, from left to right. Walk off the south edge of
-the Command Center to return to the cave. Git Wizard, Pilot and Key Master
-stand along that edge. Above them, four black-glass floor panels show YOLO,
-Spare, agent updates and saved fleets. Walk left or right from the entrance,
-then north beside the bronze screen frame. The lantern marks the west cave
-and the turquoise crystals mark the east cave. Each opens into a room of
-panes: two side by side on the left, four on the right. A pane room is one
-Kilix tab as wide and high as the Zell pane, past the 1600x1000 cap the other
-rooms keep. Along its top is a walkway Kilix walks on; over each pane it has
-a button for each coding agent found on PATH, which types that agent's
-command into the pane's shell if the shell is at its prompt, and gives the
-pane the keys. Under the walkway each pane has a title bar: what it runs,
+**Workshop**, and **Laundry**, from left to right. Walk off the bottom of
+the Laundry or Command Center to return to its hatch in the cave. In the
+Command Center, Git Wizard, Pilot and Key Master stand along the south edge.
+Above them, four black-glass floor panels show YOLO,
+Spare, agent updates and saved fleets. From the landing, walk straight left
+into the amber-lit tunnel for two panes, or straight right into the
+turquoise-lit tunnel for four. Both entrances are in the lower corners.
+A pane room is one Kilix tab as wide and high as the Zell pane, past the
+1600x1000 cap the other rooms keep. Kilix can walk along the top. Above each
+pane is a button for every coding agent found on PATH. When the shell is at
+its prompt, pressing a button types that agent's command and gives the pane
+keyboard focus. Under the walkway each pane has a title bar: what it runs,
 Zoom (the pane over the whole room, and back), and Restart (click twice for a
 new shell). Click a pane or its title bar and every key is the pane's; click
 the walkway and the keys are Kilix's again: the arrows walk him, and Enter or
@@ -391,9 +391,10 @@ Kilix windows: Kilix does not list them, and they cannot be sent text as Zell's
 window. Tab lists the current room's
 stations.
 
-The Command Center wall holds six independent NeuroTerm shells. Worker 1,
-Controller and Worker 2 fill the upper row. Worker 3, Mana and Shell, and
-Worker 4 fill the lower row. The first visit opens real interactive shells.
+A bronze frame spans the full width of the Command Center above the tunnels.
+It holds six independent NeuroTerm shells. Worker 1, Controller and Worker 2
+fill the upper row. Worker 3 and Worker 4 flank Mana and Shell in the lower
+row. The first visit opens real interactive shells.
 The five coding screens start in your home folder. Their prompts and running
 programs stay on the wall when you visit another room. Click a screen to type,
 press **F6** or **Shift+F6** to cycle screens, and press **Alt+Esc** or click
