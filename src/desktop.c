@@ -437,7 +437,7 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
   float d=sqrtf(dx*dx+dy*dy);
   s->running=c->run&&d>0;
   float speed=(s->running?ZELL_RUN_SPEED:ZELL_WALK_SPEED)*zell_desktop_speed_factor(s);
-  bool blocked=false;
+  float start_x=s->x,start_y=s->y;
   if(d>0&&speed>0){
    s->direction=dx<0?2:dx>0?3:dy<0?1:0;
    /* Substeps retain walking collision precision at dash speed. */
@@ -447,19 +447,19 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
     s->x+=dx/d*speed/(float)steps;s->y+=dy/d*speed/(float)steps;
     float nx=s->x/(float)ZELL_WORLD_W,ny=s->y/(float)ZELL_WORLD_H;
     /* The Command Center has its own lower-corner thresholds. */
-    if(s->room!=1&&nx<.135f){s->x=(float)ZELL_WORLD_W*.135f;blocked=true;}
-    if(s->room!=1&&nx>.865f){s->x=(float)ZELL_WORLD_W*.865f;blocked=true;}
+    if(s->room!=1&&nx<.135f)s->x=(float)ZELL_WORLD_W*.135f;
+    if(s->room!=1&&nx>.865f)s->x=(float)ZELL_WORLD_W*.865f;
     {
      float north=zell_desktop_north(s->room);
-     if(s->y<north){s->y=north;blocked=true;}
+     if(s->y<north)s->y=north;
     }
-    if(!open_south_edge(s->room)&&ny>.91f&&(nx<ZELL_STAIRS_LEFT||nx>ZELL_STAIRS_RIGHT)){s->y=(float)ZELL_WORLD_H*.91f;blocked=true;}
+    if(!open_south_edge(s->room)&&ny>.91f&&(nx<ZELL_STAIRS_LEFT||nx>ZELL_STAIRS_RIGHT))s->y=(float)ZELL_WORLD_H*.91f;
     /* L1 calls zell_desktop_blocked. Slide one axis when the other is free. */
     {
      float try_x=s->x,try_y=s->y;
-     if(zell_desktop_blocked(s,try_x,oldy)){s->x=oldx;blocked=true;}
-     if(zell_desktop_blocked(s,s->x,try_y)){s->y=oldy;blocked=true;}
-     if(zell_desktop_blocked(s,s->x,s->y)){s->x=oldx;s->y=oldy;blocked=true;}
+     if(zell_desktop_blocked(s,try_x,oldy))s->x=oldx;
+     if(zell_desktop_blocked(s,s->x,try_y))s->y=oldy;
+     if(zell_desktop_blocked(s,s->x,s->y)){s->x=oldx;s->y=oldy;}
     }
     for(int i=0;i<ZELL_STATIONS;i++){
      if(!zell_desktop_station_visible(s,i)||i==28||i==ZELL_WORKSHOP_COMPUTER)continue;
@@ -474,25 +474,24 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
       if(fabsf(ax)<20.f&&fabsf(ay)<8.f){
        if(fabsf(oldy-zell_stations[i].y*ZELL_WORLD_H)>=8.f)s->y=oldy;
        else s->x=oldx;
-       blocked=true;break;
+       break;
       }
       continue;
      }
-     if(ax*ax+ay*ay<26*26){s->x=oldx;s->y=oldy;blocked=true;break;}
+     if(ax*ax+ay*ay<26*26){s->x=oldx;s->y=oldy;break;}
     }
     /* Walk sideways through a tunnel at either end of the south floor. */
     if(s->room==1){
      int passage=command_passage(s->x,s->y);
      if(passage){zell_panes_enter(s,passage);return 1;}
     }
-    /* Sliding along a side wall can still cross an open south edge. */
-    if(blocked&&!(open_south_edge(s->room)&&zell_desktop_on_stairs(s)))break;
-    if(s->room==0&&s->y/(float)ZELL_WORLD_H>.975f)s->leave=true;
     if(zell_desktop_on_stairs(s)){open_station(s,28);return 1;}
+    if(s->x==oldx&&s->y==oldy)break;
    }
+  }
+  if(s->x!=start_x||s->y!=start_y){
    s->step_ticks++;s->step=(s->step_ticks/(s->running?3:7))%2;
-  }else {s->step=0;s->step_ticks=0;}
-  if(blocked){
+  }else{
    s->step_ticks=0;s->step=0;
    s->running=false;
   }

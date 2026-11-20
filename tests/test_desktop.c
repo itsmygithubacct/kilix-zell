@@ -158,7 +158,8 @@ static void test_obstacles(void){
     float held_x=s.x;
     zell_controls into={.move_x=1,.move_y=-1};
     for(int tick=0;tick<8;tick++)zell_scene_tick(&s,&into);
-    assert(s.y>=edge&&s.y<=edge+2.f&&s.x>held_x+15.f);
+    assert(s.y>=edge&&s.y<=edge+2.f&&s.step_ticks==8);
+    assert(fabsf(s.x-held_x-8.f*ZELL_WALK_SPEED/sqrtf(2.f))<.01f);
     /* A fitted view must not move world footprints. */
     s.room_view.scale=0.5f;s.room_view.offset_x=40;s.room_view.offset_y=-15;
     assert(zell_desktop_blocked(&s,foot_x,edge-1.f));
@@ -172,10 +173,11 @@ static void test_obstacles(void){
         place_room(&s,1,cx,ZELL_COMMAND_LANDING_Y);
         zell_controls up={.move_y=-1,.run=true};
         for(int tick=0;tick<25;tick++)zell_scene_tick(&s,&up);
-        assert(s.room==1&&s.x==cx&&s.y>=front&&s.y<front+ZELL_WALK_SPEED&&!s.running);
+        assert(s.room==1&&s.x==cx&&s.y>=front&&s.y<front+ZELL_WALK_SPEED&&!s.running&&s.step_ticks==0);
         zell_controls slide={.move_x=1,.move_y=-1,.run=true};
-        for(int tick=0;tick<8;tick++)zell_scene_tick(&s,&slide);
-        assert(s.x>cx+10.f&&s.y>=front&&s.y<front+ZELL_WALK_SPEED);
+        for(int tick=0;tick<4;tick++)zell_scene_tick(&s,&slide);
+        assert(fabsf(s.x-cx-4.f*ZELL_RUN_SPEED/sqrtf(2.f))<.01f);
+        assert(s.y>=front&&s.y<front+ZELL_WALK_SPEED&&s.running&&s.step_ticks==4);
         if(i<2){
             zell_controls use={.confirm=true};zell_scene_tick(&s,&use);
             assert(s.station==46+i&&s.mode==ZELL_MODE_DESK&&s.desktop_launch);

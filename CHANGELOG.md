@@ -6,7 +6,8 @@ These changes are not in the 0.1.1 runtime archive that Plebian-OS 0.2.3 pins.
 
 - Move the Command Center tunnels to the lower corners. Walk straight left from the landing for two panes or right for four. The jeweled bronze frame and its live screens span the full width of the room above them.
 - Make all four Command Center floor panels solid. Kilix can use the controls from the front and walk around either end.
-- Register quick directional taps between frames.
+- Register quick directional taps between frames, including Shift taps and arrow taps on the pane-room walkways.
+- Keep walking and running at the usual sideways pace when moving diagonally against a wall or floor panel.
 - Remove the Laundry staircase and its marker. Walking off the south edge returns Kilix to the Laundry hatch.
 - Keep the last 80 stamina remarks in Messages across restarts. The Stamina filter shows the process names from the original speech bubbles.
 - Skip saved messages with invalid timestamps so valid entries and live vitals keep updating.

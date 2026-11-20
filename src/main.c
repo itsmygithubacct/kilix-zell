@@ -898,6 +898,22 @@ static bool command_cycle(zell_scene *s,const kittykb_event *event){
     return true;
 }
 
+typedef struct { bool left,right,up,down,shifted_tap; } walk_keys;
+
+/* A press and its release can both arrive between frames. */
+static void walk_press(walk_keys *move,const kittykb_event *event,bool wasd)
+{
+    if(event->action!=KITTYKB_ACTION_PRESS||
+       (event->modifiers&(KITTYKB_MOD_CTRL|KITTYKB_MOD_ALT|KITTYKB_MOD_SUPER)))return;
+    uint32_t key=event->key;
+    if(key==KITTYKB_KEY_LEFT||(wasd&&(key=='a'||key=='A')))move->left=true;
+    else if(key==KITTYKB_KEY_RIGHT||(wasd&&(key=='d'||key=='D')))move->right=true;
+    else if(key==KITTYKB_KEY_UP||(wasd&&(key=='w'||key=='W')))move->up=true;
+    else if(key==KITTYKB_KEY_DOWN||(wasd&&(key=='s'||key=='S')))move->down=true;
+    else return;
+    if(event->modifiers&KITTYKB_MOD_SHIFT)move->shifted_tap=true;
+}
+
 static void read_controls(zell_scene *scene, zell_controls *controls)
 {
     kittykb_event event;
@@ -940,22 +956,29 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
     controls->run = !typing &&
         (kittykb_input_key_down(&keyboard.input, KITTYKB_KEY_LEFT_SHIFT) ||
          kittykb_input_key_down(&keyboard.input, KITTYKB_KEY_RIGHT_SHIFT));
+    bool pane_room=scene->desktop&&ZELL_ROOM_IS_PANES(scene->room);
+    bool wasd=!typing&&!pane_room;
+    walk_keys move={
+        .left=kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_LEFT) ||
+            (wasd && (kittykb_input_key_down(&keyboard.input,'a') || kittykb_input_key_down(&keyboard.input,'A'))),
+        .right=kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_RIGHT) ||
+            (wasd && (kittykb_input_key_down(&keyboard.input,'d') || kittykb_input_key_down(&keyboard.input,'D'))),
+        .up=kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_UP) ||
+            (wasd && (kittykb_input_key_down(&keyboard.input,'w') || kittykb_input_key_down(&keyboard.input,'W'))),
+        .down=kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_DOWN) ||
+            (wasd && (kittykb_input_key_down(&keyboard.input,'s') || kittykb_input_key_down(&keyboard.input,'S')))
+    };
 
     /* In a pane room the keys are a pane's after a click on it, every key
      * of them; after a click on the walkway they are Kilix's: the arrows
      * walk him, with Shift run him, and Enter or Space presses the button
      * he stands on. */
-    if(scene->desktop&&ZELL_ROOM_IS_PANES(scene->room)){
+    if(pane_room){
         controls->run=controls->run&&!zell_panes_keys_to_pane();
-        controls->move_x=controls->move_y=0;
         /* Alt with the arrows moves between the panes and the walkway: he
          * does not walk then. */
         bool alt_held=kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_LEFT_ALT)||kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_RIGHT_ALT);
-        if(zell_panes_hotkeys_open())controls->run=false;
-        else if(!zell_panes_keys_to_pane()&&!alt_held){
-            controls->move_x=(kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_RIGHT)?1:0)-(kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_LEFT)?1:0);
-            controls->move_y=(kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_DOWN)?1:0)-(kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_UP)?1:0);
-        }
+        if(zell_panes_hotkeys_open()||zell_panes_keys_to_pane()||alt_held)move=(walk_keys){0};
         /* The key that pressed a button is not the pane's until it is let go:
          * its repeats would follow the agent's command in. */
         static uint32_t pressed_with;
@@ -1011,12 +1034,18 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
             bool press=event.action==KITTYKB_ACTION_PRESS&&(event.key==KITTYKB_KEY_ENTER||event.key==KITTYKB_KEY_KP_ENTER||event.key==' ');
             int route=zell_panes_route(press);
             if(route==ZELL_PANES_KEY_PRESS){pressed_with=zell_panes_press(scene)?event.key:0;continue;}
+            if(route==ZELL_PANES_KEY_NONE)walk_press(&move,&event,false);
             if(route!=ZELL_PANES_KEY_PANE)continue;
             /* Shift with Page Up, Page Down, Home or End scrolls the pane. */
             if(event.action!=KITTYKB_ACTION_RELEASE&&zell_panes_scroll_key(scene,event.key,event.modifiers))continue;
             unsigned char bytes[TERMINAL_KEY_BYTES];size_t length=terminal_key_bytes(&event,bytes);
             if(length)zell_panes_key(bytes,length);
         }
+        if(!zell_panes_hotkeys_open()&&!zell_panes_keys_to_pane()&&!alt_held){
+            controls->move_x=(int)move.right-(int)move.left;
+            controls->move_y=(int)move.down-(int)move.up;
+            controls->run=controls->run||move.shifted_tap;
+        }else controls->run=false;
         return;
     }
     if(scene->mode==ZELL_MODE_SERVICE&&scene->service_phase==5){
@@ -1036,14 +1065,6 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
         if(at>1){scene->service_reply[at++]='\n';scene->service_reply[at]=0;scene->service_send=true;}
         return;
     }
-    bool left=kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_LEFT) ||
-        (!typing && (kittykb_input_key_down(&keyboard.input,'a') || kittykb_input_key_down(&keyboard.input,'A')));
-    bool right=kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_RIGHT) ||
-        (!typing && (kittykb_input_key_down(&keyboard.input,'d') || kittykb_input_key_down(&keyboard.input,'D')));
-    bool up=kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_UP) ||
-        (!typing && (kittykb_input_key_down(&keyboard.input,'w') || kittykb_input_key_down(&keyboard.input,'W')));
-    bool down=kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_DOWN) ||
-        (!typing && (kittykb_input_key_down(&keyboard.input,'s') || kittykb_input_key_down(&keyboard.input,'S')));
     /* A text field may take many edits per frame. Stop at a command so
      * later keys are interpreted in the screen that the command opens. */
     size_t edits = 0;
@@ -1054,17 +1075,7 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
         if(scene->desktop&&scene->room==1&&scene->mode==ZELL_MODE_WALK&&command_cycle(scene,&event)){
             memset(controls,0,sizeof *controls);return;
         }
-        /* Kilix can deliver a quick press and release in the same frame.
-         * Give that tap one step even when the key is already up. */
-        if(scene->desktop && scene->mode==ZELL_MODE_WALK && !typing && event.action==KITTYKB_ACTION_PRESS &&
-           !(event.modifiers&(KITTYKB_MOD_CTRL|KITTYKB_MOD_ALT|KITTYKB_MOD_SUPER))){
-            switch(event.key){
-            case KITTYKB_KEY_LEFT: case 'a': case 'A': left=true;break;
-            case KITTYKB_KEY_RIGHT: case 'd': case 'D': right=true;break;
-            case KITTYKB_KEY_UP: case 'w': case 'W': up=true;break;
-            case KITTYKB_KEY_DOWN: case 's': case 'S': down=true;break;
-            }
-        }
+        if(scene->desktop&&scene->mode==ZELL_MODE_WALK&&!typing)walk_press(&move,&event,true);
         if (page_keys) {
             controls->key_press = true;
             controls->key_code = event.key;
@@ -1093,8 +1104,9 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
         if (page_keys || controls->launcher || controls->cancel || controls->confirm || controls->fullscreen_key)
             break;
     }
-    controls->move_x=(int)right-(int)left;
-    controls->move_y=(int)down-(int)up;
+    controls->move_x=(int)move.right-(int)move.left;
+    controls->move_y=(int)move.down-(int)move.up;
+    controls->run=controls->run||move.shifted_tap;
 }
 
 static bool present_scene(zell_scene *scene, sr_canvas *canvas, uint8_t **rgba,

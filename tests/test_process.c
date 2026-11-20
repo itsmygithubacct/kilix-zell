@@ -765,6 +765,10 @@ static void test_command_wall(void){
         desktop_input_feed(&s,right_tap,sizeof right_tap-1);
         read_controls(&s,&c);assert(c.move_x==1);zell_scene_tick(&s,&c);
         assert(s.x==origin);
+        const char run_tap[]="\033[1;2:1C\033[1;1:3C";
+        desktop_input_feed(&s,run_tap,sizeof run_tap-1);
+        read_controls(&s,&c);assert(c.move_x==1&&c.run);
+        read_controls(&s,&c);assert(!c.move_x&&!c.run);
         kittykb_event key={.key=KITTYKB_KEY_F6,.action=KITTYKB_ACTION_PRESS};
         assert(command_cycle(&s,&key)&&s.command_focus==2);
         const char typed[]="printf '\\033[2J\\033[Hworker-%s\\n' one\r";
@@ -806,6 +810,19 @@ static void test_command_wall(void){
         assert(wall_contains(ZELL_COMMAND_TERMS,"simulated-apt update command"));
         zell_command_term_shutdown();
         assert(waitpid(-1,NULL,WNOHANG)==-1&&errno==ECHILD);
+        zell_panes_enter(&s,ZELL_ROOM_PANES_RIGHT);
+        kittykb_input_init(&keyboard.input);
+        keyboard.input.support=(uint8_t)KITTYKB_SUPPORT_AVAILABLE;
+        keyboard.input.terminal_flags=KITTYKB_FLAG_REPORT_EVENTS|KITTYKB_FLAG_REPORT_ALL_KEYS;
+        origin=s.x;
+        desktop_input_feed(&s,left_tap,sizeof left_tap-1);
+        read_controls(&s,&c);assert(c.move_x==-1&&!c.run);zell_scene_tick(&s,&c);
+        assert(s.x<origin);
+        read_controls(&s,&c);assert(!c.move_x);
+        desktop_input_feed(&s,run_tap,sizeof run_tap-1);
+        read_controls(&s,&c);assert(c.move_x==1&&c.run);zell_scene_tick(&s,&c);
+        assert(s.x>origin);
+        read_controls(&s,&c);assert(!c.move_x&&!c.run);
         _exit(0);
     }
     int status=0;assert(waitpid(child,&status,0)==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0);
