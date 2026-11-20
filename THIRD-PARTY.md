@@ -2,6 +2,8 @@
 
 `kilix-zell` is MIT licensed. See [LICENSE](LICENSE).
 
+The bronze shield on the desktop character uses the flame-cat silhouette from the Kilix notification icon. The equipment sprite is registered to the original cast and walk poses by the desktop art compiler.
+
 ## NeuroTerm
 
 The Command Center uses Kilix NeuroTerm and its bundled libvterm under the

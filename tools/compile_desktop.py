@@ -149,7 +149,28 @@ def premultiplied_pixels(image, height=None):
     return image.size, raw
 
 
+# Face of the shield in each authored pose, in 160ths of its source cell.
+# The rear views and the right-facing idle show only the hand and back rim.
+SHIELD_IDLE = ((34,82,67,131), None, (41,94,73,133), None)
+SHIELD_WALK = (
+    ((48,73,80,121),(40,73,72,122),(30,76,63,122),(25,75,57,123)),
+    (None,)*4,
+    ((59,82,88,121),(53,79,82,121),(41,81,71,123),(31,79,62,122)),
+    ((85,77,119,121),(80,77,114,121),(62,77,97,121),(68,78,98,119)),
+)
+
+
+def equip_shield(cell, shield, bounds):
+    if bounds is not None:
+        left, top, right, bottom = [round(v * (cell.width if i % 2 == 0 else cell.height) / 160)
+                                    for i, v in enumerate(bounds)]
+        face = shield.resize((right-left, bottom-top), Image.Resampling.LANCZOS)
+        cell.alpha_composite(face, (left, top))
+    return cutout(cell)
+
+
 def load_images():
+    shield = Image.open(ROOM_ASSETS / 'fire-cat-shield.png').convert('RGBA')
     images = [Image.open(ASSETS / 'cave.png').convert('RGBA')]
     for name in ('cast.png', 'workstations.png'):
         image = Image.open(ASSETS / name).convert('RGBA')
@@ -158,14 +179,15 @@ def load_images():
                  image.height)
         for y in range(2):
             for x in range(4):
-                images.append(cutout(image.crop((x * image.width // 4, edges[y],
-                                                 (x + 1) * image.width // 4, edges[y + 1]))))
+                cell = image.crop((x * image.width // 4, edges[y], (x + 1) * image.width // 4, edges[y + 1]))
+                bounds = SHIELD_IDLE[x] if name == 'cast.png' and y == 0 else None
+                images.append(equip_shield(cell, shield, bounds))
     image = Image.open(ASSETS / 'walk.png').convert('RGBA')
     for y in range(4):
         for x in range(4):
-            images.append(cutout(image.crop((x * image.width // 4, y * image.height // 4,
-                                             (x + 1) * image.width // 4,
-                                             (y + 1) * image.height // 4))))
+            cell = image.crop((x * image.width // 4, y * image.height // 4,
+                               (x + 1) * image.width // 4, (y + 1) * image.height // 4))
+            images.append(equip_shield(cell, shield, SHIELD_WALK[y][x]))
     images.extend(Image.open(ROOM_ASSETS / name).convert('RGBA')
                   for name in ('command-center.png', 'laundry.png'))
     images.extend(fixed_cells('cave-hatch-panels.png', 2, 1))
