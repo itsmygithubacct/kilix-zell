@@ -123,12 +123,11 @@ static void link_as(const char *from_dir, const char *name, const char *dir, con
     expect(symlink(from, to) == 0, "a weight file is linked for the cap");
 }
 
-/* With more listed bundles than the cap, the first 16 by name load: here
- * sixteen copies of kilix-chrome-v1 named to sort first, so the icon is
- * drawn by the first of them, and term-blocks, past the cap, is not
- * loaded, so the hexagram gets the mark. */
+/* Only the first 16 sorted names carry the icon. All later names carry
+ * the hexagram, so loading any of them changes the visible result. */
 static void test_the_bundle_cap_keeps_the_first_names(void)
 {
+    enum { BUNDLES = 320 };
     const char *weights = zell_neuronte_weights();
     const char *slash = strrchr(weights, '/');
     const char *tmp = getenv("TMPDIR");
@@ -147,26 +146,24 @@ static void test_the_bundle_cap_keeps_the_first_names(void)
     expect(mkdtemp(dir) != NULL, "a folder for the cap is made");
     snprintf(split, sizeof split, "%s/neuronte-split-v9.nrt", dir);
     expect(symlink(weights, split) == 0, "the weights are linked for the cap");
-    link_as(real, "neuronte-term-blocks-v1.nrt", dir, "neuronte-term-blocks-v1.nrt");
-    link_as(real, "neuronte-term-blocks-v1.list.txt", dir, "neuronte-term-blocks-v1.list.txt");
-    for (i = 0; i < 16; i++) {
-        snprintf(name, sizeof name, "neuronte-kilix-a%02d-v1.nrt", i);
-        link_as(real, "neuronte-kilix-chrome-v1.nrt", dir, name);
-        snprintf(name, sizeof name, "neuronte-kilix-a%02d-v1.list.txt", i);
-        link_as(real, "neuronte-kilix-chrome-v1.list.txt", dir, name);
+    for (i = BUNDLES - 1; i >= 0; i--) {
+        snprintf(name, sizeof name, "neuronte-kilix-a%03d-v1.nrt", i);
+        link_as(real, i < 16 ? "neuronte-kilix-chrome-v1.nrt" : "neuronte-term-blocks-v1.nrt", dir, name);
+        snprintf(name, sizeof name, "neuronte-kilix-a%03d-v1.list.txt", i);
+        link_as(real, i < 16 ? "neuronte-kilix-chrome-v1.list.txt" : "neuronte-term-blocks-v1.list.txt", dir, name);
     }
     zell_neuronte_close();
     setenv("ZELL_NEURONTE_WEIGHTS", split, 1);
-    expect(zell_neuronte_open(), "the weights open beside eighteen bundles");
+    expect(zell_neuronte_open(), "the weights open beside hundreds of listed bundles");
     {
         const char *icon = zell_neuronte_text_net(0xf0731u);
         const char *hexagram = zell_neuronte_text_net(0x4dc0u);
 
-        if (icon == NULL || hexagram == NULL || strcmp(icon, "neuronte-kilix-a00-v1.nrt") != 0 ||
+        if (icon == NULL || hexagram == NULL || strcmp(icon, "neuronte-kilix-a000-v1.nrt") != 0 ||
             strcmp(hexagram, "mark") != 0) {
             fprintf(stderr, "cap: icon %s, hexagram %s\n", icon ? icon : "(none)", hexagram ? hexagram : "(none)");
         }
-        expect(icon != NULL && strcmp(icon, "neuronte-kilix-a00-v1.nrt") == 0, "the first name by order draws the icon");
+        expect(icon != NULL && strcmp(icon, "neuronte-kilix-a000-v1.nrt") == 0, "the first name by order draws the icon");
         expect(hexagram != NULL && strcmp(hexagram, "mark") == 0, "a bundle past the cap is not loaded");
     }
     zell_neuronte_close();
@@ -175,16 +172,12 @@ static void test_the_bundle_cap_keeps_the_first_names(void)
     } else {
         unsetenv("ZELL_NEURONTE_WEIGHTS");
     }
-    for (i = 0; i < 16; i++) {
-        snprintf(path, sizeof path, "%s/neuronte-kilix-a%02d-v1.nrt", dir, i);
+    for (i = 0; i < BUNDLES; i++) {
+        snprintf(path, sizeof path, "%s/neuronte-kilix-a%03d-v1.nrt", dir, i);
         unlink(path);
-        snprintf(path, sizeof path, "%s/neuronte-kilix-a%02d-v1.list.txt", dir, i);
+        snprintf(path, sizeof path, "%s/neuronte-kilix-a%03d-v1.list.txt", dir, i);
         unlink(path);
     }
-    snprintf(path, sizeof path, "%s/neuronte-term-blocks-v1.nrt", dir);
-    unlink(path);
-    snprintf(path, sizeof path, "%s/neuronte-term-blocks-v1.list.txt", dir);
-    unlink(path);
     unlink(split);
     expect(rmdir(dir) == 0, "the cap's folder is removed");
     expect(zell_neuronte_open(), "the weights open again after the cap");

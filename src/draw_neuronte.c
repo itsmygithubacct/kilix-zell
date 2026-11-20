@@ -25,13 +25,14 @@
  * build time by ZELL_NEURONTE_WEIGHTS, or by the environment variable of
  * the same name.
  *
- * Text is also drawn from every neuronte-term-*.nrt and neuronte-kilix-*.nrt bundle that lies
- * beside that file: a character goes to the first bundle trained on it,
+ * Text is also drawn from the first 16 listed term and kilix bundles in
+ * filename order beside that file: a character goes to the first bundle trained on it,
  * and one that no bundle was trained on shows the library's untrained
  * mark. A library without neuronte_untrained() cannot be linked here. */
 #include "draw_neuronte.h"
 
 #include <dirent.h>
+#include <limits.h>
 #include <sys/stat.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -47,7 +48,7 @@
 
 enum { ZN_CELL_W = 8, ZN_CELL_H = 16 };
 
-enum { ZN_EXTRA_MAX = 16, ZN_NAME_MAX = 256, ZN_SEEN_MAX = 256 };
+enum { ZN_EXTRA_MAX = 16, ZN_NAME_MAX = 256 };
 
 static neuronte *zn_font;
 static neuronte *zn_mark;                 /* the same file, drawing the untrained mark */
@@ -72,9 +73,18 @@ const char *zell_neuronte_weights(void)
     return path != NULL && path[0] != '\0' ? path : ZELL_NEURONTE_WEIGHTS;
 }
 
-static int zn_name_order(const void *a, const void *b)
+static int zn_bundle_candidate(const struct dirent *entry)
 {
-    return strcmp((const char *)a, (const char *)b);
+    const char *name = entry->d_name;
+    size_t len = strlen(name);
+
+    return len > 18 && len < ZN_NAME_MAX && strcmp(name + len - 4, ".nrt") == 0 &&
+           (strncmp(name, "neuronte-term-", 14) == 0 || strncmp(name, "neuronte-kilix-", 15) == 0);
+}
+
+static int zn_name_order(const struct dirent **a, const struct dirent **b)
+{
+    return strcmp((*a)->d_name, (*b)->d_name);
 }
 
 /* A listed bundle has its NAME.list.txt beside it. neuronte-v2 lists the
@@ -83,7 +93,7 @@ static int zn_name_order(const void *a, const void *b)
  * for a box two cells wide), is not used for text. */
 static bool zn_listed(const char *dir, const char *name)
 {
-    char path[1024 + ZN_NAME_MAX + 16];
+    char path[PATH_MAX];
     struct stat st;
     int need = snprintf(path, sizeof path, "%s/%.*s.list.txt", dir, (int)(strlen(name) - 4), name);
 
@@ -95,14 +105,12 @@ static bool zn_listed(const char *dir, const char *name)
  * file for the untrained mark. A bundle that does not open is left out. */
 static void zn_open_extras(const char *weights)
 {
-    static char names[ZN_SEEN_MAX][ZN_NAME_MAX];
-    char dir[1024];
-    char path[1024 + ZN_NAME_MAX + 2];
+    char dir[PATH_MAX];
+    char path[PATH_MAX];
     const char *slash = strrchr(weights, '/');
-    size_t dir_len = slash != NULL ? (size_t)(slash - weights) : 1;
-    struct dirent *entry;
-    DIR *list;
-    int count = 0;
+    size_t dir_len = slash != NULL && slash != weights ? (size_t)(slash - weights) : 1;
+    struct dirent **entries;
+    int count;
     int i;
 
     if (neuronte_open_file(weights, &zn_mark) != 0 || neuronte_set_untrained(zn_mark, 1) != 0) {
@@ -114,36 +122,31 @@ static void zn_open_extras(const char *weights)
     }
     memcpy(dir, slash != NULL ? weights : ".", dir_len);
     dir[dir_len] = '\0';
-    list = opendir(dir);
-    if (list == NULL) {
+    count = scandir(dir, &entries, zn_bundle_candidate, zn_name_order);
+    if (count < 0) {
         return;
     }
-    /* Every listed name first, then the sort, then the cap: which bundles
-     * load does not hang on the directory's order. */
-    while (count < ZN_SEEN_MAX && (entry = readdir(list)) != NULL) {
-        size_t len = strlen(entry->d_name);
-
-        if (len > 18 && len < ZN_NAME_MAX &&
-            (strncmp(entry->d_name, "neuronte-term-", 14) == 0 || strncmp(entry->d_name, "neuronte-kilix-", 15) == 0) &&
-            strcmp(entry->d_name + len - 4, ".nrt") == 0 && zn_listed(dir, entry->d_name)) {
-            memcpy(names[count++], entry->d_name, len + 1);
-        }
-    }
-    closedir(list);
-    qsort(names, (size_t)count, sizeof names[0], zn_name_order);
     for (i = 0; i < count && zn_extras < ZN_EXTRA_MAX; i++) {
-        int need = snprintf(path, sizeof path, "%s/%s", dir, names[i]);
+        const char *name = entries[i]->d_name;
+        if (!zn_listed(dir, name)) {
+            continue;
+        }
+        int need = snprintf(path, sizeof path, "%s/%s", dir, name);
 
         if (need < 0 || (size_t)need >= sizeof path) {
             continue;
         }
         if (neuronte_open_file(path, &zn_extra[zn_extras]) == 0) {
-            memcpy(zn_extra_names[zn_extras], names[i], strlen(names[i]) + 1);
+            memcpy(zn_extra_names[zn_extras], name, strlen(name) + 1);
             zn_extras++;
         } else {
             zn_extra[zn_extras] = NULL;
         }
     }
+    for (i = 0; i < count; i++) {
+        free(entries[i]);
+    }
+    free(entries);
 }
 
 bool zell_neuronte_open(void)
