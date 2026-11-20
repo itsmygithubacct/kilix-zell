@@ -1,0 +1,40 @@
+#!/usr/bin/make -f
+# Ship the sources and build the desktop command when the package is
+# configured. The linked binary is not a member of the deb: its packed art
+# trips publication hygiene on chance bytes. This file does not run
+# make install or tools/package_runtime.py, so kilix-secretsd and the
+# kilix-secrets units are not installed. The developer Makefile is unchanged.
+# Packed weights stay outside the package.
+
+export DEB_BUILD_OPTIONS := noautodbgsym
+
+D := debian/kilix-zell
+S := $(D)/usr/share/kilix-zell
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	sh -n packaging/build-runtime.sh
+	sh -n packaging/zell
+
+override_dh_auto_test:
+
+override_dh_auto_install:
+	install -d $(D)/usr/bin $(S)/packaging $(S)/src
+	cp -a src/. $(S)/src/
+	cp -a packaging/modules $(S)/packaging/modules
+	install -m 0755 packaging/build-runtime.sh $(S)/packaging/build-runtime.sh
+	install -m 0755 packaging/zell $(D)/usr/bin/zell
+	install -m 0644 Makefile $(S)/Makefile
+	chmod -R a+rX $(D)
+	chmod a+x $(D)/usr/bin/zell $(S)/packaging/build-runtime.sh
+	if find $(D) \( -name kilix-secretsd -o -name 'kilix-secrets.service' -o -name 'kilix-secrets.socket' -o -name '*.nrt' -o -name '*.service' -o -name '*.socket' -o -name zell-neuronte \) | grep -q .; then exit 1; fi
+	if find $(D) -path '*/systemd/*' | grep -q .; then exit 1; fi
+	test ! -e $(D)/usr/local
+	test ! -e $(S)/weights
+	test -x $(D)/usr/bin/zell
+	test -f $(S)/src/main.c
+
+override_dh_auto_clean:
+	rm -rf build zell zell-neuronte

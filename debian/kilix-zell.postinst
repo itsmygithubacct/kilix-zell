@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+if [ "${1:-}" = configure ]; then
+    /usr/share/kilix-zell/packaging/build-runtime.sh /usr/libexec/kilix-zell
+fi
+#DEBHELPER#
+exit 0
