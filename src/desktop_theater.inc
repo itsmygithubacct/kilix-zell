@@ -1136,7 +1136,7 @@ static void th_queue_layout(int width,int height,int *left,int *top,int *per,int
     if(th.queue_page>=pages)th.queue_page=pages-1;
     if(th.queue_page<0)th.queue_page=0;
     *left=start;
-    *top=height-ZELL_ROOM_STATUS_STRIP-28;
+    *top=height-ZELL_ROOM_STATUS_STRIP-64;
     *per=n;
     *first=th.queue_page*n;
     *arrows=reserve?1:0;
@@ -1155,7 +1155,7 @@ void zell_theater_queue_rect(int index,int width,int height,zell_rect *r){
         *r=(zell_rect){left+(arrows?22:0)+slot*78,top,72,24};
         return;
     }
-    *r=(zell_rect){260+index*78,height-ZELL_ROOM_STATUS_STRIP-28,72,24};
+    *r=(zell_rect){260+index*78,height-ZELL_ROOM_STATUS_STRIP-64,72,24};
 }
 bool zell_theater_queue_nav(int width,int height,int dir,zell_rect *out){
     int left,top,per,first,arrows;

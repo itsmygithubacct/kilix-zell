@@ -205,13 +205,13 @@ int main(int argc, char **argv)
             }
         }
         scene.debug_blocks[0].enabled=false;
-        /* Kilix behind a worker screen with only his head showing. */
-        scene.room=1;scene.x=ZELL_WORLD_W*.25f;scene.y=ZELL_WORLD_H*.50f;failed+=shot(&scene,&canvas,argv[1],"command-behind");
-        /* The two bottom corners: Kilix beside the Key Master, then beside the computer. */
+        /* Kilix at the floor edge of the worker screens. */
+        scene.room=1;scene.x=ZELL_WORLD_W*.25f;scene.y=690.f;failed+=shot(&scene,&canvas,argv[1],"command-behind");
+        /* Kilix beside the Key Master, then at the central shell. */
         scene.x=ZELL_WORLD_W*.865f;scene.y=ZELL_WORLD_H*.94f;failed+=shot(&scene,&canvas,argv[1],"command-key-master");
-        scene.x=ZELL_WORLD_W*.16f;scene.y=ZELL_WORLD_H*.95f;failed+=shot(&scene,&canvas,argv[1],"command-computer");
+        scene.x=ZELL_WORLD_W*.50f;scene.y=700.f;failed+=shot(&scene,&canvas,argv[1],"command-computer");
         /* Up the strip beside the left screens, then in the opening above them. */
-        scene.x=150.f;scene.y=600.f;scene.direction=ZELL_DIR_UP;failed+=shot(&scene,&canvas,argv[1],"command-strip");
+        scene.x=64.f;scene.y=600.f;scene.direction=ZELL_DIR_UP;failed+=shot(&scene,&canvas,argv[1],"command-strip");
         scene.x=80.f;scene.y=278.f;scene.direction=ZELL_DIR_LEFT;failed+=shot(&scene,&canvas,argv[1],"command-opening");
         /* The two pane rooms before their helper has painted anything, with
          * two agents' buttons: Kilix has the keys on the way in. */

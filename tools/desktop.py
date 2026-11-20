@@ -487,10 +487,25 @@ def desktop(station,action):
             audio_stop.set();audio_thread.join(timeout=1);audio_monitor.close();raise SystemExit(0)
         signal.signal(signal.SIGTERM,stop_monitor)
         signal.signal(signal.SIGHUP,stop_monitor)
+        import zell_messages
+        speech = zell_messages.FatigueSpeech()
+        history_at, sent = 0, set()
         previous_fleet=None
         while True:
             status=vitals_snapshot()
             DIALOGUE.send('V',' '.join(str(status[k]) for k in ('health','fatigue','mana','age_days','mana_age','os_health','dirty_files')))
+            DIALOGUE.send('Z',str(status.get('updated_at',0)))
+            spoken=speech.sample(status['fatigue'])
+            if spoken:
+                DIALOGUE.send('E',f'{spoken[0]}\tKilix\t{spoken[1]}')
+            if time.monotonic()>=history_at:
+                rows=zell_messages.history()
+                for stamp,source,text in reversed(rows):
+                    if (stamp,source,text) not in sent and text:
+                        DIALOGUE.send('I',f'{stamp}\t{source}\t{text}')
+                sent=set(rows)
+                history_at=time.monotonic()+30
+
             DIALOGUE.send('J',str(status['restart_needed']))
             import zell_mana
             # L5 calls zell_provider_apply for the snapshot; the mana line follows it.

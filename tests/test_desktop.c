@@ -651,7 +651,7 @@ static void walk_notice_scene(zell_scene *s){
     zell_desktop_init(s);
     s->mode=ZELL_MODE_WALK;
     s->x=40;s->y=40;
-    s->running=false;s->run_charge=0;s->flame_tick=0;s->room=0;
+    s->running=false;s->flame_tick=0;s->room=0;
     s->mouse_valid=false;s->dictation_on=false;
     assert(zell_desktop_near(s)<0);
     assert(s->width==640&&s->height==400&&s->room_view.scale<1.f);
@@ -1264,7 +1264,7 @@ static void check_two_line_cue(int width,int height,bool fullscreen){
         assert(strstr(zell_theater_error(),"refused")&&!s.theater_install_request);
         zell_theater_queue_rect(0,width,height,&queue);
         zell_theater_fullscreen_layout(width,height,NULL,&overlap,NULL,NULL);
-        assert(queue.w>0&&rects_overlap(&queue,&overlap));
+        assert(queue.w>0&&queue.y+queue.h<=overlap.y);
         notice_y=height-ZELL_ROOM_STATUS_STRIP-18;
         assert(notice_y<overlap.y+overlap.h&&notice_y+16>overlap.y);
         had_nav=zell_theater_queue_nav(width,height,1,&nav);
@@ -3663,38 +3663,18 @@ int main(void) {
     assert(s.step_ticks==0&&zell_desktop_pose(&s,-1).art==4);
     s.x=ZELL_WORLD_W*.865f;c=(zell_controls){.move_x=1};
     zell_scene_tick(&s,&c);assert(s.step_ticks==0);
-    /* Boots-style charge: no movement until ready, no diagonal dash/steering. */
+    /* Shift runs immediately, steers freely, and requires movement. */
     zell_scene_init(&s,640,400);zell_desktop_init(&s);s.x=700;s.y=550;
-    float dash_x=s.x,dash_y=s.y;
-    c=(zell_controls){.run=true,.move_x=1,.move_y=1};
-    for(int tick=0;tick<ZELL_RUN_CHARGE_TICKS-1;tick++)zell_scene_tick(&s,&c);
-    assert(!s.running&&s.x==dash_x&&s.y==dash_y&&s.run_charge>0);
-    zell_scene_tick(&s,&c);assert(s.running);
-    assert(fabsf(s.x-dash_x-ZELL_RUN_SPEED)<.01f&&s.y==dash_y);
-    c=(zell_controls){.run=true,.move_y=-1};dash_x=s.x;
-    zell_scene_tick(&s,&c);assert(s.direction==ZELL_DIR_RIGHT&&s.y==dash_y);
-    assert(fabsf(s.x-dash_x-ZELL_RUN_SPEED)<.01f);
-    c=(zell_controls){0};dash_x=s.x;zell_scene_tick(&s,&c);
-    assert(!s.running&&s.run_charge==0&&s.x==dash_x);
-    /* Releasing during charge cancels it; Shift alone uses the facing. */
-    c=(zell_controls){.run=true};zell_scene_tick(&s,&c);assert(s.run_charge==1);
-    c=(zell_controls){0};zell_scene_tick(&s,&c);assert(s.run_charge==0);
-    c=(zell_controls){.run=true};
-    for(int tick=0;tick<ZELL_RUN_CHARGE_TICKS;tick++)zell_scene_tick(&s,&c);
-    assert(s.running&&s.direction==ZELL_DIR_RIGHT);
-    s.x=ZELL_WORLD_W*.865f-1;zell_scene_tick(&s,&c);
-    assert(!s.running&&s.run_blocked&&s.run_bump>0&&s.x<=ZELL_WORLD_W*.865f);
-    for(int tick=0;tick<40;tick++)zell_scene_tick(&s,&c);
-    assert(!s.running&&s.run_charge==0); /* No automatic recharge into the wall. */
-    c=(zell_controls){0};zell_scene_tick(&s,&c);assert(!s.run_blocked);
-    /* Collision substeps stop before passing through an NPC. */
-    s.x=zell_stations[1].x*ZELL_WORLD_W;s.y=zell_stations[1].y*ZELL_WORLD_H+30;
-    s.direction=ZELL_DIR_UP;c=(zell_controls){.run=true};
-    for(int tick=0;tick<ZELL_RUN_CHARGE_TICKS;tick++)zell_scene_tick(&s,&c);
-    assert(s.run_blocked&&!s.running);
-    assert(s.y-zell_stations[1].y*ZELL_WORLD_H>=26);
-    c=(zell_controls){.launcher=true,.run=true};zell_scene_tick(&s,&c);
-    assert(s.mode==ZELL_MODE_LAUNCHER&&!s.running&&s.run_charge==0);
+    c=(zell_controls){.run=true};zell_scene_tick(&s,&c);
+    assert(!s.running&&s.x==700.f&&s.y==550.f);
+    c.move_x=c.move_y=1;zell_scene_tick(&s,&c);
+    assert(s.running&&s.x>700.f&&s.y>550.f&&fabsf(hypotf(s.x-700.f,s.y-550.f)-ZELL_RUN_SPEED)<.02f);
+    float old_x=s.x,old_y=s.y;c.move_x=0;c.move_y=-1;zell_scene_tick(&s,&c);
+    assert(s.running&&s.direction==ZELL_DIR_UP&&s.x==old_x&&fabsf(s.y-old_y+ZELL_RUN_SPEED)<.02f);
+    c.run=false;old_y=s.y;zell_scene_tick(&s,&c);
+    assert(!s.running&&fabsf(s.y-old_y+ZELL_WALK_SPEED)<.02f);
+    c=(zell_controls){.launcher=true};zell_scene_tick(&s,&c);
+    assert(s.mode==ZELL_MODE_LAUNCHER&&!s.running);
 
     /* Trapdoors, room-local launcher, stairs, and resource slowdown. */
     zell_scene_init(&s,640,400);zell_desktop_init(&s);

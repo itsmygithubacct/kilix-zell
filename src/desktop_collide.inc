@@ -63,12 +63,7 @@ float zell_desktop_north(int room){
  if(room==7||room==8)return 400.f;
  return (float)ZELL_WORLD_H*.32f;
 }
-/* The Command Center's walls. They are walls, not furniture, so they are
- * not in the table or the debug overlay. Between the top corners of the
- * worker screens the old north line holds. Beside the screens a strip runs
- * up each side wall to its opening, and the opening runs out through the
- * wall. Below the strips the walls stand on the old .135W/.865W lines, so
- * the Command computer and the Key Master keep their corners. */
+/* The side aisles open into the pane rooms. Below them the walls bound the south floor. */
 static bool command_wall(float x,float y){
  if(y>=(float)ZELL_COMMAND_OPENING_BOTTOM&&y<(float)ZELL_COMMAND_STRIP_BOTTOM&&
     (x<(float)ZELL_COMMAND_STRIP_LEFT||x>=(float)ZELL_COMMAND_STRIP_RIGHT))return true;

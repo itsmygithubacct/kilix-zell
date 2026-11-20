@@ -906,6 +906,24 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
     /* A paste of more than one line waits for its answer: nothing else
      * moves meanwhile. */
     if(paste_answer(scene))return;
+    if(scene->desktop&&scene->utility_panel){
+        int term=zell_input_terminal(scene);
+        while(next_key(&event)){
+            if(event.action==KITTYKB_ACTION_RELEASE)continue;
+            if(event.key==KITTYKB_KEY_ESCAPE&&(term<0||(event.modifiers&KITTYKB_MOD_ALT))){
+                scene->utility_term=scene->utility_panel=0;return;
+            }
+            if(term>=0){command_key(term,&event);continue;}
+            if(scene->utility_panel==ZELL_MESSAGES_PANEL){
+                int step=event.key==KITTYKB_KEY_DOWN?1:event.key==KITTYKB_KEY_UP?-1:
+                    event.key==KITTYKB_KEY_PAGE_DOWN?5:event.key==KITTYKB_KEY_PAGE_UP?-5:0;
+                scene->message_scroll+=step;
+                if(scene->message_scroll>=scene->message_count)scene->message_scroll=scene->message_count-1;
+                if(scene->message_scroll<0)scene->message_scroll=0;
+            }
+        }
+        return;
+    }
     if(scene->desktop&&scene->room==1&&scene->mode==ZELL_MODE_WALK&&scene->command_focus){
         while(next_key(&event)){
             if(event.action==KITTYKB_ACTION_RELEASE||command_cycle(scene,&event))continue;

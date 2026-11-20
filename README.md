@@ -54,7 +54,7 @@ that archive was built are listed under Unreleased in `CHANGELOG.md`.
 | Key | Action |
 | --- | --- |
 | Arrow keys / WASD | Walk; Up/Down select menu rows |
-| Hold Shift | Charge briefly, then dash straight ahead; release to stop |
+| Hold Shift while moving | Run immediately and steer with the movement keys |
 | Enter | Interact with a nearby character or object; open an action |
 | Tab | Open/close the quick launcher |
 | Esc | Back from menus; cancel questions; open launcher while walking |
@@ -262,13 +262,8 @@ files before installation, and carries it through the offline installer.
 
 ### Running
 
-Hold either Shift key to charge a dash in place (24 simulation ticks, about
-0.4 seconds at 60 fps), then run at 9 world pixels per tick versus 3.5 walking.
-Choose a direction when charging, or use the direction Kilix is facing. The dash
-commits to that cardinal direction; release Shift to stop or turn. Walls and
-staff stop the dash with a brief bump; release Shift before charging again.
-A small bar shows the charge, and faster steps plus dust indicate running.
-Opening a station/menu cancels the dash. Shift still types normally in text fields.
+Hold Shift while moving to run in any room. Change direction while running.
+Movement still responds to health and fatigue and stops at walls and furniture.
 
 ### Vitals and health hover
 
@@ -303,6 +298,18 @@ text browser inside Zell's floating window, on a search for the words given,
 an `@handle`, or a full address. Like the floating terminal it can be
 minimized to a button on the bottom row and maximized; minimized, the page
 stays open. Zell holds one floating window at a time.
+
+**Messages** at the bottom right collects Kilix's speech, Zell notices,
+desktop notification history and recent system journal messages. When CPU or memory
+headroom is low, Kilix occasionally names the busiest processes in a speech
+bubble. The bubble fades automatically. Use Older and Newer to read history.
+
+**Updates** shows health, the elapsed days and hours since the last successful
+OS upgrade, the restart cap and the watched Git penalty. Expand **OS upgrade**
+to start `sudo apt update && sudo apt -y upgrade` in a NeuroTerm terminal.
+Other rows open separate terminals for APT clean, APT autoclean, rotating due
+logs, and browsing the user cache. Collapsing a row keeps its job running.
+Each terminal accepts normal shell input, including sudo prompts.
 
 The **Mana console** sits above the center shell. Its screen
 shows what Codex, Claude and Grok each have left. Its tasks zoom into the

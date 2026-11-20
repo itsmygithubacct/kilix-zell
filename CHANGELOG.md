@@ -4,6 +4,9 @@
 
 These changes are not in the 0.1.1 runtime archive that Plebian-OS 0.2.3 pins.
 
+- Run immediately with Shift and steer while running. Increase walking and running speed throughout the desktop.
+- Add expiring process-load speech bubbles, a Messages history and an Updates panel with live maintenance terminals.
+- Equip Kilix with a bronze fire-cat shield on the standing and walking sprites.
 - Fill the Command Center wall with six interactive NeuroTerm shells. Center Mana above its shell, group four black-glass controls on the floor, and place the staff along the south edge.
 - Keep typed and pasted text in order in the launcher, Wizard, station prompts and theater fields when several keys arrive in one frame.
 - Keep the launcher connected to a custom runtime after staging or relocation. Upgrades preserve the installed game if activation fails and refuse an unrelated destination.

@@ -261,7 +261,7 @@ def snapshot(ui, provider_directory=None):
         'Health stays 100 for 24 hours, then loses 10 per elapsed day (floor 10). Unknown = -1.',
         f'Fatigue headroom: {remaining}%; min(CPU idle, available memory), smoothed with 25% new sample.',
         f'Mana: {magic}%; oldest known reading age: {magic_age} seconds', *lines])
-    return dict(health=health, fatigue=remaining, mana=magic, age_days=age, mana_age=magic_age, details=details)
+    return dict(health=health, fatigue=remaining, mana=magic, age_days=age, mana_age=magic_age, updated_at=int(upgraded or 0), details=details)
 
 
 def monitor(ui):

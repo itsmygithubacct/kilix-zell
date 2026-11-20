@@ -111,7 +111,7 @@ static void cell_glyph(void *canvas,uint32_t scalar,unsigned flags,int x,int y,i
 }
 enum { COMMAND_GLASS=0x090d12, FLOOR_GLASS=0x050809 };
 static void desktop_cells(sr_canvas *c,int index,zell_rect body,bool focused){
- static struct {sr_canvas cells;unsigned long revision;bool focused;} cache[ZELL_COMMAND_TERMS];
+ static struct {sr_canvas cells;unsigned long revision;bool focused;} cache[ZELL_ALL_TERMS];
  const zell_command_screen *screen=zell_command_term_screen(index);
  const neuroterm *t=&screen->terminal;
  if(!t->term||screen->message){
@@ -472,19 +472,14 @@ static void desktop_world_layer(const zell_scene *s,sr_canvas *c,int cx,int cy){
    }
   }
  }
- if(s->mode==ZELL_MODE_WALK&&(s->running||s->run_charge>0)){
+ if(s->mode==ZELL_MODE_WALK&&s->running){
   float px=s->x-(float)cx,py=s->y-(float)cy;
-  if(s->running){
    float dx=s->direction==2?-1.0f:s->direction==3?1.0f:0;
    float dy=s->direction==1?-1.0f:s->direction==0?1.0f:0;
    for(int dust=0;dust<3;dust++){
     float age=(float)((s->flame_tick+4*dust)%12),back=8+age*2;
     sr_fill_ellipse(c,px-dx*back+(dy!=0?(float)(dust-1)*5:0),py-dy*back-2,2+age*.3f,1+age*.15f,0xd6c5a2u,(12-age)/24);
    }
-  }else{
-   sr_fill_rect(c,px-19,py+8,38,4,0x11282cu,.9f);
-   sr_fill_rect(c,px-18,py+9,36*(float)s->run_charge/ZELL_RUN_CHARGE_TICKS,2,0xa2e7c3u,1);
-  }
  }
  zell_actor_pose pose=zell_desktop_pose(s,-1);
  int seat_dy=zell_seat_draw_dy(s);
@@ -531,7 +526,7 @@ static void desktop_chrome(const zell_scene *s,sr_canvas *c,int cx,int cy){
  snprintf(status,sizeof status,"%02d:%02d  %d fps",local.tm_hour,local.tm_min,s->frame_rate);
  int sw=sr_text_width_in(SR_FONT_FIXED_8X16,status,1);sr_text(c,(float)(c->w-sw-12),7,status,0xa6d9ccu,1,1);
  sr_fill_rect(c,0,(float)(c->h-ZELL_ROOM_STATUS_STRIP),(float)c->w,ZELL_ROOM_STATUS_STRIP,0x0c1921u,.97f);
- const char *hint=s->mode==ZELL_MODE_WALK&&s->running?"Dashing | Release Shift to stop":s->mode==ZELL_MODE_WALK&&s->run_charge>0?"Charging dash... | Release Shift to cancel":s->mode==ZELL_MODE_SERVICE?"Station window | Esc back":near>=0?"Enter interact | Tab stations":c->w<500?"WASD | Shift run | Tab":"WASD walk | Hold Shift run | Tab stations";
+ const char *hint=s->mode==ZELL_MODE_WALK&&s->running?"Running | Release Shift to walk":s->mode==ZELL_MODE_SERVICE?"Station window | Esc back":near>=0?"Enter interact | Tab stations":c->w<500?"WASD | Shift run | Tab":"WASD walk | Hold Shift run | Tab stations";
  if(s->room==1&&s->mode==ZELL_MODE_WALK){
   if(s->command_focus)hint="F6 next shell | Alt+Esc walk";
   else if(near<0)hint="Click a shell or F6 | WASD walk | Tab stations";
@@ -886,3 +881,5 @@ void zell_ui_blit(struct sr_canvas *canvas,int dx,int dy,int dw,int dh,const uin
  sr_canvas_wrap(&src,(uint32_t *)pixels,src_w,src_h);
  sr_blit_scaled(canvas,&src,dx+x,dy+y,w,h,1.f);
 }
+
+#include "desktop_hud.inc"

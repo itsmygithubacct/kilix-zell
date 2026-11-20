@@ -26,9 +26,16 @@ else:
     print('Loading model...\\n> Hello\\n\\nHello from the model.\\n\\n[ Prompt: 1 token ]\\nExiting...')
 """)
     fake.chmod(0o700)
+    # Only this stub can receive a privilege request in the maintenance test.
+    sudo = pathlib.Path(directory)/'sudo'
+    sudo.write_text("""#!/bin/sh
+echo "simulated-$* command"
+""")
+    sudo.chmod(0o700)
     pid, fd = pty.fork()
     if pid == 0:
         os.environ["PATH"] = directory + os.pathsep + os.environ["PATH"]
+        os.environ["ZELL_TEST_MAINTENANCE"] = directory
         os.execv(sys.argv[1], [sys.argv[1]])
     output = bytearray()
     deadline = time.monotonic() + 15

@@ -149,7 +149,7 @@ static void pn_bounds(const zell_scene *s,float *x0,float *x1){
     if(*x1<*x0)*x1=*x0;
 }
 static void pn_stand(zell_scene *s){
-    s->mode=ZELL_MODE_WALK;s->running=false;s->run_charge=0;s->run_bump=0;s->run_blocked=false;
+    s->mode=ZELL_MODE_WALK;s->running=false;
     s->step=0;s->step_ticks=0;s->desktop_launch=false;
 }
 static void pn_place(zell_scene *s){
@@ -187,7 +187,7 @@ void zell_panes_leave(zell_scene *s){
 int zell_panes_tick(zell_scene *s,const zell_controls *c){
     float x0,x1,dx=pn.keys_pane?0.f:(float)c->move_x,dy=pn.keys_pane?0.f:(float)c->move_y;
     int side=zell_panes_exit_side(s->room);
-    s->mode=ZELL_MODE_WALK;s->running=false;s->run_charge=0;s->run_bump=0;s->run_blocked=false;
+    s->mode=ZELL_MODE_WALK;s->running=false;
     if(dx!=0.f)pn.entering=false;
     if(pn.entering){int direction=s->direction;pn_place(s);if(dy!=0.f)s->direction=direction;}
     pn_bounds(s,&x0,&x1);

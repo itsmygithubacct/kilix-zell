@@ -31,6 +31,7 @@ static const struct { char kind; bool job; bool monitor; } zell_frame_registry[]
  {'R',true,false},{'O',true,false},{'T',true,false},
  {'G',false,true},{'H',false,true},{'F',false,true},{'U',false,true},
  {'V',false,true},{'Y',false,true},{'N',false,true},{'S',false,true},{'W',false,true},
+ {'Z',false,true},{'I',false,true},{'E',false,true},
  {'A',false,true},{'J',false,true},{'D',false,true},{'B',false,true}
 };
 static int frame_origin_allowed(char kind,int origin){
@@ -120,6 +121,18 @@ static void service_frame(zell_scene *s,char *frame,int origin,int slot,int gene
         /* L5 calls zell_provider_check_apply. */
         if(kind=='H'){zell_provider_check_apply(s,decoded);return;}
         /* L6 calls zell_fleet_apply. */
+        if(kind=='Z'){char *end;long long stamp=strtoll(decoded,&end,10);
+            if(end!=decoded&&!*end&&stamp>=0)s->upgraded_at=stamp;
+            return;
+        }
+        if(kind=='I'||kind=='E'){
+            char *source,*body;long long stamp=strtoll(decoded,&source,10);
+            if(stamp<=0||*source!='\t')return;
+            body=strchr(++source,'\t');if(!body)return;
+            *body++=0;zell_message_add(s,stamp,source,body);
+            if(kind=='E'){snprintf(s->bubble,sizeof s->bubble,"%.239s",body);s->bubble_until=zell_notice_clock_ms()+8500;}
+            return;
+        }
         if(kind=='F'){zell_fleet_apply(s,decoded);return;}
         if(kind=='U'){zell_update_apply(s,decoded);return;}
         /* Legacy M carries the same three integers for one transition, never a menu. */
@@ -176,7 +189,7 @@ static void service_frame(zell_scene *s,char *frame,int origin,int slot,int gene
     return;
     }
     /* Telemetry belongs to the monitor. A job M is a menu even when the title is numeric. */
-    if(kind&&strchr("GHFUVYNSWAJDB",kind))return;
+    if(kind&&strchr("GHFUVYNSWAJDBZIE",kind))return;
     if(kind&&strchr("TPQROLCM",kind)&&!zell_window_accepts_frame(s,slot,generation))return;
     if(kind=='T'){s->service_phase=5;s->terminal_maximized=s->terminal_minimized=false;return;}
     /* A helper that leaves the terminal for a prompt or report must be seen. */
@@ -362,7 +375,7 @@ static void service_pump(desktop_service *p,zell_scene *s){
                 /* A frame that does not fit is discarded whole, so a truncated prefix cannot apply. */
                 if(p->length&&p->length<sizeof p->frame){
                     p->frame[p->length]=0;
-                    if(!p->monitor||strchr("VDBSWJNAYGHFMU",p->frame[0]))
+                    if(!p->monitor||frame_origin_allowed(p->frame[0],SERVICE_ORIGIN_MONITOR)==1)
                         service_frame(s,p->frame,p->monitor?SERVICE_ORIGIN_MONITOR:SERVICE_ORIGIN_JOB,p->window_slot,p->window_generation);
                 }
                 p->length=0;

@@ -2,6 +2,7 @@
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <ctype.h>
 #include <time.h>
 #include "draw.h"
@@ -235,7 +236,7 @@ static int workshop_next_generation(const zell_scene *s){
 }
 static void workshop_show_full(zell_scene *s){
  s->notice_count=1;
- snprintf(s->notice_text,sizeof s->notice_text,"%s",workshop_full_notice);
+ zell_notice_apply(s,workshop_full_notice);
 }
 static bool workshop_reserve(zell_scene *s){
  if(workshop_slot(s)>=0)return true;
@@ -303,7 +304,7 @@ static void workshop_hop_down(zell_scene *s){
  if(s->mode==ZELL_MODE_SERVICE)s->mode=ZELL_MODE_WALK;
  s->direction=ZELL_DIR_UP;
  s->step=0;s->step_ticks=0;
- s->running=false;s->run_charge=0;
+ s->running=false;
  s->seat_ticks=ZELL_SEAT_HOP_TICKS-1;
  workshop_place(s,s->seat_ticks);
 }
@@ -311,7 +312,7 @@ static void workshop_begin_hop(zell_scene *s){
  if(s->seated||s->seat_ticks>0)return;
  if(!workshop_reserve(s))return;
  if(s->notice_count>0&&!strcmp(s->notice_text,workshop_full_notice)){s->notice_count=0;s->notice_text[0]=0;}
- s->running=false;s->run_charge=0;s->run_blocked=true;
+ s->running=false;
  s->station=ZELL_WORKSHOP_COMPUTER;s->menu_index=0;
  s->mode=ZELL_MODE_WALK;s->desktop_launch=false;
  s->direction=ZELL_DIR_UP;s->step=0;s->step_ticks=0;
@@ -334,7 +335,7 @@ static void workshop_on_frame(zell_scene *s){
   if(slot>=0)workshop_release_window(s,slot);
   if(strstr(s->service_text,"Could not start")){
    s->notice_count=1;
-   snprintf(s->notice_text,sizeof s->notice_text,"%.319s",s->service_text);
+   zell_notice_apply(s,s->service_text);
   }
   s->mode=ZELL_MODE_WALK;
   s->service_phase=0;
@@ -343,7 +344,7 @@ static void workshop_on_frame(zell_scene *s){
 }
 static bool workshop_seat_tick(zell_scene *s,const zell_controls *c){
  if(!s->seated&&s->seat_ticks<=0)return false;
- s->direction=ZELL_DIR_UP;s->step=0;s->step_ticks=0;s->running=false;s->run_charge=0;
+ s->direction=ZELL_DIR_UP;s->step=0;s->step_ticks=0;s->running=false;
  if(s->seat_ticks>0&&s->seat_ticks<ZELL_SEAT_HOP_TICKS){
   if(s->seated){
    s->seat_ticks--;
@@ -381,7 +382,7 @@ int zell_hatch_room(int station){
 static void open_station(zell_scene *s,int n){
  s->command_focus=0;
  if(n==ZELL_WORKSHOP_COMPUTER){workshop_begin_hop(s);return;}
- s->running=false;s->run_charge=0;s->run_blocked=true;s->station=n;s->menu_index=0;s->menu_hold=0;
+ s->running=false;s->station=n;s->menu_index=0;s->menu_hold=0;
  int room=zell_hatch_room(n);
  if(n==28||room){
   if(n==28){
@@ -399,12 +400,12 @@ static void open_station(zell_scene *s,int n){
 #include "desktop_collide.inc"
 int zell_desktop_tick(zell_scene *s,const zell_controls *c){
  if(!s->desktop)return 0;
+ if(s->utility_panel){s->running=false;s->step=0;s->step_ticks=0;return 1;}
  /* Pumps the theater helper. A consumed key, including fullscreen Escape, wins. */
  if(zell_theater_input(s,c))return 1;
  if(s->zoom_ticks>0){if(++s->zoom_ticks>ZELL_ZOOM_TICKS){s->zoom_ticks=0;s->desktop_launch=true;}return 1;}
  if(ZELL_ROOM_IS_PANES(s->room))return zell_panes_tick(s,c);
- if(!c->run){s->running=false;s->run_charge=0;s->run_blocked=false;}
- if(s->mode!=ZELL_MODE_WALK){s->running=false;s->run_charge=0;s->run_bump=0;s->run_blocked=c->run;}
+ if(s->mode!=ZELL_MODE_WALK){s->running=false;}
  workshop_on_frame(s);
 
  if(s->mode==ZELL_MODE_SERVICE){
@@ -429,32 +430,17 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
   }
   return 1;
  }
- if(c->launcher&&s->mode!=ZELL_MODE_WAIT){s->running=false;s->run_charge=0;s->run_blocked=c->run;s->mode=s->mode==ZELL_MODE_LAUNCHER?ZELL_MODE_WALK:ZELL_MODE_LAUNCHER;s->menu_index=0;s->menu_hold=0;s->launcher_query[0]=0;return 1;}
+ if(c->launcher&&s->mode!=ZELL_MODE_WAIT){s->running=false;s->mode=s->mode==ZELL_MODE_LAUNCHER?ZELL_MODE_WALK:ZELL_MODE_LAUNCHER;s->menu_index=0;s->menu_hold=0;s->launcher_query[0]=0;return 1;}
  if(s->mode==ZELL_MODE_WALK){
   if(s->room==1&&s->command_focus)return 1;
   if(workshop_seat_tick(s,c))return 1;
   float dx=(float)c->move_x,dy=(float)c->move_y;
-  float d=sqrtf(dx*dx+dy*dy),speed=ZELL_WALK_SPEED;
-  if(s->run_bump>0){s->run_bump--;dx=dy=d=0;}
-  else if(c->run&&!s->run_blocked){
-   if(s->run_charge==0&&!s->running){
-    if(d>0)s->direction=dx<0?2:dx>0?3:dy<0?1:0;
-    s->run_direction=s->direction;s->step_ticks=0;
-   }
-   if(!s->running){
-    s->run_charge++;
-    if(s->run_charge>=ZELL_RUN_CHARGE_TICKS){s->running=true;s->step_ticks=0;}
-   }
-   /* Charge in place, then commit to one cardinal direction until release. */
-   s->direction=s->run_direction;
-   dx=s->direction==2?-1.0f:s->direction==3?1.0f:0.0f;
-   dy=s->direction==1?-1.0f:s->direction==0?1.0f:0.0f;
-   d=1;speed=s->running?ZELL_RUN_SPEED:0;
-  }
-  speed*=zell_desktop_speed_factor(s);
+  float d=sqrtf(dx*dx+dy*dy);
+  s->running=c->run&&d>0;
+  float speed=(s->running?ZELL_RUN_SPEED:ZELL_WALK_SPEED)*zell_desktop_speed_factor(s);
   bool blocked=false;
   if(d>0&&speed>0){
-   if(!s->running)s->direction=dx<0?2:dx>0?3:dy<0?1:0;
+   s->direction=dx<0?2:dx>0?3:dy<0?1:0;
    /* Substeps retain walking collision precision at dash speed. */
    int steps=(int)ceilf(speed/ZELL_WALK_SPEED);
    for(int step=0;step<steps;step++){
@@ -496,16 +482,15 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
     if(zell_desktop_on_stairs(s)){open_station(s,28);return 1;}
    }
    s->step_ticks++;s->step=(s->step_ticks/(s->running?3:7))%2;
-  }else if(s->run_charge>0&&!s->run_blocked){s->step_ticks++;}
-  else {s->step=0;s->step_ticks=0;}
+  }else {s->step=0;s->step_ticks=0;}
   if(blocked){
    s->step_ticks=0;s->step=0;
-   if(s->running){s->running=false;s->run_charge=0;s->run_blocked=true;s->run_bump=6;}
+   s->running=false;
   }
   if(s->room==0&&s->y/(float)ZELL_WORLD_H>.975f)s->leave=true;
   if(c->confirm){int n=zell_desktop_near(s);
  if(n>=0)open_station(s,n);}
-  if(c->cancel){s->running=false;s->run_charge=0;s->run_blocked=c->run;s->mode=ZELL_MODE_LAUNCHER;s->menu_index=0;}
+  if(c->cancel){s->running=false;s->mode=ZELL_MODE_LAUNCHER;s->menu_index=0;}
   return 1;
  }
  if(s->mode!=ZELL_MODE_DESK&&s->mode!=ZELL_MODE_LAUNCHER)return 0;
@@ -549,12 +534,11 @@ zell_actor_pose zell_desktop_pose(const zell_scene *s, int actor)
         pose.art = zell_stations[actor].art;
         pose.offset_y = idle_y[phase];
     } else if (s->mode == ZELL_MODE_WALK && s->step_ticks > 0) {
-        int frame = ((s->step_ticks - 1) / ((s->running || s->run_charge>0)?3:7)) % 4;
+        int frame = ((s->step_ticks - 1) / (s->running?3:7)) % 4;
         pose.art = 17 + s->direction * 4 + frame;
     } else {
-        if(s->run_bump>0){pose.offset_x=s->direction==3?-2:s->direction==2?2:0;pose.offset_y=s->direction==0?-2:s->direction==1?2:0;}
         pose.art = 1 + s->direction;
-        if(!s->run_bump)pose.offset_y = idle_y[(s->flame_tick / 11) % 4];
+        pose.offset_y = idle_y[(s->flame_tick / 11) % 4];
     }
     return pose;
 }
@@ -581,6 +565,8 @@ void zell_terminal_layout_for(const zell_scene *s,int width,int height,zell_term
   * button is as wide as its title. */
  int title=(int)strlen(s->terminal_title[0]?s->terminal_title:"Neuronte terminal")*8+36;
  if(title>236)title=236;
+ int fit=width-2*(width<360?width/4:93)-20-ZELL_WINDOW_ROW_X;
+ if(fit>0&&title>fit)title=fit;
  out->tab=(zell_rect){ZELL_WINDOW_ROW_X,height-64,title,26};
 }
 static void window_note_terminal(zell_scene *s){
@@ -664,10 +650,85 @@ void zell_command_switch_layout(int index,zell_rect *frame){
 }
 void zell_command_focus(zell_scene *s,int index){
  s->command_focus=index+1;
- s->running=false;s->run_charge=0;s->step=0;s->step_ticks=0;
+ s->running=false;s->step=0;s->step_ticks=0;
  if(index>=0)zell_command_term_retry(index);
 }
+void zell_utility_rects(const zell_scene *s,zell_utility_layout *l){
+ int w=s->width,h=s->height,tab=w<360?w/4:93,bottom=h-38;
+ *l=(zell_utility_layout){0};
+ l->updates=(zell_rect){w-tab-6,bottom-26,tab,26};
+ l->messages=(zell_rect){w-2*tab-11,bottom-26,tab,26};
+ int bw=w-16,bh=h-80;
+ int maxw=s->utility_term?920:640;
+ int maxh=s->utility_term?680:s->utility_panel==ZELL_UPDATES_PANEL?244:445;
+ if(bw>maxw)bw=maxw;
+ if(bh>maxh)bh=maxh;
+ l->box=(zell_rect){w-bw-8,bottom-29-bh,bw,bh};
+ int x=l->box.x,y=l->box.y;
+ l->close=(zell_rect){x+bw-32,y+4,26,22};
+ l->older=(zell_rect){x+bw-158,y+4,56,22};
+ l->newer=(zell_rect){x+bw-98,y+4,56,22};
+ int start=y+(h<330?77:104),row=h<420?21:25;
+ int columns=h<300?2:1,cell=(bw-20)/columns;
+ int rows=(ZELL_MAINT_ACTIONS+columns-1)/columns;
+ if(s->utility_term&&h<380){
+  l->action[s->utility_term-1]=(zell_rect){x+10,start,bw-20,row-2};
+  rows=1;
+ }else for(int i=0;i<ZELL_MAINT_ACTIONS;i++)
+  l->action[i]=(zell_rect){x+10+i%columns*cell,start+i/columns*row,cell-(columns-1)*2,row-2};
+ int yy=start+rows*row+4;
+ l->body=(zell_rect){x+12,yy,bw-24,y+bh-yy-9};
+}
+bool zell_utility_hit(const zell_scene *s,int x,int y){
+ if(!s->desktop||zell_theater_fullscreen())return false;
+ zell_utility_layout l;zell_utility_rects(s,&l);
+ return rect_holds(&l.messages,x,y)||rect_holds(&l.updates,x,y)||
+        (s->utility_panel&&rect_holds(&l.box,x,y));
+}
+int zell_input_terminal(const zell_scene *s){
+ if(s->utility_panel)return s->utility_panel==ZELL_UPDATES_PANEL&&s->utility_term?
+     ZELL_COMMAND_TERMS+s->utility_term-1:-1;
+ return s->desktop&&s->room==1&&s->mode==ZELL_MODE_WALK?s->command_focus-1:-1;
+}
+void zell_message_add(zell_scene *s,int64_t stamp,const char *source,const char *text){
+ if(!text||!*text||stamp<=0)return;
+ int pos=0;
+ for(int i=0;i<s->message_count;i++){
+  zell_message *m=&s->messages[i];
+  if(!strcmp(source,m->source)&&!strcmp(text,m->text)&&llabs(stamp-m->time)<10)return;
+  if(m->time>stamp)pos=i+1;
+ }
+ if(pos>=ZELL_MESSAGES)return;
+ if(s->message_count<ZELL_MESSAGES)s->message_count++;
+ memmove(&s->messages[pos+1],&s->messages[pos],(size_t)(s->message_count-pos-1)*sizeof s->messages[0]);
+ zell_message *m=&s->messages[pos];m->time=stamp;
+ snprintf(m->source,sizeof m->source,"%.31s",source);snprintf(m->text,sizeof m->text,"%.319s",text);
+ if(s->utility_panel==ZELL_MESSAGES_PANEL&&s->message_scroll>0&&pos<=s->message_scroll&&s->message_scroll<s->message_count-1)s->message_scroll++;
+}
+static bool utility_click(zell_scene *s){
+ if(zell_theater_fullscreen())return false;
+ if(!s->desktop||!s->mouse_valid||!s->mouse_click)return false;
+ int x=s->mouse_x,y=s->mouse_y;
+ zell_utility_layout l;zell_utility_rects(s,&l);
+ int panel=rect_holds(&l.messages,x,y)?ZELL_MESSAGES_PANEL:rect_holds(&l.updates,x,y)?ZELL_UPDATES_PANEL:0;
+ if(panel){
+  s->utility_panel=s->utility_panel==panel?0:panel;s->utility_term=0;s->message_scroll=0;
+  s->command_focus=0;
+ }else if(!s->utility_panel)return false;
+ else if(!rect_holds(&l.box,x,y)||rect_holds(&l.close,x,y)){s->utility_panel=0;s->utility_term=0;}
+ else if(s->utility_panel==ZELL_MESSAGES_PANEL){
+  if(rect_holds(&l.older,x,y)&&s->message_scroll+1<s->message_count)s->message_scroll++;
+  if(rect_holds(&l.newer,x,y)&&s->message_scroll>0)s->message_scroll--;
+ }else for(int i=0;i<ZELL_MAINT_ACTIONS;i++){
+  if(!rect_holds(&l.action[i],x,y))continue;
+  s->utility_term=s->utility_term==i+1?0:i+1;
+  if(s->utility_term)zell_command_term_retry(ZELL_COMMAND_TERMS+i);
+  break;
+ }
+ s->mouse_click=false;return true;
+}
 bool zell_desktop_click(zell_scene *s){
+ if(utility_click(s))return true;
  /* Screen-space theater hits consume the click before any world conversion. */
  if(zell_theater_click(s))return true;
  if(!s->desktop||!s->mouse_valid||!s->mouse_click||s->mode!=ZELL_MODE_WALK)return false;
@@ -1033,6 +1094,7 @@ void zell_notice_apply(zell_scene *s,const char *text){
  }
  if(s->notice_key[0]&&strcmp(incoming,s->notice_text)==0)return;
  snprintf(s->notice_text,sizeof s->notice_text,"%s",incoming);
+ zell_message_add(s,(int64_t)time(NULL),"Zell",incoming);
  notice_identity(s->notice_text,s->notice_key,sizeof s->notice_key);
  s->notice_until_ms=zell_notice_clock_ms()+8000;
 }

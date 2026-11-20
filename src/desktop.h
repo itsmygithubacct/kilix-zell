@@ -27,7 +27,7 @@
 #define ZELL_LIBRARY_HATCH 55
 #define ZELL_DOWNSTAIRS_ROOMS 8
 #define ZELL_HATCH_FOOT_OFFSET 14
-/* The Command Center's shell computer, in its bottom left corner. */
+/* Shell below the Mana readout in the center of the wall. */
 #define ZELL_COMMAND_COMPUTER 56
 /* The Command Center's controller and four worker screens. */
 #define ZELL_COMMAND_SCREEN_FIRST 15
@@ -37,9 +37,8 @@
 /* Where the Neuronte lever is drawn, relative to its floor interaction point. */
 #define ZELL_SWITCH_WALL_DX 104
 #define ZELL_SWITCH_WALL_DY 6
-#define ZELL_RUN_CHARGE_TICKS 24
-#define ZELL_WALK_SPEED 3.5f
-#define ZELL_RUN_SPEED 9.0f
+#define ZELL_WALK_SPEED 4.0f
+#define ZELL_RUN_SPEED 10.0f
 #define ZELL_MODE_DESK 6
 #define ZELL_MODE_LAUNCHER 7
 #define ZELL_MODE_SERVICE 8
@@ -89,11 +88,20 @@ typedef struct { int x, y, w, h; } zell_rect;
 void zell_monitor_layout(int screen,zell_rect *frame,zell_rect *display);
 void zell_mana_console_layout(zell_rect *frame,zell_rect *display);
 void zell_command_computer_layout(zell_rect *frame,zell_rect *display);
-enum { ZELL_COMMAND_TERMS=6, ZELL_COMMAND_SHELL=5, ZELL_FLOOR_PANELS=4 };
+enum { ZELL_COMMAND_TERMS=6, ZELL_COMMAND_SHELL=5, ZELL_FLOOR_PANELS=4, ZELL_MAINT_ACTIONS=5,
+       ZELL_ALL_TERMS=ZELL_COMMAND_TERMS+ZELL_MAINT_ACTIONS };
+enum { ZELL_MESSAGES_PANEL=1, ZELL_UPDATES_PANEL=2 };
+typedef struct {
+ zell_rect messages,updates,box,close,older,newer,action[ZELL_MAINT_ACTIONS],body;
+} zell_utility_layout;
+void zell_utility_rects(const zell_scene *s,zell_utility_layout *layout);
+bool zell_utility_hit(const zell_scene *s,int x,int y);
+void zell_message_add(zell_scene *s,int64_t stamp,const char *source,const char *text);
+int zell_input_terminal(const zell_scene *s);
 void zell_command_term_layout(int index,zell_rect *frame,zell_rect *body);
 void zell_command_focus(zell_scene *s,int index);
 /* The Key Master's two lines, shown while Kilix is beside him. He stands in
- * the bottom right corner, with the AGENTS panel above him and the wall to
+ * the bottom right corner, with the fleet panel above him and the wall to
  * his right, so his lines go in the strip under that panel, ending left of
  * where Kilix can stand beside him. World pixels: the right edge of both
  * boxes and the top of the first. */

@@ -72,29 +72,36 @@ static void desktop_pointer(void *user,unsigned buttons,int x,int y,bool release
  s->mouse_x=x-1-kittyfb_origin_x(&framebuffer);s->mouse_y=y-1-kittyfb_origin_y(&framebuffer);s->mouse_valid=true;
  /* Left press only: not motion (32), wheel (64) or extra buttons (128). */
  if(!release&&!(buttons&(3u|32u|64u|128u)))s->mouse_click=true;
- if(ZELL_ROOM_IS_PANES(s->room))(void)zell_panes_pointer(s,buttons,s->mouse_x,s->mouse_y,release);
+ if(s->utility_panel==ZELL_MESSAGES_PANEL&&(buttons&64u)&&!release){
+  s->message_scroll+=(buttons&1u)?1:-1;
+  if(s->message_scroll>=s->message_count)s->message_scroll=s->message_count-1;
+  if(s->message_scroll<0)s->message_scroll=0;
+ }
+ if(!s->utility_panel&&!zell_utility_hit(s,s->mouse_x,s->mouse_y)&&ZELL_ROOM_IS_PANES(s->room))(void)zell_panes_pointer(s,buttons,s->mouse_x,s->mouse_y,release);
 }
 static void paste_deliver(zell_scene *s,const char *bytes,size_t count){
- if(s->room==1&&s->mode==ZELL_MODE_WALK&&s->command_focus){
-  if(!zell_command_term_paste(s->command_focus-1,bytes,count))ask_say(s,"The paste was not sent.");
+ int term=zell_input_terminal(s);
+ if(term>=0){
+  if(!zell_command_term_paste(term,bytes,count))ask_say(s,"The paste was not sent.");
   return;
  }
+ if(s->utility_panel)return;
  if(ZELL_ROOM_IS_PANES(s->room)){(void)zell_panes_paste(s,bytes,count);return;}
  /* Elsewhere a paste is typed, as before 2004 was asked for. */
  if(bytes){typed_add(bytes,count);typed_feed();}
 }
 static void desktop_paste(void *user,const char *bytes,size_t count){
  zell_scene *s=user;
- if(s->room==1&&s->mouse_click)(void)zell_desktop_click(s);
+ if(s->mouse_click&&(s->room==1||s->utility_panel||zell_utility_hit(s,s->mouse_x,s->mouse_y)))(void)zell_desktop_click(s);
  size_t lines=bytes&&count!=ZELL_INPUT_PASTE_UNENDED?zell_paste_lines(bytes,count):0;
  /* One line, or a pane room where Kilix has the keys (it goes nowhere). */
- if(!lines||(ZELL_ROOM_IS_PANES(s->room)&&!zell_panes_keys_to_pane())){paste_deliver(s,bytes,count);return;}
+ if(!lines||(!s->utility_panel&&ZELL_ROOM_IS_PANES(s->room)&&!zell_panes_keys_to_pane())){paste_deliver(s,bytes,count);return;}
  /* A newer paste takes the place of one still waiting. */
  ask_drop(s,false);
  char *held=malloc(count);
  if(!held){ask_say(s,"The paste was not sent.");return;}
  memcpy(held,bytes,count);
- ask_bytes=held;ask_n=count;ask_room=s->room;ask_command_focus=s->command_focus;ask_until=zell_notice_clock_ms()+ZELL_PASTE_ASK_MS;
+ ask_bytes=held;ask_n=count;ask_room=s->room;ask_command_focus=zell_input_terminal(s);ask_until=zell_notice_clock_ms()+ZELL_PASTE_ASK_MS;
  ask_armed=!typed_n&&!keyboard.input.queue_count;
  /* Short enough for a laptop pane's title bar beside its buttons. */
  char text[64];
@@ -107,7 +114,7 @@ static bool modifier_key(uint32_t key){return key==KITTYKB_KEY_NONE||(key>=KITTY
 static bool paste_answer(zell_scene *s){
  if(!ask_n)return false;
  /* Unanswered in time it is said; in another room, it is just gone. */
- if(s->room!=ask_room||(s->room==1&&s->command_focus!=ask_command_focus)||zell_notice_clock_ms()>=ask_until){ask_drop(s,s->room==ask_room);return false;}
+ if(s->room!=ask_room||(zell_input_terminal(s)!=ask_command_focus)||zell_notice_clock_ms()>=ask_until){ask_drop(s,s->room==ask_room);return false;}
  if(!ask_armed){
   if(typed_n||keyboard.input.queue_count)return false;
   ask_armed=true;

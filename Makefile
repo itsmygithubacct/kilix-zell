@@ -80,7 +80,7 @@ $(ROOT)/zell: $(APP_OBJS) $(LIB_OBJS) | $(BUILD)
 	$(CC) $(CFLAGS) $^ $(LDLIBS) -o $@
 
 $(BUILD)/test-scene: $(TEST_OBJS) | $(BUILD)
-	$(CC) $(CFLAGS) $^ -lz -lm -o $@
+	$(CC) $(CFLAGS) $^ $(LDLIBS) -o $@
 
 $(BUILD)/main.o: $(ROOT)/src/main.c $(ROOT)/src/desktop_service.inc | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
@@ -302,14 +302,14 @@ $(BUILD)/test_neuronte.o: $(ROOT)/tests/test_neuronte.c | $(BUILD)
 	$(CC) $(N_CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/test-neuronte: $(BUILD)/test_neuronte.o $(N_COMMON) $(CANVAS_OBJS) $(NEURONTE_LIB) | $(BUILD)
-	$(CC) $(CFLAGS) $^ -lz -lm -o $@
+	$(CC) $(CFLAGS) $^ $(LDLIBS) -o $@
 
 # The scene tests again, with the Neuronte renderer in place of draw.o.
 $(BUILD)/test_scene_neuronte.o: $(ROOT)/tests/test_scene.c | $(BUILD)
 	$(CC) $(N_CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/test-scene-neuronte: $(BUILD)/test_scene_neuronte.o $(N_COMMON) $(CANVAS_OBJS) $(NEURONTE_LIB) | $(BUILD)
-	$(CC) $(CFLAGS) $^ -lz -lm -o $@
+	$(CC) $(CFLAGS) $^ $(LDLIBS) -o $@
 
 test-neuronte: $(BUILD)/test-neuronte $(BUILD)/test-scene-neuronte
 	$(BUILD)/test-neuronte
@@ -322,10 +322,10 @@ $(BUILD)/snap_neuronte.o: $(ROOT)/tools/snap.c | $(BUILD)
 	$(CC) $(N_CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/snap: $(BUILD)/snap.o $(BUILD)/draw.o $(SNAP_COMMON) | $(BUILD)
-	$(CC) $(CFLAGS) $^ -lz -lm -o $@
+	$(CC) $(CFLAGS) $^ $(LDLIBS) -o $@
 
 $(BUILD)/snap-neuronte: $(BUILD)/snap_neuronte.o $(BUILD)/draw_neuronte.o $(SNAP_NEURONTE) $(NEURONTE_LIB) | $(BUILD)
-	$(CC) $(CFLAGS) $^ -lz -lm -o $@
+	$(CC) $(CFLAGS) $^ $(LDLIBS) -o $@
 
 snap: $(BUILD)/snap $(BUILD)/snap-neuronte
 
@@ -363,7 +363,7 @@ $(BUILD)/desktop.o: $(ROOT)/src/desktop.c $(ROOT)/src/desktop.h $(ROOT)/src/desk
 $(BUILD)/art_%.o: $(ROOT)/src/desktop_art/%.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(APP_OBJS) $(TEST_OBJS) $(BUILD)/main_neuronte.o $(BUILD)/test_scene_neuronte.o $(BUILD)/test_neuronte.o $(BUILD)/snap.o $(BUILD)/snap_neuronte.o: $(ROOT)/src/scene.h $(ROOT)/src/desktop.h
+$(filter-out $(NEUROTERM_OBJECTS),$(APP_OBJS) $(TEST_OBJS)) $(BUILD)/main_neuronte.o $(BUILD)/test_scene_neuronte.o $(BUILD)/test_neuronte.o $(BUILD)/snap.o $(BUILD)/snap_neuronte.o: $(ROOT)/src/scene.h $(ROOT)/src/desktop.h
 
 $(BUILD)/test_desktop.o: $(ROOT)/tests/test_desktop.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
@@ -384,6 +384,7 @@ test-desktop: $(BUILD)/test-desktop
 	python3 $(ROOT)/tests/test_dialogue.py
 	python3 $(ROOT)/tests/test_library.py
 	python3 $(ROOT)/tests/test_package_runtime.py
+	python3 $(ROOT)/tests/test_messages.py
 	python3 $(ROOT)/tests/test_vitals.py
 	python3 $(ROOT)/tests/test_mana.py
 	python3 $(ROOT)/tests/test_mana_manual.py

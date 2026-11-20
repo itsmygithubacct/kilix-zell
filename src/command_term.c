@@ -22,29 +22,39 @@ typedef struct {
     size_t offset,length,capacity;
 } command_pty;
 
-static command_pty shells[ZELL_COMMAND_TERMS];
+static command_pty shells[ZELL_ALL_TERMS];
 
 const zell_command_screen *zell_command_term_screen(int index){
-    return index>=0&&index<ZELL_COMMAND_TERMS?&shells[index].screen:NULL;
+    return index>=0&&index<ZELL_ALL_TERMS?&shells[index].screen:NULL;
 }
 
-static void enter_shell_directory(int index){
-    if(index!=ZELL_COMMAND_SHELL){
-        const char *home=getenv("HOME");
-        if(home)(void)chdir(home);
-        return;
-    }
+/* Installed games keep tools beside the binary. Test programs live in build/. */
+static char *tool_path(const char *name){
     char exe[PATH_MAX];
     ssize_t n=readlink("/proc/self/exe",exe,sizeof exe-1);
-    if(n<0||n>=(ssize_t)sizeof exe-1)return;
-    exe[n]='\0';
-    char *slash=strrchr(exe,'/');
-    if(!slash)return;
-    *slash='\0';
-    if(chdir(exe)<0||(chdir("tools/mana")<0&&chdir("../tools/mana")<0)){
-        dprintf(STDERR_FILENO,"Could not open the mana scripts directory.\r\n");
-        return;
+    if(n<0||n>=(ssize_t)sizeof exe-1)return NULL;
+    exe[n]=0;
+    char *slash=strrchr(exe,'/');if(!slash)return NULL;
+    *slash=0;
+    const char *roots[]={"tools","../tools"};
+    for(size_t i=0;i<sizeof roots/sizeof roots[0];i++){
+        char *path=NULL;
+        if(asprintf(&path,"%s/%s/%s",exe,roots[i],name)<0)return NULL;
+        if(access(path,R_OK)==0)return path;
+        free(path);
     }
+    return NULL;
+}
+static void enter_shell_directory(int index){
+    const char *home=getenv("HOME");
+    if(home)(void)chdir(home);
+    if(index!=ZELL_COMMAND_SHELL)return;
+    char *mana=tool_path("mana");
+    if(!mana||chdir(mana)<0){
+        dprintf(STDERR_FILENO,"Could not open the mana scripts directory.\r\n");
+        free(mana);return;
+    }
+    free(mana);
     char *path=NULL,*dir=getcwd(NULL,0);
     if(dir&&asprintf(&path,"%s:%s",dir,getenv("PATH")?getenv("PATH"):"/usr/bin:/bin")>=0){
         setenv("PATH",path,1);
@@ -74,6 +84,13 @@ static void start_shell(command_pty *p,int index,int cols,int rows){
                                    "KITTY_PUBLIC_KEY","KITTY_PTY_BROKER_SESSION"};
         for(size_t i=0;i<sizeof outer/sizeof outer[0];i++)unsetenv(outer[i]);
         enter_shell_directory(index);
+        if(index>=ZELL_COMMAND_TERMS){
+            static const char *const actions[]={"upgrade","clean","autoclean","rotate","cache"};
+            char *script=tool_path("zell_maintenance.py");
+            if(script)execlp("python3","python3",script,actions[index-ZELL_COMMAND_TERMS],(char *)NULL);
+            dprintf(STDERR_FILENO,"Could not open the maintenance tool.\r\n");
+            free(script);
+        }
         const char *shell=getenv("SHELL");
         if(!shell||*shell!='/'||access(shell,X_OK)<0)shell="/bin/sh";
         const char *base=strrchr(shell,'/');
@@ -98,7 +115,7 @@ static void flush_input(command_pty *p){
 }
 
 bool zell_command_term_write(int index,const void *bytes,size_t length){
-    if(index<0||index>=ZELL_COMMAND_TERMS||!bytes||!length)return false;
+    if(index<0||index>=ZELL_ALL_TERMS||!bytes||!length)return false;
     command_pty *p=&shells[index];
     if(!p->pid||p->fd<0||length>ZELL_INPUT_PASTE_MAX+4096u-p->length)return false;
     if(p->offset&&p->offset+p->length+length>p->capacity){
@@ -125,13 +142,13 @@ static void terminal_replies(int index){
 }
 
 void zell_command_term_key(int index,VTermKey key,VTermModifier modifiers){
-    if(index<0||index>=ZELL_COMMAND_TERMS||!shells[index].pid)return;
+    if(index<0||index>=ZELL_ALL_TERMS||!shells[index].pid)return;
     vterm_keyboard_key(shells[index].screen.terminal.term,key,modifiers);
     terminal_replies(index);
 }
 
 bool zell_command_term_paste(int index,const char *bytes,size_t length){
-    if(index<0||index>=ZELL_COMMAND_TERMS||!bytes||!length||length>ZELL_INPUT_PASTE_MAX)return false;
+    if(index<0||index>=ZELL_ALL_TERMS||!bytes||!length||length>ZELL_INPUT_PASTE_MAX)return false;
     command_pty *p=&shells[index];
     if(!p->pid||length+12>ZELL_INPUT_PASTE_MAX+4096u-p->length)return false;
     vterm_keyboard_start_paste(p->screen.terminal.term);terminal_replies(index);
@@ -141,19 +158,23 @@ bool zell_command_term_paste(int index,const char *bytes,size_t length){
 }
 
 void zell_command_term_retry(int index){
-    if(index<0||index>=ZELL_COMMAND_TERMS)return;
+    if(index<0||index>=ZELL_ALL_TERMS)return;
     command_pty *p=&shells[index];
     if(p->started&&!p->pid&&p->fd<0)p->started=false;
 }
 
 void zell_command_term_pump(const zell_scene *s){
-    for(int i=0;i<ZELL_COMMAND_TERMS;i++){
+    for(int i=0;i<ZELL_ALL_TERMS;i++){
         command_pty *p=&shells[i];
         neuroterm *t=&p->screen.terminal;
-        if(s->desktop&&s->room==1){
-            zell_rect frame,body;zell_command_term_layout(i,&frame,&body);
-            int cols=(int)((float)body.w*s->room_view.scale/ZELL_TERM_CELL_W);
-            int rows=(int)((float)body.h*s->room_view.scale/ZELL_TERM_CELL_H);
+        bool wall=i<ZELL_COMMAND_TERMS&&s->desktop&&s->room==1;
+        if(wall||(i>=ZELL_COMMAND_TERMS&&zell_input_terminal(s)==i)){
+            zell_rect frame,body;
+            float scale=1;
+            if(wall){zell_command_term_layout(i,&frame,&body);scale=s->room_view.scale;}
+            else{zell_utility_layout layout;zell_utility_rects(s,&layout);body=layout.body;}
+            int cols=(int)((float)body.w*scale/ZELL_TERM_CELL_W);
+            int rows=(int)((float)body.h*scale/ZELL_TERM_CELL_H);
             if(cols<1)cols=1;
             if(rows<1)rows=1;
             if(!p->started)start_shell(p,i,cols,rows);
@@ -184,7 +205,7 @@ void zell_command_term_pump(const zell_scene *s){
 }
 
 void zell_command_term_shutdown(void){
-    for(int i=0;i<ZELL_COMMAND_TERMS;i++){
+    for(int i=0;i<ZELL_ALL_TERMS;i++){
         command_pty *p=&shells[i];
         if(p->started&&p->fd>=0){
             pid_t fg=tcgetpgrp(p->fd);
@@ -193,7 +214,7 @@ void zell_command_term_shutdown(void){
         }
         if(p->pid)kill(p->pid,SIGHUP);
     }
-    for(int i=0;i<ZELL_COMMAND_TERMS;i++){
+    for(int i=0;i<ZELL_ALL_TERMS;i++){
         command_pty *p=&shells[i];
         if(p->pid){
             if(waitpid(p->pid,NULL,WNOHANG)==0){

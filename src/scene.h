@@ -33,6 +33,9 @@ enum {
     ZELL_QUESTION_CHOICES = ZELL_PRESET_COUNT + 1
 };
 
+enum { ZELL_MESSAGES=112 };
+typedef struct { int64_t time; char source[32],text[320]; } zell_message;
+
 typedef struct zell_room_view {
     int logical_x, logical_y, logical_w, logical_h;
     int viewport_x, viewport_y, viewport_w, viewport_h;
@@ -108,8 +111,7 @@ typedef struct zell_scene {
     int direction;
     int step;
     int step_ticks;
-    int run_charge, run_direction, run_bump;
-    bool running, run_blocked;
+    bool running;
     int flame_tick;
     int mode;
     int menu_index;
@@ -181,6 +183,10 @@ typedef struct zell_scene {
     int seat_ticks;
     bool seated;
     zell_room_view room_view;
+    int utility_panel,utility_term,message_count,message_scroll;
+    int64_t upgraded_at,bubble_until;
+    char bubble[240];
+    zell_message messages[ZELL_MESSAGES];
     int command_focus; /* zero for walking, otherwise terminal index + 1 */
     zell_window windows[ZELL_WINDOWS];
     zell_provider_row provider_rows[ZELL_PROVIDER_ROWS];
