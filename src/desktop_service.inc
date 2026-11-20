@@ -169,10 +169,10 @@ static void service_frame(zell_scene *s,char *frame,int origin,int slot,int gene
         snprintf(s->weather_condition,sizeof s->weather_condition,"%.63s",condition);return;
     }
     if(kind=='V'){
-        int hp,fatigue,mana,days,age,baseline,dirty;
-        int fields=sscanf(decoded,"%d %d %d %d %d %d %d",&hp,&fatigue,&mana,&days,&age,&baseline,&dirty);
-        if((fields==5||fields==7)&&hp>=-1&&hp<=100&&fatigue>=-1&&fatigue<=100&&mana>=-1&&mana<=100){
-            s->hp=hp;s->fatigue=fatigue;s->mana=mana;s->update_age_days=days;s->mana_age=age;
+        int hp,stamina,mana,days,age,baseline,dirty;
+        int fields=sscanf(decoded,"%d %d %d %d %d %d %d",&hp,&stamina,&mana,&days,&age,&baseline,&dirty);
+        if((fields==5||fields==7)&&hp>=-1&&hp<=100&&stamina>=-1&&stamina<=100&&mana>=-1&&mana<=100){
+            s->hp=hp;s->stamina=stamina;s->mana=mana;s->update_age_days=days;s->mana_age=age;
             if(fields==7&&baseline>=-1&&baseline<=100&&dirty>=-1){s->os_health=baseline;s->dirty_files=dirty;}
             else {s->os_health=hp;s->dirty_files=-1;}
         }
@@ -387,7 +387,7 @@ static void service_pump(desktop_service *p,zell_scene *s){
     int status=0;pid_t ended=waitpid(p->pid,&status,WNOHANG);
     if(ended==p->pid){
         p->pid=0;
-        if(p->monitor){s->fatigue=-1;s->coding_yolo_ready=false;s->weather_state=0;service_stop(p);return;}
+        if(p->monitor){s->stamina=-1;s->coding_yolo_ready=false;s->weather_state=0;service_stop(p);return;}
         if(s->theater_install_watching)theater_install_note(s,WIFEXITED(status)?WEXITSTATUS(status):-1);
         if(p->cancelled)service_append(s,"\nCancelled.");
         else if(!WIFEXITED(status)||WEXITSTATUS(status)!=0)service_append(s,"\nThe station helper failed. Please try again.");

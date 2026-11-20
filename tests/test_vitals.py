@@ -56,8 +56,11 @@ class VitalsTests(unittest.TestCase):
                 'windows': [{'remaining_percent': remaining, 'resets_at': reset or self.now + 5000}]}
 
     def test_health_age_boundaries_and_floor(self):
-        with patch.object(vitals, 'fatigue', return_value=80):
-            self.assertEqual(vitals.snapshot(self.ui)['health'], -1)
+        with patch.object(vitals, 'stamina', return_value=80):
+            fresh = vitals.snapshot(self.ui)
+            self.assertEqual(fresh['health'], -1)
+            self.assertEqual(fresh['stamina'], 80)
+            self.assertIn('Stamina: 80%', fresh['details'])
             for age, expected in ((0, 100), (86399, 100), (86400, 90), (2 * 86400, 80), (40 * 86400, 10)):
                 self.ui.state_read.return_value = {'completed_at': self.now - age}
                 value = vitals.snapshot(self.ui)
@@ -90,7 +93,7 @@ class VitalsTests(unittest.TestCase):
 
     def test_missing_claudex_reports_without_throttling(self):
         self.cache({})
-        with patch.object(vitals, 'claudex_script', return_value=None), patch.object(vitals, 'fatigue', return_value=50), \
+        with patch.object(vitals, 'claudex_script', return_value=None), patch.object(vitals, 'stamina', return_value=50), \
                 patch.object(vitals.subprocess, 'run') as run, patch('builtins.print'):
             vitals.request_mana(self.ui)
         run.assert_not_called()
@@ -116,9 +119,9 @@ class VitalsTests(unittest.TestCase):
 
     def test_headroom_and_smoothing(self):
         with patch.object(vitals, 'cpu_memory', side_effect=[((100, 90), 90), ((200, 180), 80), ((300, 180), 90)]):
-            self.assertEqual(vitals.fatigue(), -1)
-            self.assertEqual(vitals.fatigue(), 80)
-            self.assertEqual(vitals.fatigue(), 60)
+            self.assertEqual(vitals.stamina(), -1)
+            self.assertEqual(vitals.stamina(), 80)
+            self.assertEqual(vitals.stamina(), 60)
 
     def test_missing_reset_and_failed_are_unknown(self):
         failed = self.entry(100)
@@ -140,7 +143,7 @@ class VitalsTests(unittest.TestCase):
             cached = vitals.read_json(self.runtime / 'usage-pages.json')['providers']
             cached[provider] = self.entry(75, self.now)
             self.cache(cached)
-        with patch.object(vitals, 'check_provider', side_effect=check) as call, patch.object(vitals, 'fatigue', return_value=50):
+        with patch.object(vitals, 'check_provider', side_effect=check) as call, patch.object(vitals, 'stamina', return_value=50):
             vitals.request_mana(self.ui)
             self.assertEqual([c.args[0] for c in call.call_args_list], ['claude', 'grok'])
             vitals.request_mana(self.ui)
@@ -151,7 +154,7 @@ class VitalsTests(unittest.TestCase):
 
     def test_failed_requests_throttled_and_old_values_not_shown(self):
         self.cache({'codex': self.entry(90, self.now - 4000)})
-        with patch.object(vitals, 'check_provider', side_effect=OSError('offline')) as call, patch.object(vitals, 'fatigue', return_value=50):
+        with patch.object(vitals, 'check_provider', side_effect=OSError('offline')) as call, patch.object(vitals, 'stamina', return_value=50):
             vitals.request_mana(self.ui)
             vitals.request_mana(self.ui)
             self.assertEqual(call.call_count, 3)
@@ -169,7 +172,7 @@ class VitalsTests(unittest.TestCase):
             cached = vitals.read_json(self.runtime / 'usage-pages.json').get('providers', {})
             cached[provider] = self.entry(75, self.now)
             self.cache(cached)
-        with patch.object(vitals, 'check_provider', side_effect=check), patch.object(vitals, 'fatigue', return_value=50):
+        with patch.object(vitals, 'check_provider', side_effect=check), patch.object(vitals, 'stamina', return_value=50):
             first = threading.Thread(target=vitals.request_mana, args=(self.ui,))
             second = threading.Thread(target=vitals.request_mana, args=(self.ui,))
             first.start()
@@ -192,14 +195,14 @@ class VitalsTests(unittest.TestCase):
 
     def test_snapshot_and_report_never_check_providers(self):
         self.cache({'codex': self.entry(50), 'qwen': self.entry(100)})
-        with patch.object(vitals, 'check_provider') as call, patch.object(vitals, 'fatigue', return_value=50):
+        with patch.object(vitals, 'check_provider') as call, patch.object(vitals, 'stamina', return_value=50):
             self.assertEqual(vitals.snapshot(self.ui)['mana'], 50)
             vitals.report(self.ui)
             call.assert_not_called()
         self.assertNotIn('qwen', self.ui.page_text.call_args.args[0])
 
     def test_monitor_never_checks_providers_and_emits_wire_order(self):
-        with patch.object(vitals, 'check_provider') as call, patch.object(vitals, 'fatigue', return_value=50), patch.object(vitals.time, 'sleep', side_effect=InterruptedError):
+        with patch.object(vitals, 'check_provider') as call, patch.object(vitals, 'stamina', return_value=50), patch.object(vitals.time, 'sleep', side_effect=InterruptedError):
             with self.assertRaises(InterruptedError):
                 vitals.monitor(self.ui)
             call.assert_not_called()

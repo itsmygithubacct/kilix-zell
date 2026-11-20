@@ -77,7 +77,7 @@ const zell_station zell_stations[ZELL_STATIONS]={
 static const char *const actions[ZELL_STATIONS][17]={
  {"Ask the wizard","First-run tour of Zell",NULL},
  {"System journal","User service journal","Boot warnings","Browse agent rollouts","Browse Kilix transcripts","Search a log","Open another log",NULL},
- {"Kilix settings","Software and models (Merchant)","Language, region and font size","System and user services","Connections (Signalman)","GPU and model settings","Update OS in floating terminal","Health, fatigue and mana",NULL},
+ {"Kilix settings","Software and models (Merchant)","Language, region and font size","System and user services","Connections (Signalman)","GPU and model settings","Update OS in floating terminal","Health, stamina and mana",NULL},
  {"System health report","Disk usage","Largest home folders","Preview and clean old thumbnails","Process monitor","Clean downloaded package cache","Stop one of my processes","Startup applications",NULL},
  {"Open Kilix Amp","Play a file or URL","Playlists and creators","Follow a creator or playlist","Volume controls","Transcribe media","Transcripts and jobs","Music library on disk","Zell background music","Find a playlist or creator in a browser window",NULL},
  {"Books and documents library","Find a document","OCR an image","OCR a PDF","Read text aloud","Document converter","Export a text audiobook","How to find and add files",NULL},
@@ -112,7 +112,7 @@ int zell_desktop_actions(int station){int n=0;
 const char *zell_desktop_action(int station,int index){return index>=0&&index<zell_desktop_actions(station)?actions[station][index]:"";}
 void zell_desktop_start(zell_scene *s){zell_desktop_init(s);zell_desktop_enter_hall(s);}
 void zell_desktop_enter_hall(zell_scene *s){s->room=0;s->x=(float)ZELL_WORLD_W*.50f;s->y=(float)ZELL_WORLD_H*ZELL_HALL_ENTRY_Y;s->direction=ZELL_DIR_UP;s->step=0;s->step_ticks=0;}
-void zell_desktop_init(zell_scene *s){s->desktop=true;s->x=(float)ZELL_WORLD_W*.51f;s->y=(float)ZELL_WORLD_H*.48f;s->station=0;s->desktop_launch=false;s->hp=100;s->max_hp=100;s->fatigue=100;s->mana=-1;s->update_age_days=-1;s->mana_age=-1;s->os_health=-1;s->dirty_files=0;}
+void zell_desktop_init(zell_scene *s){s->desktop=true;s->x=(float)ZELL_WORLD_W*.51f;s->y=(float)ZELL_WORLD_H*.48f;s->station=0;s->desktop_launch=false;s->hp=100;s->max_hp=100;s->stamina=100;s->mana=-1;s->update_age_days=-1;s->mana_age=-1;s->os_health=-1;s->dirty_files=0;}
 bool zell_desktop_station_visible(const zell_scene *s,int station){
  if(s->room==0)return station<ZELL_CAVE_STATIONS||station==32||station==37||station==38||(station>=42&&station<=45)||(station>=ZELL_GAME_HATCH&&station<=ZELL_LIBRARY_HATCH);
  /* A pane room is all terminal: nothing in it is a station. */
@@ -154,7 +154,7 @@ void zell_desktop_launcher_label(const zell_scene *s,int index,char *text,size_t
 }
 float zell_desktop_speed_factor(const zell_scene *s){
  int reserve=s->hp<0?100:s->hp;
- if(s->fatigue>=0&&s->fatigue<reserve)reserve=s->fatigue;
+ if(s->stamina>=0&&s->stamina<reserve)reserve=s->stamina;
  if(reserve<0)reserve=0;
  if(reserve>100)reserve=100;
  return .35f+.65f*(float)reserve/100.0f;

@@ -30,11 +30,11 @@ class Messages(unittest.TestCase):
         fields[0], fields[11], fields[19], fields[21] = 'S',str(ticks),str(birth),str(rss)
         (entry/'stat').write_text(f'{pid} ({name}) '+ ' '.join(fields))
 
-    def test_fatigue_uses_interval_cpu_or_resident_memory_and_persists_speech(self):
+    def test_stamina_uses_interval_cpu_or_resident_memory_and_persists_speech(self):
         self.process(10,'editor',40,6)
         self.process(11,'renderer',5,8)
         self.process(12,'browser',500,92)
-        meter=messages.FatigueSpeech(self.root/'proc')
+        meter=messages.StaminaSpeech(self.root/'proc')
         with patch.object(messages,'cpu_memory',side_effect=[((100,40),90),((200,42),90),((300,44),90),((400,140),20)]), \
              patch.object(messages.time,'monotonic',side_effect=[200,205,210,335]):
             self.assertIsNone(meter.sample(20))

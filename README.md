@@ -263,11 +263,11 @@ files before installation, and carries it through the offline installer.
 ### Running
 
 Hold Shift while moving to run in any room. Change direction while running.
-Movement still responds to health and fatigue and stops at walls and furniture.
+Movement still responds to health and stamina and stops at walls and furniture.
 
 ### Vitals and health hover
 
-The HUD shows Health, Mana and Fatigue. Hover the health bar for the OS-age and
+The HUD shows Health, Mana and Stamina. Hover the health bar for the OS-age and
 watched-project reasons behind the current value. A completed OS upgrade keeps
 OS health at 100% for 24 hours, then costs 10 percentage points per elapsed day,
 with a 10% floor. Successful upgrade history/stamps and Zell's completed-update
@@ -281,8 +281,8 @@ Staged-plus-unstaged changes to one path count once; a rename counts once. Local
 Git scans refresh at most once per minute; missing repositories show errors.
 Nothing is automatically staged, committed, reset, cleaned or pushed.
 
-Fatigue represents remaining resource headroom: the smaller of CPU idle percent
-and available-memory percent, smoothed over samples. Lower health or headroom
+Stamina shows how much CPU and memory the system has to spare. Zell uses the
+lower of the two percentages and smooths it over successive readings. Lower health or headroom
 reduces walking and running speed, with a 35% speed floor. Mana averages the
 known Codex/Claude/Grok remaining percentages, using each provider's most
 restrictive unexpired window. Unknown providers remain unknown; stale values

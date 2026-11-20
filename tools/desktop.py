@@ -422,10 +422,10 @@ def vitals_snapshot():
     if count:status['health']=max(1,(base if base>=0 else 100)-count)
     status['dirty_files']=count if watched['known'] else -1
     global LAST_VITALS
-    summary={k:status[k] for k in ('health','os_health','dirty_files','fatigue','mana','age_days')}
-    # Fatigue moves every sample; log only when something else changed.
-    if zell_debug.enabled() and {k:v for k,v in summary.items() if k!='fatigue'}!=LAST_VITALS:
-        LAST_VITALS={k:v for k,v in summary.items() if k!='fatigue'};zell_debug.log('vitals',**summary)
+    summary={k:status[k] for k in ('health','os_health','dirty_files','stamina','mana','age_days')}
+    # Stamina moves every sample; log only when something else changed.
+    if zell_debug.enabled() and {k:v for k,v in summary.items() if k!='stamina'}!=LAST_VITALS:
+        LAST_VITALS={k:v for k,v in summary.items() if k!='stamina'};zell_debug.log('vitals',**summary)
     status['details']+=f"\n\nCombined health: {status['health']}%; Git penalty: {count} percentage points.\n"+watched['details']
     if base<0 and count:status['details']+='\nOS age unknown: only the known Git penalty is applied to 100%.'
     return status
@@ -488,14 +488,14 @@ def desktop(station,action):
         signal.signal(signal.SIGTERM,stop_monitor)
         signal.signal(signal.SIGHUP,stop_monitor)
         import zell_messages
-        speech = zell_messages.FatigueSpeech()
+        speech = zell_messages.StaminaSpeech()
         history_at, sent = 0, set()
         previous_fleet=None
         while True:
             status=vitals_snapshot()
-            DIALOGUE.send('V',' '.join(str(status[k]) for k in ('health','fatigue','mana','age_days','mana_age','os_health','dirty_files')))
+            DIALOGUE.send('V',' '.join(str(status[k]) for k in ('health','stamina','mana','age_days','mana_age','os_health','dirty_files')))
             DIALOGUE.send('Z',str(status.get('updated_at',0)))
-            spoken=speech.sample(status['fatigue'])
+            spoken=speech.sample(status['stamina'])
             if spoken:
                 DIALOGUE.send('E',f'{spoken[0]}\tKilix\t{spoken[1]}')
             if time.monotonic()>=history_at:

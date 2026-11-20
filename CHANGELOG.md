@@ -101,7 +101,7 @@ Packaging and tools:
 
 ## 0.1.0 — 2026-11-11
 
-- Add Health/Mana/Fatigue bars, health-hover reasons, OS-age and opt-in dirty-file penalties, and resource-sensitive movement.
+- Add Health/Mana/Stamina bars, health-hover reasons, OS-age and opt-in dirty-file penalties, and resource-sensitive movement.
 - Add an interactive Neuronte PTY update window; token usage refresh remains explicit and shares Claudex's hourly cache evidence.
 - Add downstairs Command Center and Laundry, five coding-tab screens, disk-capacity bins, Git Wizard and Pilot.
 - Continue release integration on RC9 without changing frozen RC8 refs.

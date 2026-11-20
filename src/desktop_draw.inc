@@ -335,7 +335,7 @@ static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
 static void desktop_vitals(const zell_scene *s,sr_canvas *c){
  int span=c->w-24;if(span>420)span=420;int width=(span-16)/3;
  if(width<32)return;
- int values[3]={s->hp,s->mana,s->fatigue};const char *names[3]={"HEALTH","MANA","FATIGUE"};
+ int values[3]={s->hp,s->mana,s->stamina};const char *names[3]={"HEALTH","MANA","STAMINA"};
  uint32_t colors[3]={0xde8a79u,0x8ea6efu,0x87c5a4u};
  for(int i=0;i<3;i++){
   int x=12+i*(width+8);char label[40];

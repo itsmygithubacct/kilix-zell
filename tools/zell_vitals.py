@@ -1,7 +1,7 @@
 """Local vitals. Here only request_mana may invoke a provider; snapshots never do.
 The Mana console (zell_mana) owns the automatic background reading.
 
-Fatigue is remaining headroom: min(CPU idle%, MemAvailable/MemTotal%).
+Stamina is remaining headroom: min(CPU idle%, MemAvailable/MemTotal%).
 CPU uses successive /proc/stat deltas (including iowait as idle, excluding
 already-counted guest ticks). A 0.25 EMA smooths samples; the first CPU sample
 is unknown. Mana is the mean of known providers' most restrictive windows.
@@ -124,7 +124,7 @@ def cpu_memory():
     return (sum(ticks), ticks[3] + ticks[4]), 100 * memory['MemAvailable'] / memory['MemTotal']
 
 
-def fatigue():
+def stamina():
     global _previous_cpu, _smoothed
     with _sample_lock:
         try:
@@ -255,19 +255,19 @@ def snapshot(ui, provider_directory=None):
     upgraded = last_upgrade(ui)
     age = max(0, int((now - upgraded) // 86400)) if upgraded else -1
     health = max(10, 100 - 10 * age) if age >= 0 else -1
-    remaining = fatigue()
+    remaining = stamina()
     magic, magic_age, lines = mana(ui, now, provider_directory)
     details = '\n'.join([f'Health: {health}; days since successful upgrade: {age}',
         'Health stays 100 for 24 hours, then loses 10 per elapsed day (floor 10). Unknown = -1.',
-        f'Fatigue headroom: {remaining}%; min(CPU idle, available memory), smoothed with 25% new sample.',
+        f'Stamina: {remaining}% (CPU and memory headroom, smoothed with 25% new sample).',
         f'Mana: {magic}%; oldest known reading age: {magic_age} seconds', *lines])
-    return dict(health=health, fatigue=remaining, mana=magic, age_days=age, mana_age=magic_age, updated_at=int(upgraded or 0), details=details)
+    return dict(health=health, stamina=remaining, mana=magic, age_days=age, mana_age=magic_age, updated_at=int(upgraded or 0), details=details)
 
 
 def monitor(ui):
     while True:
         value = snapshot(ui)
-        ui.DIALOGUE.send('V', ' '.join(str(value[k]) for k in ('health', 'fatigue', 'mana', 'age_days', 'mana_age')))
+        ui.DIALOGUE.send('V', ' '.join(str(value[k]) for k in ('health', 'stamina', 'mana', 'age_days', 'mana_age')))
         time.sleep(5)
 
 

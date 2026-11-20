@@ -3793,9 +3793,9 @@ int main(void) {
             t.room=0;assert(!zell_desktop_station_visible(&t,46+i));t.room=1;
         }
     }
-    s.hp=10;s.fatigue=100;assert(zell_desktop_speed_factor(&s)<.5f);
-    s.hp=100;s.fatigue=0;assert(zell_desktop_speed_factor(&s)==.35f);
-    s.hp=-1;s.fatigue=-1;assert(zell_desktop_speed_factor(&s)==1.0f);
+    s.hp=10;s.stamina=100;assert(zell_desktop_speed_factor(&s)<.5f);
+    s.hp=100;s.stamina=0;assert(zell_desktop_speed_factor(&s)==.35f);
+    s.hp=-1;s.stamina=-1;assert(zell_desktop_speed_factor(&s)==1.0f);
 
     /* Check visible motion in the actual renderer, with unmoving floor
      * pixels as a control. This catches a pose that is never drawn. */

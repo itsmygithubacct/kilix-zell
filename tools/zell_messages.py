@@ -1,4 +1,4 @@
-"""Read desktop notices and system messages, and sample the source of fatigue."""
+"""Read desktop notices and system messages, and sample the source of stamina."""
 from contextlib import closing
 import json
 import os
@@ -68,7 +68,7 @@ def history():
     return sorted(set(rows),reverse=True)[:100]
 
 
-class FatigueSpeech:
+class StaminaSpeech:
     def __init__(self, proc_root=Path('/proc')):
         self.proc_root = proc_root
         self.cpu = None
