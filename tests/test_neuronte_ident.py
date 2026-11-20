@@ -45,8 +45,10 @@ class NeuronteIdentTests(unittest.TestCase):
             alias.symlink_to(NEURONTE, target_is_directory=True)
             obj = build / 'draw_neuronte.o'
             ident = build / 'neuronte.ident'
+            display = Path(tmp) / 'custom display'
 
             def built(**variables):
+                variables.setdefault('DISPLAY_DIR', display)
                 make(build, obj, **variables)
                 return obj.stat().st_mtime_ns
 
@@ -54,21 +56,22 @@ class NeuronteIdentTests(unittest.TestCase):
             # names both and changes one.
             weights = Path(tmp) / 'first.nrt'
             first = built(NEURONTE=NEURONTE, NEURONTE_WEIGHTS=weights)
-            self.assertEqual(ident.read_text(), f'{NEURONTE} {weights}\n')
+            self.assertEqual(ident.read_text(), f'{NEURONTE} {weights} {display}/neuronte_display.py\n')
             recorded = ident.stat().st_mtime_ns
             self.assertEqual(built(NEURONTE=NEURONTE, NEURONTE_WEIGHTS=weights), first)
             self.assertEqual(ident.stat().st_mtime_ns, recorded)
 
             second = built(NEURONTE=alias, NEURONTE_WEIGHTS=weights)
             self.assertNotEqual(second, first)
-            self.assertEqual(ident.read_text(), f'{alias} {weights}\n')
+            self.assertEqual(ident.read_text(), f'{alias} {weights} {display}/neuronte_display.py\n')
             self.assertEqual(built(NEURONTE=alias, NEURONTE_WEIGHTS=weights), second)
 
-            other = Path(tmp) / 'other.nrt'
+            other = Path('relative weights') / 'other.nrt'
             third = built(NEURONTE=alias, NEURONTE_WEIGHTS=other)
             self.assertNotEqual(third, second)
-            self.assertEqual(ident.read_text(), f'{alias} {other}\n')
+            self.assertEqual(ident.read_text(), f'{alias} {ROOT / other} {display}/neuronte_display.py\n')
             self.assertEqual(built(NEURONTE=alias, NEURONTE_WEIGHTS=other), third)
+            self.assertNotEqual(built(NEURONTE=alias, NEURONTE_WEIGHTS=other, DISPLAY_DIR=display/'new'), third)
 
 
 if __name__ == '__main__':

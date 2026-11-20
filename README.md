@@ -33,14 +33,15 @@ bundles beside it (each with its `NAME.list.txt`), else as the untrained
 mark, in Zell's own drawing and in its terminals alike; the install copies
 those bundles and their lists. `NEURONTE` and `NEURONTE_WEIGHTS`
 override build paths. `ZELL_NEURONTE_WEIGHTS` overrides the runtime weight file.
-The build does not modify that dependency. It records which checkout and
-weights file it used in `build/neuronte.ident`, and compiles the Neuronte
-objects again when either changes.
+Source builds also pass the selected weights, shared library and
+`DISPLAY_DIR` renderer to Zell's terminals. Installed games use the copies
+in their runtime. `ZELL_NEURONTE_LIBRARY` and `KILIX_ZELL_NEURONTE_DISPLAY`
+override those two files. The build records the checkout, weights and
+display paths in `build/neuronte.ident` and recompiles when any changes.
 
-Zell 0.1.1 was reviewed and packaged against Neuronte commit
-`4134bf909594cf5c774f49677405fd1e22c4e2e4`. A checkout that contains that
-commit matches the packaged desktop. An older one still builds, without the
-changes the packaged one has.
+The frozen 0.1.1 archive for Plebian-OS 0.2.3 used the earlier Neuronte
+commit `4134bf909594cf5c774f49677405fd1e22c4e2e4`. The current source
+build uses neuronte-v2 as described above.
 
 `make` also builds the original `zell` scene. The new desktop is in
 `zell-neuronte`. Plebian-OS 0.2.3 carries Zell 0.1.1 as an offline runtime

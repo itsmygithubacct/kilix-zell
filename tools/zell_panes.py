@@ -860,7 +860,6 @@ def main():
     # Python ignores these; the shells must get them as any shell does.
     for sig in (signal.SIGPIPE, signal.SIGXFSZ):
         signal.signal(sig, signal.SIG_DFL)
-    os.chdir(Path.home())
     shared = mmap.mmap(fd, MAP_BYTES)
     os.close(fd)
     cache = rooms = None
@@ -885,6 +884,9 @@ def main():
         cache_dir = Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache')) / 'neuronte-display'
         cache = display.MaskCache(weights, library, cache_dir, CELL_WIDTH, CELL_HEIGHT)
         renderer = display.Renderer(cache)
+        # Relative renderer overrides belong to the launch directory. Only
+        # the shells start in the user's home.
+        os.chdir(Path.home())
         agents = available_agents()
         viewer = None
         if attach_ready(kilix_env):

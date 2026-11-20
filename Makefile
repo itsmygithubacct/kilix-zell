@@ -195,13 +195,19 @@ test: $(BUILD)/test-scene
 NEURONTE ?= $(HOME)/projects/neuronte-v2
 NEURONTE_WEIGHTS ?= $(NEURONTE)/weights/neuronte-split-v9.nrt
 NEURONTE_LIB := $(NEURONTE)/build/libneuronte.a
+# Anchor renderer paths at build time, preserving spaces in filenames.
+renderer_path = $(if $(filter /%,$(firstword $(1))),$(1),$(CURDIR)/$(1))
+N_WEIGHTS := $(call renderer_path,$(NEURONTE_WEIGHTS))
+N_DISPLAY := $(call renderer_path,$(DISPLAY_DIR))/neuronte_display.py
 N_CPPFLAGS := $(CPPFLAGS) -I$(NEURONTE)/include -DZELL_RENDER_NEURONTE \
-	-DZELL_NEURONTE_WEIGHTS='"$(NEURONTE_WEIGHTS)"'
+	-DZELL_NEURONTE_WEIGHTS='"$(N_WEIGHTS)"' \
+	-DZELL_NEURONTE_LIBRARY='"$(abspath $(NEURONTE))/build/libneuronte.so"' \
+	-DZELL_NEURONTE_DISPLAY='"$(N_DISPLAY)"'
 
 # Objects compiled with N_CPPFLAGS hold that checkout's headers and the
-# weights path. This file records both, and is rewritten only when either
-# changes, so a build against another checkout compiles those objects again.
-N_IDENT := $(abspath $(NEURONTE)) $(NEURONTE_WEIGHTS)
+# weights and display paths. Record them so changing checkouts recompiles
+# the programs that launch the terminal helpers.
+N_IDENT := $(abspath $(NEURONTE)) $(N_WEIGHTS) $(N_DISPLAY)
 N_STAMP := $(BUILD)/neuronte.ident
 N_OBJS := \
 	$(BUILD)/draw_neuronte.o \

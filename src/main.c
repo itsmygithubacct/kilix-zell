@@ -14,6 +14,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
@@ -1229,6 +1230,44 @@ static int run_scene(void)
     return stop_requested ? 130 : 0;
 }
 
+#ifdef ZELL_RENDER_NEURONTE
+/* Pass the same files to the helpers, which can run from another directory.
+ * A packaged runtime carries its own files beside the executable. */
+static bool renderer_file(const char *variable, const char *directory,
+                          const char *packaged, const char *source)
+{
+    const char *value = getenv(variable);
+    char path[PATH_MAX];
+    if (value && *value) return true;
+    if (directory) {
+        int n = snprintf(path, sizeof path, "%s/%s", directory, packaged);
+        if (n > 0 && (size_t)n < sizeof path && access(path, R_OK) == 0)
+            return setenv(variable, path, 1) == 0;
+    }
+    if (source && access(source, R_OK) == 0) return setenv(variable, source, 1) == 0;
+    return true;
+}
+
+static bool configure_renderer(void)
+{
+    char *binary = realpath("/proc/self/exe", NULL);
+    char *slash = binary ? strrchr(binary, '/') : NULL;
+    if (slash) *slash = '\0';
+    const char *directory = slash ? binary : NULL;
+    /* Keep the helpers' explicit checkout override for a source run. */
+    const char *home = getenv("NEURONTE_HOME");
+    bool use_build = !home || !*home;
+    bool ok = renderer_file("ZELL_NEURONTE_WEIGHTS", directory, "weights/neuronte-split-v9.nrt",
+                            use_build ? ZELL_NEURONTE_WEIGHTS : NULL) &&
+              renderer_file("ZELL_NEURONTE_LIBRARY", directory, "lib/libneuronte.so",
+                            use_build ? ZELL_NEURONTE_LIBRARY : NULL) &&
+              renderer_file("KILIX_ZELL_NEURONTE_DISPLAY", directory,
+                            "libexec/neuronte-display/neuronte_display.py", ZELL_NEURONTE_DISPLAY);
+    free(binary);
+    return ok;
+}
+#endif
+
 int main(int argc, char **argv)
 {
     /* Recovery codes may be visible in a private vault surface. */
@@ -1244,6 +1283,10 @@ int main(int argc, char **argv)
         return 1;
     }
 #ifdef ZELL_RENDER_NEURONTE
+    if (!configure_renderer()) {
+        perror("zell: could not set renderer paths");
+        return 1;
+    }
     if (!zell_neuronte_open()) {
         fprintf(stderr, "zell: cannot load the Neuronte weights at %s\n"
                         "set ZELL_NEURONTE_WEIGHTS to a neuronte-split file\n",

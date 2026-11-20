@@ -11,6 +11,37 @@ static void graceful_exit(int signum){
     const char done='G';(void)write(graceful_fd,&done,1);_exit(0);
 }
 
+#ifdef ZELL_RENDER_NEURONTE
+static void test_source_renderer_paths(void)
+{
+    const pid_t child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        unsetenv("NEURONTE_HOME");
+        unsetenv("ZELL_NEURONTE_WEIGHTS");
+        unsetenv("ZELL_NEURONTE_LIBRARY");
+        unsetenv("KILIX_ZELL_NEURONTE_DISPLAY");
+        assert(configure_renderer());
+        const struct { const char *name, *path; } files[] = {
+            {"ZELL_NEURONTE_WEIGHTS", ZELL_NEURONTE_WEIGHTS},
+            {"ZELL_NEURONTE_LIBRARY", ZELL_NEURONTE_LIBRARY},
+            {"KILIX_ZELL_NEURONTE_DISPLAY", ZELL_NEURONTE_DISPLAY}
+        };
+        for (size_t i = 0; i < sizeof files / sizeof files[0]; i++) {
+            if (access(files[i].path, R_OK) == 0) {
+                const char *value = getenv(files[i].name);
+                assert(value && !strcmp(value, files[i].path));
+            }
+        }
+        assert(setenv("ZELL_NEURONTE_WEIGHTS", "custom.nrt", 1) == 0);
+        assert(configure_renderer() && !strcmp(zell_neuronte_weights(), "custom.nrt"));
+        _exit(0);
+    }
+    int status;
+    assert(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
+#endif
+
 static void test_terminal_transport(zell_scene *scene){
     char restart[]="J31",notice[]="N32204a6f622066696e6973686564",audio[]="A312031";
     service_frame(scene,restart,SERVICE_ORIGIN_MONITOR,0,0);service_frame(scene,notice,SERVICE_ORIGIN_MONITOR,0,0);service_frame(scene,audio,SERVICE_ORIGIN_MONITOR,0,0);
@@ -1019,6 +1050,9 @@ static void test_paste_question(void){
 }
 int main(void)
 {
+#ifdef ZELL_RENDER_NEURONTE
+    test_source_renderer_paths();
+#endif
     zell_proc proc = {.out_fd = -1, .err_fd = -1};
     zell_turn turn = {0};
     zell_scene scene;
