@@ -1,8 +1,7 @@
-kilix-zell (0.1.1+packaging1) UNRELEASED; urgency=medium
+kilix-zell (0.1.1+packaging2) UNRELEASED; urgency=medium
 
-  * Install the Neuronte desktop sources under /usr and build the
-    command when the package is configured. Packed weight files stay
-    outside the package. kilix-secretsd and the kilix-secrets units
-    are not installed.
+  * Build the Neuronte desktop command from the published source commit
+    when the package is configured. Packed weight files stay outside the
+    package. kilix-secretsd and the kilix-secrets units are not installed.
 
- -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Fri, 20 Nov 2026 08:15:58 +0000
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Fri, 20 Nov 2026 08:48:39 +0000

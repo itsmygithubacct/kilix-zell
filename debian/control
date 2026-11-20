@@ -11,9 +11,9 @@ Rules-Requires-Root: no
 
 Package: kilix-zell
 Architecture: all
-Depends: ${misc:Depends}, neuronte, gcc, libc6-dev, make, zlib1g-dev
+Depends: ${misc:Depends}, neuronte, gcc, libc6-dev, make, zlib1g-dev, git, ca-certificates
 Description: Kilix Zell desktop runtime
  The Neuronte desktop command for Kilix Zell. The command is built from
- the packaged sources when the package is configured. Packed weight files
- stay outside this package. The package does not install kilix-secretsd
- or a systemd unit.
+ the published desktop sources when the package is configured. Packed
+ weight files stay outside this package. The package does not install
+ kilix-secretsd or a systemd unit.
