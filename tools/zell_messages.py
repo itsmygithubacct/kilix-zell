@@ -55,8 +55,11 @@ SPEECH_LIMIT = 80
 def saved_rows(filename, source, kind, limit):
     records = read_state(filename, [])
     for row in records[-limit:] if isinstance(records, list) else ():
-        if isinstance(row, dict) and isinstance(row.get('time'), (int, float)) and isinstance(row.get('text'), str):
-            yield int(row['time']), source, clean(row['text']), kind
+        if not isinstance(row, dict) or not isinstance(row.get('text'), str):
+            continue
+        stamp = row.get('time')
+        if type(stamp) in (int, float) and 1 <= stamp < (1 << 63):
+            yield int(stamp), source, clean(row['text']), kind
 
 
 def history(*, with_kind=False):

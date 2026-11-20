@@ -69,6 +69,16 @@ class Messages(unittest.TestCase):
         self.assertEqual(sum(kind=='I' for _,_,_,kind in rows),100)
         self.assertEqual([row for row in rows if row[3]=='e'],[(i,'Kilix',text,'e') for i in range(84,4,-1)])
 
+    def test_bad_saved_timestamps_do_not_hide_other_messages(self):
+        zell_os.write_state('notices.json',[{'time':5,'text':'Job finished'}])
+        speech = zell_os.state_root()/'speech-history.json'
+        speech.write_text('[{"time":1e400,"text":"Bad"}, {"time":9223372036854775808,"text":"Bad"},'
+                          '{"time":true,"text":"Bad"}, {"time":9.5,"text":"Still here"}]')
+        with patch.object(messages,'notification_rows',return_value=[]), patch.object(messages.shutil,'which',return_value=None):
+            self.assertEqual(messages.history(),[(9,'Kilix','Still here'),(5,'Zell','Job finished')])
+            speech.write_text('['*2000+'0'+']'*2000)
+            self.assertEqual(messages.history(),[(5,'Zell','Job finished')])
+
     def test_maintenance_uses_selected_action_and_cache_browser_stays_in_root(self):
         with patch('zell_update.main',return_value=7) as upgrade, patch.object(maintenance.subprocess,'call',return_value=0) as call:
             self.assertEqual(maintenance.main('upgrade'),7)
