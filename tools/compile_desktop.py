@@ -238,8 +238,8 @@ def fixed_cells(name, columns, rows):
 def column_cutouts(name, columns, rows):
     """Cut a sprite grid. Each column shares one alpha bound across its rows.
 
-    An open hatch and its closed hatch then keep the same anchor. Alpha
-    matches cutout: clear alpha <= 3, then bound the sprite at alpha > 32.
+    Open and closed hatches keep the same scale and horizontal anchor.
+    Clear alpha <= 3, then bound the sprite at alpha > 32.
     """
     sheet = Image.open(ROOM_ASSETS / name).convert('RGBA')
     grid = []
@@ -265,6 +265,16 @@ def column_cutouts(name, columns, rows):
                        max(b[2] for b in boxes), max(b[3] for b in boxes)))
     return [grid[row][col].crop(bounds[col])
             for row in range(rows) for col in range(columns)]
+
+
+def hatch_rim_gap(picture):
+    """Distance from the solid front stone edge to the bottom of the frame."""
+    size, pixels = picture
+    alpha = Image.frombytes('L', size, pixels[3::4])
+    solid = alpha.point(lambda a: 255 if a >= 128 else 0).getbbox()
+    if solid is None:
+        raise ValueError('room hatch has no solid rim')
+    return size[1] - solid[3]
 
 
 def sheet_source(name, pictures):
@@ -323,6 +333,15 @@ def main():
             raise ValueError('room hatch width %d != command hatch width %d'
                              % (compiled_width, command_width))
     compiled = [premultiplied_pixels(im, height) for im, height in zip(images, heights)]
+    # Zell draws each frame from its bottom edge. Give the painted stone
+    # rim the same margin in both poses, keeping the entire raised lid.
+    columns = len(room_hatches) // 2
+    for pair in zip(room_hatches[:columns], room_hatches[columns:]):
+        gaps = [hatch_rim_gap(compiled[i]) for i in pair]
+        for i, gap in zip(pair, gaps):
+            (width, height), pixels = compiled[i]
+            padding = max(gaps) - gap
+            compiled[i] = ((width, height + padding), pixels + bytes(width * padding * 4))
     files = {
         'art.h': HEADER % ''.join('extern const zell_art_source zell_art_%s[];\n' % name
                                   for name, _ in SHEETS),

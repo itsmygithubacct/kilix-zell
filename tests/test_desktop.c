@@ -918,6 +918,15 @@ static void test_floor_panels(void){
     }
 #endif
 }
+/* Hatches draw from their bottom edge. Measure the stone rim above it. */
+static int hatch_rim_gap(const zell_art *art){
+    for(int gap=0;gap<art->height;gap++){
+        const uint32_t *row=art->pixels+(art->height-1-gap)*art->width;
+        for(int x=0;x<art->width;x++)if((row[x]>>24)>=128)return gap;
+    }
+    return -1;
+}
+
 static void test_four_rooms(void){
     zell_scene s;
     zell_controls c;
@@ -1076,16 +1085,25 @@ static void test_four_rooms(void){
             const zell_art *back=zell_art_get(rooms[i]);
             const zell_art *front=zell_art_get(fronts[i]);
             const zell_art *closed=zell_art_get(ZELL_ART_GAME_HATCH+i);
+            const zell_art *open=zell_art_get(ZELL_ART_GAME_HATCH_OPEN+i);
             assert(back&&back->width==1536&&back->height==1024);
             assert(front&&front->width==1536&&front->height==1024);
             assert(command&&closed&&closed->width==command->width&&closed->width==136&&closed->height==155);
-        }
-        {
-            int foot=(int)(zell_stations[ZELL_GAME_HATCH].y*(float)ZELL_WORLD_H)+14;
-            int top=foot-155;
+            assert(open&&open->width==closed->width);
+            int gap=hatch_rim_gap(closed);
+            assert(gap>=0&&gap==hatch_rim_gap(open));
+            float hx=zell_stations[hatches[i]].x*(float)ZELL_WORLD_W;
+            float hy=zell_stations[hatches[i]].y*(float)ZELL_WORLD_H;
+            int foot=(int)hy+14;
+            int top=foot-open->height;
             int staff=(int)(zell_stations[1].y*(float)ZELL_WORLD_H);
             int old_top=(int)(zell_stations[13].y*(float)ZELL_WORLD_H)+14-command->height;
             assert(top>staff&&foot<old_top);
+            place_room(&s,0,hx,hy);
+            s.mouse_valid=true;
+            zell_room_view_identity(&s);
+            click_world(&s,hx-26.f,(float)(top+5));
+            assert(zell_desktop_click(&s)&&s.room==5+i);
         }
     }
     {

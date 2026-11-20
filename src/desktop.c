@@ -66,9 +66,8 @@ const zell_station zell_stations[ZELL_STATIONS]={
  {"Workshop computer","Sit at the stool and use this computer.",797.f/1536.f,408.f/1024.f,-1},
  {"Fleet board","Reserved, not an available action.",0.f,0.f,-1},
  {"Floor panel","Reserved, not an available action.",.50f,.84f,-1},
- /* Above Command / Vault / Workshop / Laundry. The sheet is 136x155.
-  * y=.52 puts the foot at 546 and the top at 391: below staff feet (358)
-  * and above the old hatch tops (598). */
+ /* Between the staff above and the older hatches below. The open lids
+  * rise into the gap while the stone rims stay on the cave floor. */
  {"Game room hatch","Games downstairs",.30f,.52f,ZELL_ART_GAME_HATCH},
  {"Movie theater hatch","Screen downstairs",.46f,.52f,ZELL_ART_THEATER_HATCH},
  {"Meditation room hatch","Quiet room downstairs",.62f,.52f,ZELL_ART_MEDITATION_HATCH},
