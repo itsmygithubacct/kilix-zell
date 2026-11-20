@@ -368,6 +368,7 @@ test-desktop: $(BUILD)/test-desktop
 	python3 $(ROOT)/tests/test_media.py
 	python3 $(ROOT)/tests/test_dialogue.py
 	python3 $(ROOT)/tests/test_library.py
+	python3 $(ROOT)/tests/test_package_runtime.py
 	python3 $(ROOT)/tests/test_vitals.py
 	python3 $(ROOT)/tests/test_mana.py
 	python3 $(ROOT)/tests/test_mana_manual.py

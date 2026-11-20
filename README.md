@@ -246,8 +246,11 @@ needed after installation. Run `systemctl --user daemon-reload` after installing
 updated units. Key Master starts the vault socket when opened; initialization
 remains an explicit user action.
 
-`ZELL_NEURONTE_HOME` overrides the application path. `DESTDIR`,
-`ZELL_INSTALL_DIR` and `ZELL_BIN_DIR` support packaging/staging. `make runtime`
+`ZELL_NEURONTE_HOME` overrides the application path. `ZELL_INSTALL_DIR`
+selects the game directory and `ZELL_BIN_DIR` selects the command directory.
+The installed launcher links back to its game, including when a `DESTDIR`
+staging tree moves. Install into a new or empty directory, or upgrade an
+existing Zell runtime in place. `make runtime`
 creates a relocatable archive under `build/`, with an exact file manifest and
 dependency notices. Plebian-OS 0.2.3 pins that archive's digest, verifies all
 files before installation, and carries it through the offline installer.

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build Zell's relocatable runtime; never copy user state or vault records."""
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -12,6 +13,7 @@ import tarfile
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+RUNTIME_SCHEMA = 'kilix.zell.runtime/v1'
 
 
 def copy(source, target, executable=False):
@@ -83,7 +85,7 @@ def build(dest, modules, neuronte, ghostty, sdk, display=None, framebuffer=None)
             files[path.relative_to(dest).as_posix()] = dict(
                 sha256=hashlib.sha256(path.read_bytes()).hexdigest(), bytes=path.stat().st_size,
                 mode=path.stat().st_mode & 0o777)
-    manifest = dict(schema='kilix.zell.runtime/v1', version=(ROOT/'VERSION').read_text().strip(),
+    manifest = dict(schema=RUNTIME_SCHEMA, version=(ROOT/'VERSION').read_text().strip(),
                     architecture=platform.machine(), files=files)
     (dest/'runtime.json').write_text(json.dumps(manifest, indent=2, sort_keys=True)+'\n')
     (dest/'runtime.json').chmod(0o644)
@@ -97,6 +99,57 @@ def install_service(app, unit_dir):
     (unit_dir/'kilix-secrets.service').write_text(service)
     (unit_dir/'kilix-secrets.service').chmod(0o644)
     copy(app/'service/kilix-secrets.socket', unit_dir/'kilix-secrets.socket')
+
+
+def install_runtime(payload, app):
+    app.parent.mkdir(parents=True, exist_ok=True)
+    stage = Path(tempfile.mkdtemp(prefix='.zell-install-', dir=app.parent))
+    previous = stage/'previous'
+    try:
+        staged = stage/'app'
+        shutil.copytree(payload, staged)
+        # Serialize the check and both renames, including concurrent first installs.
+        parent_fd = os.open(app.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            fcntl.flock(parent_fd, fcntl.LOCK_EX)
+            if app.is_symlink():
+                raise ValueError(f'Refusing a symlink install destination: {app}')
+            if app.exists():
+                if any(app.iterdir()):
+                    try:
+                        manifest = json.loads((app/'runtime.json').read_text())
+                    except (OSError, ValueError):
+                        manifest = None
+                    if not isinstance(manifest, dict) or manifest.get('schema') != RUNTIME_SCHEMA:
+                        raise ValueError(f'Install destination contains files from outside a Zell runtime: {app}')
+                app.rename(previous)
+            try:
+                staged.rename(app)
+            except BaseException:
+                if previous.exists():
+                    previous.rename(app)
+                raise
+        finally:
+            os.close(parent_fd)
+    except BaseException:
+        # If the restore itself failed, the previous install is still recoverable.
+        if not previous.exists():
+            shutil.rmtree(stage)
+        raise
+    shutil.rmtree(stage)
+
+
+def install_launcher(app, bin_dir):
+    bin_dir = bin_dir.resolve()
+    launcher = app/'bin/zell'
+    if bin_dir/'zell' == launcher:
+        return
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    # A relative link also works after a DESTDIR tree moves to its final location.
+    with tempfile.TemporaryDirectory(prefix='.zell-launcher-', dir=bin_dir) as stage:
+        link = Path(stage)/'zell'
+        link.symlink_to(os.path.relpath(launcher, bin_dir))
+        link.replace(bin_dir/'zell')
 
 
 def main():
@@ -146,18 +199,11 @@ def main():
             print('Runtime:', args.output)
             print('SHA-256:', hashlib.sha256(args.output.read_bytes()).hexdigest())
         if args.install:
-            app = args.install.resolve()
-            app.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.TemporaryDirectory(prefix='.zell-install-', dir=app.parent) as stage:
-                staged = Path(stage)/'app'
-                shutil.copytree(dest, staged)
-                if app.is_symlink():
-                    raise ValueError('Refusing a symlink install destination')
-                if app.exists():
-                    app.rename(Path(stage)/'previous')
-                staged.rename(app)
+            # Resolve the parent while preserving the final component for the link check.
+            app = args.install.parent.resolve()/args.install.name
+            install_runtime(dest, app)
             if args.bin_dir:
-                copy(app/'bin/zell', args.bin_dir/'zell', True)
+                install_launcher(app, args.bin_dir)
             if args.user_unit_dir:
                 install_service(app, args.user_unit_dir)
             print('Installed:', app)

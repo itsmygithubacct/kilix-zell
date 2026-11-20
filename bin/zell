@@ -3,7 +3,12 @@
 set -eu
 runtime_root=${GPU_TERMINAL_HOME:-"$HOME/.local/gpu_terminal"}
 source_root=${GPU_TERMINAL_SOURCE_HOME:-"$HOME/gpu_terminal"}
+launcher=$(readlink -f -- "$0")
+bundle=$(dirname -- "$(dirname -- "$launcher")")
+[ -f "$bundle/runtime.json" ] || bundle=
 for app in "${ZELL_NEURONTE_HOME:-}" \
+    "${GPU_TERMINAL_HOME:+$runtime_root/kilix/data/desktop-apps/kilix-zell}" \
+    "$bundle" \
     "$runtime_root/kilix/data/desktop-apps/kilix-zell" \
     "$source_root/kilix-apps/kilix-zell" \
     /usr/local/share/kilix-zell
