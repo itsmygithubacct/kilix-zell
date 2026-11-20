@@ -36,7 +36,7 @@ static void desktop_keys(void *user,const char *bytes,size_t count){
  * pastes itself. */
 static char *ask_bytes;
 static size_t ask_n;
-static int ask_room;
+static int ask_room,ask_command_focus;
 static int64_t ask_until;
 /* Answers are keys made after the question: keys before the paste, even
  * read with it, go where they were going first. */
@@ -75,12 +75,17 @@ static void desktop_pointer(void *user,unsigned buttons,int x,int y,bool release
  if(ZELL_ROOM_IS_PANES(s->room))(void)zell_panes_pointer(s,buttons,s->mouse_x,s->mouse_y,release);
 }
 static void paste_deliver(zell_scene *s,const char *bytes,size_t count){
+ if(s->room==1&&s->mode==ZELL_MODE_WALK&&s->command_focus){
+  if(!zell_command_term_paste(s->command_focus-1,bytes,count))ask_say(s,"The paste was not sent.");
+  return;
+ }
  if(ZELL_ROOM_IS_PANES(s->room)){(void)zell_panes_paste(s,bytes,count);return;}
  /* Elsewhere a paste is typed, as before 2004 was asked for. */
  if(bytes){typed_add(bytes,count);typed_feed();}
 }
 static void desktop_paste(void *user,const char *bytes,size_t count){
  zell_scene *s=user;
+ if(s->room==1&&s->mouse_click)(void)zell_desktop_click(s);
  size_t lines=bytes&&count!=ZELL_INPUT_PASTE_UNENDED?zell_paste_lines(bytes,count):0;
  /* One line, or a pane room where Kilix has the keys (it goes nowhere). */
  if(!lines||(ZELL_ROOM_IS_PANES(s->room)&&!zell_panes_keys_to_pane())){paste_deliver(s,bytes,count);return;}
@@ -89,7 +94,7 @@ static void desktop_paste(void *user,const char *bytes,size_t count){
  char *held=malloc(count);
  if(!held){ask_say(s,"The paste was not sent.");return;}
  memcpy(held,bytes,count);
- ask_bytes=held;ask_n=count;ask_room=s->room;ask_until=zell_notice_clock_ms()+ZELL_PASTE_ASK_MS;
+ ask_bytes=held;ask_n=count;ask_room=s->room;ask_command_focus=s->command_focus;ask_until=zell_notice_clock_ms()+ZELL_PASTE_ASK_MS;
  ask_armed=!typed_n&&!keyboard.input.queue_count;
  /* Short enough for a laptop pane's title bar beside its buttons. */
  char text[64];
@@ -102,7 +107,7 @@ static bool modifier_key(uint32_t key){return key==KITTYKB_KEY_NONE||(key>=KITTY
 static bool paste_answer(zell_scene *s){
  if(!ask_n)return false;
  /* Unanswered in time it is said; in another room, it is just gone. */
- if(s->room!=ask_room||zell_notice_clock_ms()>=ask_until){ask_drop(s,s->room==ask_room);return false;}
+ if(s->room!=ask_room||(s->room==1&&s->command_focus!=ask_command_focus)||zell_notice_clock_ms()>=ask_until){ask_drop(s,s->room==ask_room);return false;}
  if(!ask_armed){
   if(typed_n||keyboard.input.queue_count)return false;
   ask_armed=true;

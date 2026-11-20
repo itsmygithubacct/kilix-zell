@@ -155,13 +155,6 @@ static void service_frame(zell_scene *s,char *frame,int origin,int slot,int gene
         snprintf(s->weather_place,sizeof s->weather_place,"%.95s",place);
         snprintf(s->weather_condition,sizeof s->weather_condition,"%.63s",condition);return;
     }
-    if(kind=='S'){
-        if(n<2||decoded[0]<'0'||decoded[0]>'4'||decoded[1]!=' ')return;
-        int i=decoded[0]-'0';char *body=strchr(decoded+2,'\n');
-        if(!body)return;
-        *body++=0;snprintf(s->screen_status[i],sizeof s->screen_status[i],"%.95s",decoded+2);
-        snprintf(s->screen_preview[i],sizeof s->screen_preview[i],"%.1199s",body);s->screens_ready=true;return;
-    }
     if(kind=='V'){
         int hp,fatigue,mana,days,age,baseline,dirty;
         int fields=sscanf(decoded,"%d %d %d %d %d %d %d",&hp,&fatigue,&mana,&days,&age,&baseline,&dirty);
@@ -381,7 +374,7 @@ static void service_pump(desktop_service *p,zell_scene *s){
     int status=0;pid_t ended=waitpid(p->pid,&status,WNOHANG);
     if(ended==p->pid){
         p->pid=0;
-        if(p->monitor){s->fatigue=-1;s->screens_ready=false;s->coding_yolo_ready=false;s->weather_state=0;memset(s->screen_preview,0,sizeof s->screen_preview);service_stop(p);return;}
+        if(p->monitor){s->fatigue=-1;s->coding_yolo_ready=false;s->weather_state=0;service_stop(p);return;}
         if(s->theater_install_watching)theater_install_note(s,WIFEXITED(status)?WEXITSTATUS(status):-1);
         if(p->cancelled)service_append(s,"\nCancelled.");
         else if(!WIFEXITED(status)||WEXITSTATUS(status)!=0)service_append(s,"\nThe station helper failed. Please try again.");

@@ -167,7 +167,7 @@ int main(int argc, char **argv)
         scene.weather_state=1;scene.weather_icon=3;
         strcpy(scene.weather_temperature,"47 F");strcpy(scene.weather_place,"Example location");strcpy(scene.weather_condition,"Rain showers");
         failed+=shot(&scene,&canvas,argv[1],"weather-map");scene.weather_state=0;
-        scene.mode=ZELL_MODE_WALK;scene.room=1;scene.x=ZELL_WORLD_W*.50f;scene.y=ZELL_WORLD_H*.55f;
+        scene.mode=ZELL_MODE_WALK;scene.room=1;scene.x=ZELL_WORLD_W*.50f;scene.y=ZELL_WORLD_H*ZELL_ROOM_ENTRY_Y;
         scene.coding_yolo_ready=true;scene.coding_yolo=false;
         failed+=shot(&scene,&canvas,argv[1],"command-center");
         /* The Mana console with a reading, then partway through its zoom. */

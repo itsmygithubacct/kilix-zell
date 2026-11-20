@@ -158,8 +158,6 @@ typedef struct zell_scene {
     bool disks_ready;
     int disk_count, disk_used[8];
     char disk_labels[8][96];
-    char screen_status[5][96], screen_preview[5][1200];
-    bool screens_ready;
     bool coding_yolo, coding_yolo_ready, coding_yolo_refresh;
     int weather_state, weather_icon;
     char weather_temperature[24], weather_place[96], weather_condition[64];
@@ -183,6 +181,7 @@ typedef struct zell_scene {
     int seat_ticks;
     bool seated;
     zell_room_view room_view;
+    int command_focus; /* zero for walking, otherwise terminal index + 1 */
     zell_window windows[ZELL_WINDOWS];
     zell_provider_row provider_rows[ZELL_PROVIDER_ROWS];
     int provider_count;

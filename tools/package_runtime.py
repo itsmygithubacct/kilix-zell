@@ -37,9 +37,10 @@ def neuronte_weights(neuronte):
     return [split.name] + [name for bundle in bundles for name in (bundle, bundle[:-4] + '.list.txt')]
 
 
-def build(dest, modules, neuronte, ghostty, sdk, display=None, framebuffer=None):
+def build(dest, modules, neuronte, ghostty, sdk, display=None, framebuffer=None, neuroterm=None):
     display = display or modules/'neuronte-display'
     framebuffer = framebuffer or modules/'kitty-framebuffer'
+    neuroterm = neuroterm or modules.parent/'kilix-apps/neuroterm'
     secrets = modules/'kilix-secrets'
     copy(ROOT/'zell-neuronte', dest/'zell-neuronte', True)
     copy(ROOT/'bin/zell', dest/'bin/zell', True)
@@ -72,7 +73,8 @@ def build(dest, modules, neuronte, ghostty, sdk, display=None, framebuffer=None)
     for name, source in [('zell', ROOT), ('neuronte', neuronte), ('ghostty', ghostty),
         ('neuronte-display', display), ('kilix-secrets', secrets),
         ('kitty-framebuffer', framebuffer), ('soft-raster', modules/'soft-raster'),
-        ('neuronte-sdk', sdk),
+        ('neuronte-sdk', sdk), ('neuroterm', neuroterm),
+        ('libvterm', neuroterm/'third_party/libvterm'),
         ('kitty-keyboard', modules/'kitty-input/third_party/kitty_keyboard')]:
         copy(source/'LICENSE', dest/'licenses'/name)
     copy(secrets/'THIRD_PARTY_NOTICES.md', dest/'licenses/kilix-secrets-notices')
@@ -161,6 +163,7 @@ def main():
                         '(default: neuronte-sdk under --modules)')
     parser.add_argument('--neuronte-display', type=Path, help='neuronte-display checkout with nd_scroll '
                         '(default: neuronte-display under --modules)')
+    parser.add_argument('--neuroterm', type=Path, help='NeuroTerm checkout used for the wall terminals')
     parser.add_argument('--framebuffer', type=Path, help='kitty-framebuffer checkout with kittyfb_write_control '
                         '(default: kitty-framebuffer under --modules)')
     parser.add_argument('--output', type=Path)
@@ -184,7 +187,7 @@ def main():
             parser.error(f'{display} has no nd_scroll; name a neuronte-display checkout from 0.2.4 with --neuronte-display')
         if 'kittyfb_write_control' not in (framebuffer/'include/kitty_framebuffer.h').read_text(errors='replace'):
             parser.error(f'{framebuffer} has no kittyfb_write_control; name a kitty-framebuffer checkout from 0.2.4 with --framebuffer')
-        build(dest, modules, args.neuronte.resolve(), args.ghostty.resolve(), sdk, display, framebuffer)
+        build(dest, modules, args.neuronte.resolve(), args.ghostty.resolve(), sdk, display, framebuffer, args.neuroterm)
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             with tarfile.open(args.output, 'w:xz') as archive:

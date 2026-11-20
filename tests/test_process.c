@@ -677,6 +677,63 @@ static void desktop_input_feed(zell_scene *s,const char *bytes,size_t count){
     zell_input_feed(&pointer_input,&sinks,bytes,count,now_ms());
 }
 
+static bool wall_contains(int index,const char *text){
+    const neuroterm *t=&zell_command_term_screen(index)->terminal;
+    char line[512];
+    for(int row=0;row<t->rows;row++){
+        neuroterm_row_text(t,row,line,sizeof line);
+        if(strstr(line,text))return true;
+    }
+    return false;
+}
+static void await_wall(zell_scene *s,int index,const char *text){
+    for(int i=0;i<400;i++){
+        zell_command_term_pump(s);
+        if(wall_contains(index,text))return;
+        usleep(5000);
+    }
+    fprintf(stderr,"screen %d did not display %s\n",index,text);
+    assert(false);
+}
+static void test_command_wall(void){
+    pid_t child=fork();assert(child>=0);
+    if(!child){
+        setenv("SHELL","/bin/sh",1);setenv("PS1","wall$ ",1);unsetenv("ENV");
+        zell_scene s;zell_controls c;
+        zell_scene_init(&s,1536,1024);zell_desktop_init(&s);
+        zell_command_term_pump(&s);
+        assert(!zell_command_term_screen(0)->terminal.term);
+        s.room=1;zell_room_view_identity(&s);
+        for(int i=0;i<ZELL_COMMAND_TERMS;i++)await_wall(&s,i,"wall$");
+        kittykb_input_init(&keyboard.input);
+        kittykb_event key={.key=KITTYKB_KEY_F6,.action=KITTYKB_ACTION_PRESS};
+        assert(command_cycle(&s,&key)&&s.command_focus==2);
+        const char typed[]="printf '\\033[2J\\033[Hworker-%s\\n' one\r";
+        desktop_input_feed(&s,typed,sizeof typed-1);
+        read_controls(&s,&c);assert(!c.move_x&&!c.move_y&&!c.confirm);
+        await_wall(&s,1,"worker-one");
+        for(int i=0;i<ZELL_COMMAND_TERMS;i++)assert(wall_contains(i,"worker-one")== (i==1));
+        int cols=zell_command_term_screen(1)->terminal.cols;
+        zell_scene_resize(&s,960,680);zell_command_term_pump(&s);
+        assert(zell_command_term_screen(1)->terminal.cols<cols);
+        zell_command_focus(&s,ZELL_COMMAND_SHELL);
+        const char paste[]="printf 'mana-dir-%s\\n' \"${PWD##*/}\"";
+        desktop_paste(&s,paste,sizeof paste-1);
+        zell_command_term_key(ZELL_COMMAND_SHELL,VTERM_KEY_ENTER,VTERM_MOD_NONE);
+        await_wall(&s,ZELL_COMMAND_SHELL,"mana-dir-mana");
+        zell_command_focus(&s,-1);s.room=0;zell_command_term_pump(&s);
+        assert(wall_contains(1,"worker-one"));
+        s.room=1;zell_command_term_write(2,"exit\r",5);
+        for(int i=0;i<400&&!zell_command_term_screen(2)->message;i++){zell_command_term_pump(&s);usleep(5000);}
+        assert(zell_command_term_screen(2)->message);
+        zell_command_focus(&s,2);await_wall(&s,2,"wall$");
+        zell_command_term_shutdown();
+        assert(waitpid(-1,NULL,WNOHANG)==-1&&errno==ECHILD);
+        _exit(0);
+    }
+    int status=0;assert(waitpid(child,&status,0)==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0);
+}
+
 static void test_text_fields_receive_queued_keys(void)
 {
     zell_scene scene;
@@ -1194,6 +1251,7 @@ int main(void)
     assert(kittykb_input_next(&keyboard.input,&typed)&&typed.key==KITTYKB_KEY_UP);
     test_service_surfaces();
     test_app_keys();
+    test_command_wall();
     test_text_fields_receive_queued_keys();
     test_paste_question();
     test_terminal_transport(&scene);

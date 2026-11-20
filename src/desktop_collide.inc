@@ -48,22 +48,10 @@ static int spans_for(const zell_scene *s,zell_span *out,int cap){
   n++;
  }
  if(s->room!=1)return n;
- for(int screen=0;screen<5&&n<cap;screen++){
-  zell_rect frame,display;
-  zell_monitor_layout(screen,&frame,&display);
-  out[n].x0=(float)frame.x;out[n].y0=(float)frame.y;
-  out[n].x1=(float)(frame.x+frame.w);out[n].y1=(float)(frame.y+frame.h);
-  n++;
- }
- if(n<cap){
-  zell_rect frame,display;
-  zell_mana_console_layout(&frame,&display);
-  out[n].x0=(float)frame.x;out[n].y0=(float)frame.y;
-  out[n].x1=(float)(frame.x+frame.w);out[n].y1=(float)(frame.y+frame.h);
-  n++;
- }
- /* The Command computer needs no span: its case is against the left wall,
-  * outside the floor Kilix can walk. */
+ zell_rect first,last,body;
+ zell_monitor_layout(1,&first,&body);
+ zell_monitor_layout(4,&last,&body);
+ if(n<cap)out[n++]=(zell_span){(float)first.x,(float)first.y,(float)(last.x+last.w),(float)(last.y+last.h)};
  return n;
 }
 float zell_desktop_north(int room){
@@ -82,10 +70,6 @@ float zell_desktop_north(int room){
  * wall. Below the strips the walls stand on the old .135W/.865W lines, so
  * the Command computer and the Key Master keep their corners. */
 static bool command_wall(float x,float y){
- zell_rect left,right,display;
- zell_monitor_layout(1,&left,&display);
- zell_monitor_layout(2,&right,&display);
- if(y<(float)ZELL_WORLD_H*.32f&&x>=(float)left.x&&x<(float)(right.x+right.w))return true;
  if(y>=(float)ZELL_COMMAND_OPENING_BOTTOM&&y<(float)ZELL_COMMAND_STRIP_BOTTOM&&
     (x<(float)ZELL_COMMAND_STRIP_LEFT||x>=(float)ZELL_COMMAND_STRIP_RIGHT))return true;
  if(y>=(float)ZELL_COMMAND_STRIP_BOTTOM&&(x<(float)ZELL_WORLD_W*.135f||x>=(float)ZELL_WORLD_W*.865f))return true;

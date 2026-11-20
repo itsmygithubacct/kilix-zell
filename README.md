@@ -162,7 +162,10 @@ Sibling libraries: `kitty-framebuffer`, `kitty-input`, `soft-raster`, and
 `neuronte-sdk` for the Neuronte build and for `make test`, which runs that
 build's tests too. Neuronte
 provides text, shape and sprite rendering. The background is cached after its
-first Neuronte render.
+first Neuronte render. The Command Center embeds the same Kilix NeuroTerm
+core used by PuzzLLM. Set `NEUROTERM_DIR` to a NeuroTerm checkout containing
+`embed.mk` and `include/neuroterm_terminal.h`. It defaults to the
+`kilix-apps/neuroterm` sibling of the modules directory.
 
 The Neuronte programs do not link soft-raster. Their pixel buffer, frame
 clear, flat fill, RGBA packing and PPM writer are the canvas of
@@ -301,7 +304,7 @@ an `@handle`, or a full address. Like the floating terminal it can be
 minimized to a button on the bottom row and maximized; minimized, the page
 stays open. Zell holds one floating window at a time.
 
-The **Mana console** in the Command Center is a small computer whose screen
+The **Mana console** sits above the center shell. Its screen
 shows what Codex, Claude and Grok each have left. Its tasks zoom into the
 screen and open the usage dashboard or a provider's own usage page in a
 browser drawn inside a Kilix tab; that browser keeps its own profile, so a
@@ -317,9 +320,9 @@ pinned one (`kilix app install kilix-claudex`) and carries on. Looking at
 readings and the automatic reading never install anything, and
 `KILIX_APP_AUTO_INSTALL=0` refuses the install.
 
-The **Command computer** stands in the bottom left corner of the Command
-Center. Enter beside it opens a shell in Zell's floating terminal, started in
-the folder `tools/mana`. The three scripts there tell Zell by hand how much a
+The **Shell** under Mana starts in the folder `tools/mana`. Click its black
+screen to type there, or its **New window** header for a floating shell.
+The three scripts there tell Zell by hand how much a
 provider has left, for when no automatic reading can be taken:
 
 ```
@@ -357,10 +360,10 @@ library; `KILIX_ZELL_NEURONTE_DISPLAY` and `ZELL_NEURONTE_LIBRARY` can select th
 ### Downstairs rooms
 
 The lower row of floor hatches leads to the **Command Center**, **Vault**,
-**Workshop**, and **Laundry**, from left to right. The Command Center has no
-stairs: Kilix leaves it by walking off the bottom of its floor, anywhere
-between the Command computer in the bottom left corner and the Key Master in
-the bottom right; nothing marks that edge. Up the strip beside the screens on
+**Workshop**, and **Laundry**, from left to right. Walk off the south edge of
+the Command Center to return to the cave. Git Wizard, Pilot and Key Master
+stand along that edge. Above them, four black-glass floor panels show YOLO,
+Spare, agent updates and saved fleets. Up the strip beside the screens on
 either side wall is an opening in the top corner, and through it a room of
 panes: two side by side on the left, four on the right. A pane room is one
 Kilix tab as wide and high as the Zell pane, past the 1600x1000 cap the other
@@ -378,14 +381,18 @@ time he enters and keep running, unpainted, while he is elsewhere, until Zell
 closes. They start in your home folder. They are Zell's own shells, not
 Kilix windows: Kilix does not list them, and they cannot be sent text as Zell's
 window. Tab lists the current room's
-stations. Five command-center screens bind to real Kilix coding tabs, with exact
-broker identities saved after successful creation. Interacting opens/focuses the
-session. The larger screens show bounded text previews of their assigned Codex
-sessions, refreshed about every five seconds. Exact pane, tab and broker
-identities are checked before and after capture; changed sessions lose their
-preview. Preview text stays in memory. Click a screen from anywhere in the room
-to open its menu. The controller can explicitly dispatch tasks to verified
-workers and open the task board.
+stations.
+
+The Command Center wall holds six independent NeuroTerm shells. Worker 1,
+Controller and Worker 2 fill the upper row. Worker 3, Mana and Shell, and
+Worker 4 fill the lower row. The first visit opens real interactive shells.
+The five coding screens start in your home folder. Their prompts and running
+programs stay on the wall when you visit another room. Click a screen to type,
+press **F6** or **Shift+F6** to cycle screens, and press **Alt+Esc** or click
+the floor to walk again. Select an exited shell to start a new one.
+
+The **Sessions** headers open the existing Kilix coding-session menus. The
+controller can dispatch tasks to verified workers and open the task board.
 
 The large **YOLO** switch reads Kilix's shared `KILIX_CODING_YOLO` setting on
 room entry and follows changes made elsewhere. Clicking it, or walking up and

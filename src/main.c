@@ -58,6 +58,7 @@ static int64_t now_ms(void)
     return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
+#include "command_term.h"
 #include "desktop_input.inc"
 
 /* Samples the present loop twice a second. The first half second stays 0. */
@@ -859,6 +860,44 @@ static size_t terminal_key_bytes(const kittykb_event *event,unsigned char *out){
     return n;
 }
 
+/* Let the VT encode cursor and function keys in its current application mode. */
+static void command_key(int index,const kittykb_event *event){
+    static const struct {uint32_t input;VTermKey vt;} keys[]={
+        {KITTYKB_KEY_ENTER,VTERM_KEY_ENTER},{KITTYKB_KEY_KP_ENTER,VTERM_KEY_ENTER},
+        {KITTYKB_KEY_BACKSPACE,VTERM_KEY_BACKSPACE},{KITTYKB_KEY_TAB,VTERM_KEY_TAB},
+        {KITTYKB_KEY_ESCAPE,VTERM_KEY_ESCAPE},{KITTYKB_KEY_UP,VTERM_KEY_UP},
+        {KITTYKB_KEY_DOWN,VTERM_KEY_DOWN},{KITTYKB_KEY_LEFT,VTERM_KEY_LEFT},
+        {KITTYKB_KEY_RIGHT,VTERM_KEY_RIGHT},{KITTYKB_KEY_INSERT,VTERM_KEY_INS},
+        {KITTYKB_KEY_DELETE,VTERM_KEY_DEL},{KITTYKB_KEY_HOME,VTERM_KEY_HOME},
+        {KITTYKB_KEY_END,VTERM_KEY_END},{KITTYKB_KEY_PAGE_UP,VTERM_KEY_PAGEUP},
+        {KITTYKB_KEY_PAGE_DOWN,VTERM_KEY_PAGEDOWN}
+    };
+    VTermModifier mods=(VTermModifier)((event->modifiers&KITTYKB_MOD_SHIFT?VTERM_MOD_SHIFT:0)|
+        (event->modifiers&KITTYKB_MOD_CTRL?VTERM_MOD_CTRL:0)|(event->modifiers&KITTYKB_MOD_ALT?VTERM_MOD_ALT:0));
+    for(size_t i=0;i<sizeof keys/sizeof keys[0];i++){
+        if(event->key==keys[i].input){zell_command_term_key(index,keys[i].vt,mods);return;}
+    }
+    if(event->key>=KITTYKB_KEY_F1&&event->key<=KITTYKB_KEY_F12){
+        zell_command_term_key(index,(VTermKey)VTERM_KEY_FUNCTION(event->key-KITTYKB_KEY_F1+1),mods);
+        return;
+    }
+    unsigned char bytes[TERMINAL_KEY_BYTES];size_t length=terminal_key_bytes(event,bytes);
+    if(length)zell_command_term_write(index,bytes,length);
+}
+
+static bool command_cycle(zell_scene *s,const kittykb_event *event){
+    if(event->key!=KITTYKB_KEY_F6||(event->modifiers&(KITTYKB_MOD_CTRL|KITTYKB_MOD_ALT|KITTYKB_MOD_SUPER)))return false;
+    if(event->action==KITTYKB_ACTION_PRESS){
+        /* Reading order across both rows. */
+        static const int order[]={1,0,2,3,ZELL_COMMAND_SHELL,4};
+        int step=(event->modifiers&KITTYKB_MOD_SHIFT)?-1:1;
+        int pos=step>0?-1:0;
+        for(int i=0;i<ZELL_COMMAND_TERMS;i++)if(s->command_focus==order[i]+1){pos=i;break;}
+        zell_command_focus(s,order[(pos+step+ZELL_COMMAND_TERMS)%ZELL_COMMAND_TERMS]);
+    }
+    return true;
+}
+
 static void read_controls(zell_scene *scene, zell_controls *controls)
 {
     kittykb_event event;
@@ -867,6 +906,16 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
     /* A paste of more than one line waits for its answer: nothing else
      * moves meanwhile. */
     if(paste_answer(scene))return;
+    if(scene->desktop&&scene->room==1&&scene->mode==ZELL_MODE_WALK&&scene->command_focus){
+        while(next_key(&event)){
+            if(event.action==KITTYKB_ACTION_RELEASE||command_cycle(scene,&event))continue;
+            if(event.key==KITTYKB_KEY_ESCAPE&&(event.modifiers&KITTYKB_MOD_ALT)){
+                zell_command_focus(scene,-1);return;
+            }
+            command_key(scene->command_focus-1,&event);
+        }
+        return;
+    }
     bool page_keys = zell_theater_wants_keys(scene);
     bool typing = scene->mode == ZELL_MODE_QUESTION || scene->mode == ZELL_MODE_TYPE || scene->mode==ZELL_MODE_LAUNCHER ||
                   (scene->mode == ZELL_MODE_SERVICE && scene->service_phase == 1) ||
@@ -997,6 +1046,9 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
     while (sizeof controls->edits - edits > KITTYKB_MAX_TEXT_CODEPOINTS && next_key(&event)) {
         if (event.action == KITTYKB_ACTION_RELEASE) {
             continue;
+        }
+        if(scene->desktop&&scene->room==1&&scene->mode==ZELL_MODE_WALK&&command_cycle(scene,&event)){
+            memset(controls,0,sizeof *controls);return;
         }
         if (page_keys) {
             controls->key_press = true;
@@ -1175,7 +1227,7 @@ static int run_scene(void)
                 scene.theater_install_code=-1;
             }
         }
-        if(scene.desktop){zell_panes_pump(&scene);desktop_copy();desktop_app_keys(&scene,false);}
+        if(scene.desktop){zell_command_term_pump(&scene);zell_panes_pump(&scene);desktop_copy();desktop_app_keys(&scene,false);}
         /* service_frame ignores a job frame whose window generation does not match. */
         service_pump(&vitals,&scene);
         service_pump(&service,&scene);
@@ -1216,6 +1268,7 @@ static int run_scene(void)
 
     dictation_stop(&dictation);
     zell_theater_shutdown();
+    zell_command_term_shutdown();
     zell_panes_shutdown();
     service_stop(&vitals);
     service_stop(&service);

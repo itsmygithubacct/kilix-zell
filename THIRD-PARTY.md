@@ -2,6 +2,11 @@
 
 `kilix-zell` is MIT licensed. See [LICENSE](LICENSE).
 
+## NeuroTerm
+
+The Command Center uses Kilix NeuroTerm and its bundled libvterm under the
+MIT license. Runtime packages include both notices in the licenses directory.
+
 ## Shellda sprites
 
 `SPR_EN_WIZARD` in `src/sprites.c` is copied from Shellda's

@@ -89,8 +89,9 @@ typedef struct { int x, y, w, h; } zell_rect;
 void zell_monitor_layout(int screen,zell_rect *frame,zell_rect *display);
 void zell_mana_console_layout(zell_rect *frame,zell_rect *display);
 void zell_command_computer_layout(zell_rect *frame,zell_rect *display);
-/* The computer's case ends this far right of its station point. */
-#define ZELL_COMMAND_COMPUTER_REACH 20
+enum { ZELL_COMMAND_TERMS=6, ZELL_COMMAND_SHELL=5, ZELL_FLOOR_PANELS=4 };
+void zell_command_term_layout(int index,zell_rect *frame,zell_rect *body);
+void zell_command_focus(zell_scene *s,int index);
 /* The Key Master's two lines, shown while Kilix is beside him. He stands in
  * the bottom right corner, with the AGENTS panel above him and the wall to
  * his right, so his lines go in the strip under that panel, ending left of
@@ -104,8 +105,8 @@ void zell_command_computer_layout(zell_rect *frame,zell_rect *display);
  * in the top corner; the tunnel floor is OPENING_TOP..OPENING_BOTTOM, and
  * Kilix goes through when his feet are OPENING_DEPTH from the world edge.
  * Below STRIP_BOTTOM the walls stand where they always did. */
-#define ZELL_COMMAND_STRIP_LEFT 132
-#define ZELL_COMMAND_STRIP_RIGHT 1404
+#define ZELL_COMMAND_STRIP_LEFT 48
+#define ZELL_COMMAND_STRIP_RIGHT (ZELL_WORLD_W-ZELL_COMMAND_STRIP_LEFT)
 #define ZELL_COMMAND_STRIP_BOTTOM 760
 #define ZELL_COMMAND_OPENING_TOP 226
 #define ZELL_COMMAND_OPENING_BOTTOM 330

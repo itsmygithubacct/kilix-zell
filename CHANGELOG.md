@@ -4,6 +4,7 @@
 
 These changes are not in the 0.1.1 runtime archive that Plebian-OS 0.2.3 pins.
 
+- Fill the Command Center wall with six interactive NeuroTerm shells. Center Mana above its shell, group four black-glass controls on the floor, and place the staff along the south edge.
 - Keep typed and pasted text in order in the launcher, Wizard, station prompts and theater fields when several keys arrive in one frame.
 - Keep the launcher connected to a custom runtime after staging or relocation. Upgrades preserve the installed game if activation fails and refuse an unrelated destination.
 - Use the selected Neuronte and display checkouts in source-built terminals. The packaged executable also finds its renderer files when started directly.

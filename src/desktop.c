@@ -5,12 +5,11 @@
 #include <ctype.h>
 #include <time.h>
 #include "draw.h"
+#include "command_term.h"
 #include "desktop_assets.h"
-/* The two bottom corners of the Command Center. */
+/* Command Center staff stand along the south wall. */
 #define KM_X .905f
 #define KM_Y .965f
-#define PC_X .12f
-#define PC_Y .98f
 const zell_station zell_stations[ZELL_STATIONS]={
  {"Wizard","Ask, think, discover",.23f,.35f,5},
  {"Archivist","Logs and sessions",.50f,.35f,6},
@@ -27,11 +26,11 @@ const zell_station zell_stations[ZELL_STATIONS]={
  {"Neuronte shell switch","Neural terminal / behind the shell computer",.90f,.42f,ZELL_ART_SWITCH},
  {"Command center hatch","Five connected coding screens downstairs",.30f,.645f,ZELL_ART_COMMAND_HATCH},
  {"Laundry room hatch","Drive bins and storage explorer downstairs",.78f,.645f,ZELL_ART_LAUNDRY_HATCH},
- {"Command screen","Coordinate the four worker sessions",.50f,.43f,ZELL_ART_CONTROLLER},
- {"Worker screen 1","Coding session",.22f,.42f,ZELL_ART_WORKER},
- {"Worker screen 2","Coding session",.78f,.42f,ZELL_ART_WORKER},
- {"Worker screen 3","Coding session",.22f,.70f,ZELL_ART_WORKER},
- {"Worker screen 4","Coding session",.78f,.70f,ZELL_ART_WORKER},
+ {"Command screen","Coordinate the four worker sessions",.50f,.37f,ZELL_ART_CONTROLLER},
+ {"Worker screen 1","Coding session",320.f/1536.f,.37f,ZELL_ART_WORKER},
+ {"Worker screen 2","Coding session",1216.f/1536.f,.37f,ZELL_ART_WORKER},
+ {"Worker screen 3","Coding session",320.f/1536.f,680.f/1024.f,ZELL_ART_WORKER},
+ {"Worker screen 4","Coding session",1216.f/1536.f,680.f/1024.f,ZELL_ART_WORKER},
  {"Drive bin 1","Capacity and files",.22f,.46f,-1},
  {"Drive bin 2","Capacity and files",.40f,.46f,-1},
  {"Drive bin 3","Capacity and files",.58f,.46f,-1},
@@ -42,8 +41,8 @@ const zell_station zell_stations[ZELL_STATIONS]={
  {"Drive bin 8","Capacity and files",.76f,.72f,-1},
  /* The way out of a downstairs room. The Command Center draws no stairs. */
  {"Way back to the cave","Return upstairs",.50f,.91f,ZELL_ART_COMMAND_STAIRS},
- {"Git Wizard","Projects, changes and health watches",.36f,.72f,ZELL_ART_GIT_IDLE},
- {"Pilot","Project fleets and session arrangements",.64f,.72f,ZELL_ART_PILOT_IDLE},
+ {"Git Wizard","Projects, changes and health watches",.235f,KM_Y,ZELL_ART_GIT_IDLE},
+ {"Pilot","Project fleets and session arrangements",.61f,KM_Y,ZELL_ART_PILOT_IDLE},
  /* The Key Master keeps the bottom right corner of the Command Center. */
  {"Key Master","API keys, logins and encrypted secrets",KM_X,KM_Y,ZELL_ART_KEY_MASTER_IDLE},
  {"Gatekeeper","Power, sessions and restart checks",.41f,.88f,ZELL_ART_CIVIC_IDLE},
@@ -60,21 +59,19 @@ const zell_station zell_stations[ZELL_STATIONS]={
  {"Workshop hatch","Device workshop downstairs",.62f,.645f,ZELL_ART_WORKSHOP_HATCH},
  {"Dictation switch","Listen once; review words before sending",.078f,.34f,16},
  {"Music mute switch","Pause or resume the DJ and room music",.092f,.34f,16},
- {"YOLO switch","Enable or disable shared coding-agent YOLO mode",.21f,.88f,-1},
- {"Agent updates switch","Choose and update installed coding agents",.79f,.88f,-1},
- {"Mana console","Coding-token balances and the providers' usage pages",.38f,.58f,ZELL_ART_WORKER},
+ {"YOLO switch","Enable or disable shared coding-agent YOLO mode",264.f/1536.f,820.f/1024.f,-1},
+ {"Agent updates switch","Choose and update installed coding agents",936.f/1536.f,820.f/1024.f,-1},
+ {"Mana console","Coding-token balances and the providers' usage pages",.50f,484.f/1024.f,ZELL_ART_WORKER},
  {"Workshop computer","Sit at the stool and use this computer.",797.f/1536.f,408.f/1024.f,-1},
- {"Fleet board","Reserved, not an available action.",0.f,0.f,-1},
- {"Floor panel","Reserved, not an available action.",.50f,.84f,-1},
+ {"Fleet board","Saved fleets and their live workers",1272.f/1536.f,820.f/1024.f,-1},
+ {"Floor panel","Reserved, not an available action.",600.f/1536.f,820.f/1024.f,-1},
  /* Between the staff above and the older hatches below. The open lids
   * rise into the gap while the stone rims stay on the cave floor. */
  {"Game room hatch","Games downstairs",.30f,.52f,ZELL_ART_GAME_HATCH},
  {"Movie theater hatch","Screen downstairs",.46f,.52f,ZELL_ART_THEATER_HATCH},
  {"Meditation room hatch","Quiet room downstairs",.62f,.52f,ZELL_ART_MEDITATION_HATCH},
  {"Library hatch","Reading room downstairs",.78f,.52f,ZELL_ART_LIBRARY_HATCH},
- /* Bottom left of the Command Center. Its shell opens in the folder of
-  * scripts that set mana by hand. */
- {"Command computer","A shell beside the scripts that set mana by hand",PC_X,PC_Y,ZELL_ART_WORKER}
+ {"Command computer","Shell and mana scripts",.50f,680.f/1024.f,ZELL_ART_WORKER}
 };
 static const char *const actions[ZELL_STATIONS][17]={
  {"Ask the wizard","First-run tour of Zell",NULL},
@@ -120,7 +117,7 @@ bool zell_desktop_station_visible(const zell_scene *s,int station){
  /* A pane room is all terminal: nothing in it is a station. */
  if(ZELL_ROOM_IS_PANES(s->room))return false;
  if(station==28)return true;
- if(s->room==1)return (station>=15&&station<=19)||(station>=29&&station<=31)||(station>=46&&station<=48)||station==ZELL_FLOOR_PANEL||station==ZELL_COMMAND_COMPUTER;
+ if(s->room==1)return (station>=15&&station<=19)||(station>=29&&station<=31)||(station>=46&&station<=48)||station==ZELL_FLOOR_PANEL||station==ZELL_FLEET_BOARD||station==ZELL_COMMAND_COMPUTER;
  if(s->room==2)return (station>=20&&station<20+s->disk_count)||station==34||station==35;
  /* The Sentinel keeps the Vault with its keeper; the Signalman and the
   * Merchant work in the Workshop. */
@@ -167,7 +164,7 @@ int zell_desktop_near(const zell_scene *s) {
   if(!zell_desktop_station_visible(s,i))continue;
   /* The Command Center's way out is its whole bottom edge and has nothing
    * drawn at one point, so it is walked through, never selected. */
-  if(i==28&&s->room==1)continue;
+  if(s->room==1&&(i==28||i==ZELL_FLEET_BOARD))continue;
   float dx=s->x-zell_stations[i].x*ZELL_WORLD_W;
   float dy=s->y-zell_stations[i].y*ZELL_WORLD_H;
   float d=sqrtf(dx*dx+dy*dy);
@@ -193,7 +190,7 @@ bool zell_desktop_on_stairs(const zell_scene *s){
 bool zell_desktop_station_in_front(const zell_scene *s,int i){
  if(i<0||i>=ZELL_STATIONS||!zell_desktop_station_visible(s,i))return false;
  bool stands=s->room==0?(i<6||(i>=32&&i<=41)):(i!=28&&i>=15&&i<46);
- return stands&&zell_stations[i].y*(float)ZELL_WORLD_H>s->y;
+ return !(s->room==1&&i>=15&&i<=19)&&stands&&zell_stations[i].y*(float)ZELL_WORLD_H>s->y;
 }
 
 /* Stool cushion and the floor just south of its legs, in world pixels.
@@ -382,6 +379,7 @@ int zell_hatch_room(int station){
  return 0;
 }
 static void open_station(zell_scene *s,int n){
+ s->command_focus=0;
  if(n==ZELL_WORKSHOP_COMPUTER){workshop_begin_hop(s);return;}
  s->running=false;s->run_charge=0;s->run_blocked=true;s->station=n;s->menu_index=0;s->menu_hold=0;
  int room=zell_hatch_room(n);
@@ -389,7 +387,7 @@ static void open_station(zell_scene *s,int n){
   if(n==28){
    int hatch=s->room>=1&&s->room<=ZELL_DOWNSTAIRS_ROOMS?zell_cave_hatches[s->room].station:ZELL_COMMAND_HATCH;
    s->room=0;s->x=zell_stations[hatch].x*ZELL_WORLD_W;s->y=zell_stations[hatch].y*ZELL_WORLD_H+50;
-  }else{s->room=room;s->x=ZELL_WORLD_W*.50f;s->y=ZELL_WORLD_H*ZELL_ROOM_ENTRY_Y;}
+  }else{s->room=room;s->x=ZELL_WORLD_W*.50f;s->y=ZELL_WORLD_H*(room==1?.91f:ZELL_ROOM_ENTRY_Y);}
   /* The glass waits for a new confirmed read. The toggle does not guess. */
   if(s->room==1){s->coding_yolo_ready=false;s->coding_yolo_refresh=true;}
   s->mode=ZELL_MODE_WALK;s->step_ticks=0;s->desktop_launch=false;return;
@@ -433,6 +431,7 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
  }
  if(c->launcher&&s->mode!=ZELL_MODE_WAIT){s->running=false;s->run_charge=0;s->run_blocked=c->run;s->mode=s->mode==ZELL_MODE_LAUNCHER?ZELL_MODE_WALK:ZELL_MODE_LAUNCHER;s->menu_index=0;s->menu_hold=0;s->launcher_query[0]=0;return 1;}
  if(s->mode==ZELL_MODE_WALK){
+  if(s->room==1&&s->command_focus)return 1;
   if(workshop_seat_tick(s,c))return 1;
   float dx=(float)c->move_x,dy=(float)c->move_y;
   float d=sqrtf(dx*dx+dy*dy),speed=ZELL_WALK_SPEED;
@@ -481,7 +480,7 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
      if(zell_desktop_blocked(s,s->x,s->y)){s->x=oldx;s->y=oldy;blocked=true;}
     }
     for(int i=0;i<ZELL_STATIONS;i++){
-     if(!zell_desktop_station_visible(s,i)||i==28||i==46||i==47||i==ZELL_WORKSHOP_COMPUTER||i==ZELL_COMMAND_COMPUTER||i==ZELL_FLOOR_PANEL||(s->room==0&&i>=6&&!(i>=32&&i<=41)))continue;
+     if(!zell_desktop_station_visible(s,i)||i==28||i==46||i==47||i==ZELL_WORKSHOP_COMPUTER||i==ZELL_COMMAND_COMPUTER||i==ZELL_FLOOR_PANEL||i==ZELL_FLEET_BOARD||(s->room==0&&i>=6&&!(i>=32&&i<=41)))continue;
      float ax=s->x-zell_stations[i].x*ZELL_WORLD_W,ay=s->y-zell_stations[i].y*ZELL_WORLD_H;
      if(ax*ax+ay*ay<26*26){s->x=oldx;s->y=oldy;blocked=true;break;}
     }
@@ -618,19 +617,24 @@ static int clicked_hatch(const zell_scene *s,int x,int y){
  }
  return margin;
 }
+/* The shared edges are both the screen bezels and the picking boundaries. */
+enum { WALL_LEFT=96, WALL_COL=(ZELL_WORLD_W-2*WALL_LEFT)/3,
+       WALL_TOP=ZELL_ROOM_HUD_BOTTOM, WALL_SEAM=386, MANA_BOTTOM=484, WALL_BOTTOM=680 };
+static void wall_tile(int col,int top,int bottom,zell_rect *frame,zell_rect *body){
+ *frame=(zell_rect){WALL_LEFT+col*WALL_COL,top,WALL_COL,bottom-top};
+ *body=(zell_rect){frame->x+7,top+32,WALL_COL-14,bottom-top-38};
+}
+void zell_command_term_layout(int index,zell_rect *frame,zell_rect *body){
+ static const int columns[ZELL_COMMAND_TERMS]={1,0,2,0,2,1};
+ if(index<0||index>=ZELL_COMMAND_TERMS){*frame=*body=(zell_rect){0};return;}
+ int top=index<3?WALL_TOP:index==ZELL_COMMAND_SHELL?MANA_BOTTOM:WALL_SEAM;
+ wall_tile(columns[index],top,index<3?WALL_SEAM:WALL_BOTTOM,frame,body);
+}
 void zell_monitor_layout(int screen,zell_rect *frame,zell_rect *display){
- if(screen<0||screen>=5){*frame=*display=(zell_rect){0};return;}
- const zell_station *station=&zell_stations[15+screen];
- int w=screen==0?420:320,h=screen==0?310:235;
- *frame=(zell_rect){(int)(station->x*ZELL_WORLD_W)-w/2,(int)(station->y*ZELL_WORLD_H)-h,w,h};
- *display=(zell_rect){frame->x+w*11/100,frame->y+h*(screen==0?26:15)/100,w*78/100,h*(screen==0?52:62)/100};
+ zell_command_term_layout(screen>=0&&screen<5?screen:-1,frame,display);
 }
 void zell_fleet_board_layout(zell_rect *board){
- zell_rect frame,display;
- if(!board)return;
- zell_monitor_layout(4,&frame,&display);
- *board=(zell_rect){frame.x-180,frame.y,168,120};
- if(board->x<8)board->x=8;
+ if(board)zell_floor_panel_layout(3,board,NULL);
 }
 bool zell_fleet_board_line(const zell_scene *s,int index,char *text,size_t capacity){
  if(!s||!text||capacity<8||index<0||index>=s->fleet_count||index>=ZELL_FLEET_ROWS)return false;
@@ -640,39 +644,28 @@ bool zell_fleet_board_line(const zell_scene *s,int index,char *text,size_t capac
  return n>0&&(size_t)n<capacity;
 }
 void zell_mana_console_layout(zell_rect *frame,zell_rect *display){
- const zell_station *station=&zell_stations[ZELL_MANA_CONSOLE];
- int w=176,h=129;
- *frame=(zell_rect){(int)(station->x*ZELL_WORLD_W)-w/2,(int)(station->y*ZELL_WORLD_H)-h,w,h};
- *display=(zell_rect){frame->x+w*11/100,frame->y+h*15/100,w*78/100,h*62/100};
+ wall_tile(1,WALL_SEAM,MANA_BOTTOM,frame,display);
 }
 void zell_command_computer_layout(zell_rect *frame,zell_rect *display){
- const zell_station *station=&zell_stations[ZELL_COMMAND_COMPUTER];
- /* The station point is the computer's near corner, where Kilix can stand:
-  * the case itself is against the left wall, outside the floor he walks. */
- int w=132,h=97;
- *frame=(zell_rect){(int)(station->x*ZELL_WORLD_W)+ZELL_COMMAND_COMPUTER_REACH-w,(int)(station->y*ZELL_WORLD_H)-h,w,h};
- *display=(zell_rect){frame->x+w*11/100,frame->y+h*15/100,w*78/100,h*62/100};
-}
-void zell_command_switch_layout(int index,zell_rect *frame){
- if(index<0||index>1){*frame=(zell_rect){0};return;}
- const zell_station *station=&zell_stations[46+index];
- *frame=(zell_rect){(int)(station->x*ZELL_WORLD_W)-150,(int)(station->y*ZELL_WORLD_H)-150,300,150};
+ zell_command_term_layout(ZELL_COMMAND_SHELL,frame,display);
 }
 void zell_floor_panel_layout(int index,zell_rect *frame,zell_rect *glass){
- zell_rect unused=(zell_rect){0};
- if(!frame)frame=&unused;
- if(index<0||index>2){*frame=(zell_rect){0};if(glass)*glass=(zell_rect){0};return;}
- if(index<2)zell_command_switch_layout(index,frame);
- else{
-  const zell_station *station=&zell_stations[ZELL_FLOOR_PANEL];
-  *frame=(zell_rect){(int)(station->x*(float)ZELL_WORLD_W)-150,(int)(station->y*(float)ZELL_WORLD_H)-150,300,150};
+ static const int stations[ZELL_FLOOR_PANELS]={46,47,ZELL_FLOOR_PANEL,ZELL_FLEET_BOARD};
+ zell_rect r={0};
+ if(index>=0&&index<ZELL_FLOOR_PANELS){
+  const zell_station *p=&zell_stations[stations[index]];
+  r=(zell_rect){(int)(p->x*ZELL_WORLD_W)-149,(int)(p->y*ZELL_WORLD_H)-112,298,112};
  }
- if(!glass)return;
- /* Off-panel cell cropped to its plate is 332x153; the glass sits at 73,45 and is 200x62. */
- glass->x=frame->x+frame->w*73/332;
- glass->y=frame->y+frame->h*45/153;
- glass->w=frame->w*200/332;
- glass->h=frame->h*62/153;
+ if(frame)*frame=r;
+ if(glass)*glass=r.w?(zell_rect){r.x+6,r.y+5,r.w-12,r.h-11}:r;
+}
+void zell_command_switch_layout(int index,zell_rect *frame){
+ zell_floor_panel_layout(index>=0&&index<2?index:-1,frame,NULL);
+}
+void zell_command_focus(zell_scene *s,int index){
+ s->command_focus=index+1;
+ s->running=false;s->run_charge=0;s->step=0;s->step_ticks=0;
+ if(index>=0)zell_command_term_retry(index);
 }
 bool zell_desktop_click(zell_scene *s){
  /* Screen-space theater hits consume the click before any world conversion. */
@@ -693,19 +686,23 @@ bool zell_desktop_click(zell_scene *s){
   if(hatch>=0){s->mouse_click=false;open_station(s,hatch);return true;}
  }
  if(s->room!=1)return false;
- for(int i=0;i<3;i++){
+ s->command_focus=0;
+ for(int i=0;i<ZELL_FLOOR_PANELS;i++){
   zell_rect frame;zell_floor_panel_layout(i,&frame,NULL);
   if(!rect_holds(&frame,ix,iy))continue;
   s->mouse_click=false;
-  /* The spare plate is drawn and does not start a station. YOLO and agents
-   * keep the existing helpers; neither one restarts a running agent. */
-  if(i==2)return true;
-  open_station(s,46+i);
+  if(i<2)open_station(s,46+i);
   return true;
  }
- for(int i=0;i<5;i++){
-  zell_rect frame,display;zell_monitor_layout(i,&frame,&display);
-  if(rect_holds(&frame,ix,iy)){s->mouse_click=false;open_station(s,15+i);return true;}
+ zell_rect frame,body;zell_mana_console_layout(&frame,&body);
+ if(rect_holds(&frame,ix,iy)){s->mouse_click=false;open_station(s,ZELL_MANA_CONSOLE);return true;}
+ for(int i=0;i<ZELL_COMMAND_TERMS;i++){
+  zell_command_term_layout(i,&frame,&body);
+  if(!rect_holds(&frame,ix,iy))continue;
+  s->mouse_click=false;
+  if(iy<body.y)open_station(s,i==ZELL_COMMAND_SHELL?ZELL_COMMAND_COMPUTER:15+i);
+  else zell_command_focus(s,i);
+  return true;
  }
  return false;
 }

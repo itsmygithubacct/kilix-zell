@@ -507,8 +507,6 @@ def desktop(station,action):
                 used=disk.get('used_percent');percent=round(used) if isinstance(used,(int,float)) else -1
                 label=disk['label'] if index<7 or len(drives)<=8 else 'More drives (Enter)'
                 DIALOGUE.send('B',f'{percent} {label}')
-            for index,screen in enumerate(zell_rooms.previews(ui)):
-                DIALOGUE.send('S',f"{index} {screen['status']}\n{screen['text']}")
             try:
                 import zell_fleets
                 try:fleet_snapshot=zell_rooms._snapshot()
