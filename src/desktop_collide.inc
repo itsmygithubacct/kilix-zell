@@ -1,6 +1,5 @@
-/* Furniture footprints measured from the room paintings. Command Center
- * screens are not copied here: collision calls zell_monitor_layout and
- * zell_mana_console_layout. Floor-panel rims are not obstacles.
+/* Furniture footprints measured from the room paintings. The Command Center
+ * screen bank supplies its own surround. Floor-panel rims are not obstacles.
  * tools/room_grid.py prints this table; keep one brace per line. */
 typedef struct { int room; float x0,y0,x1,y1; } zell_block;
 static const zell_block zell_blocks[]={
@@ -48,27 +47,29 @@ static int spans_for(const zell_scene *s,zell_span *out,int cap){
   n++;
  }
  if(s->room!=1)return n;
- zell_rect first,last,body;
- zell_monitor_layout(1,&first,&body);
- zell_monitor_layout(4,&last,&body);
- if(n<cap)out[n++]=(zell_span){(float)first.x,(float)first.y,(float)(last.x+last.w),(float)(last.y+last.h)};
+ zell_rect wall=zell_command_wall_bounds();
+ if(n<cap)out[n++]=(zell_span){(float)wall.x,(float)wall.y,(float)(wall.x+wall.w),(float)(wall.y+wall.h)};
  return n;
 }
 float zell_desktop_north(int room){
- /* The Command Center's corner strips reach the openings; its block table
-  * keeps the old line between them. */
  if(room==1)return (float)ZELL_COMMAND_OPENING_TOP;
  if(room==5)return 380.f;
  if(room==6)return 735.f;
  if(room==7||room==8)return 400.f;
  return (float)ZELL_WORLD_H*.32f;
 }
-/* The side aisles open into the pane rooms. Below them the walls bound the south floor. */
+/* Outside the arches the two side aisles have the same width all the way
+ * down to the entrance. Only the stone jambs close in at their thresholds. */
 static bool command_wall(float x,float y){
- if(y>=(float)ZELL_COMMAND_OPENING_BOTTOM&&y<(float)ZELL_COMMAND_STRIP_BOTTOM&&
-    (x<(float)ZELL_COMMAND_STRIP_LEFT||x>=(float)ZELL_COMMAND_STRIP_RIGHT))return true;
- if(y>=(float)ZELL_COMMAND_STRIP_BOTTOM&&(x<(float)ZELL_WORLD_W*.135f||x>=(float)ZELL_WORLD_W*.865f))return true;
- return false;
+ float side=fminf(x,(float)ZELL_WORLD_W-x);
+ if(y>=(float)ZELL_COMMAND_OPENING_BOTTOM)return side<(float)ZELL_COMMAND_AISLE_EDGE;
+ return side>(float)ZELL_COMMAND_DOOR_INNER;
+}
+static int command_passage(float x,float y){
+ float side=fminf(x,(float)ZELL_WORLD_W-x);
+ if(y>=(float)ZELL_COMMAND_OPENING_BOTTOM||side>(float)ZELL_COMMAND_DOOR_INNER)return 0;
+ if(y>(float)ZELL_COMMAND_OPENING_TOP&&side>=(float)ZELL_COMMAND_OPENING_DEPTH)return 0;
+ return x<(float)ZELL_WORLD_W/2?ZELL_ROOM_PANES_LEFT:ZELL_ROOM_PANES_RIGHT;
 }
 bool zell_desktop_blocked(const zell_scene *s,float x,float y){
  zell_span spans[ZELL_BLOCK_CAP];

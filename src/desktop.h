@@ -99,6 +99,7 @@ bool zell_utility_hit(const zell_scene *s,int x,int y);
 void zell_message_add(zell_scene *s,int64_t stamp,const char *source,const char *text);
 int zell_input_terminal(const zell_scene *s);
 void zell_command_term_layout(int index,zell_rect *frame,zell_rect *body);
+zell_rect zell_command_wall_bounds(void);
 void zell_command_focus(zell_scene *s,int index);
 /* The Key Master's two lines, shown while Kilix is beside him. He stands in
  * the bottom right corner, with the fleet panel above him and the wall to
@@ -108,17 +109,14 @@ void zell_command_focus(zell_scene *s,int index);
 #define ZELL_KEY_MASTER_LABEL_RIGHT 1256
 #define ZELL_KEY_MASTER_LABEL_TOP 903
 #define ZELL_KEY_MASTER_HINT "Enter: encrypted secret vault"
-/* The Command Center's walls, world pixels. Its bottom edge is open and
- * unmarked. Beside the screens a strip runs up each side wall to an opening
- * in the top corner; the tunnel floor is OPENING_TOP..OPENING_BOTTOM, and
- * Kilix goes through when his feet are OPENING_DEPTH from the world edge.
- * Below STRIP_BOTTOM the walls stand where they always did. */
-#define ZELL_COMMAND_STRIP_LEFT 48
-#define ZELL_COMMAND_STRIP_RIGHT (ZELL_WORLD_W-ZELL_COMMAND_STRIP_LEFT)
-#define ZELL_COMMAND_STRIP_BOTTOM 760
-#define ZELL_COMMAND_OPENING_TOP 226
-#define ZELL_COMMAND_OPENING_BOTTOM 330
-#define ZELL_COMMAND_OPENING_DEPTH 40
+/* World pixels from the two painted arches. The side aisles start at the
+ * south entrance. Each tunnel takes Kilix north or out to its side. */
+#define ZELL_COMMAND_AISLE_EDGE 56
+#define ZELL_COMMAND_DOOR_INNER 216
+#define ZELL_COMMAND_DOOR_CENTER 138
+#define ZELL_COMMAND_OPENING_TOP 310
+#define ZELL_COMMAND_OPENING_BOTTOM 378
+#define ZELL_COMMAND_OPENING_DEPTH 44
 /* Rooms through the Command Center's openings: a Kilix tab of two panes on
  * the left, of four on the right, side by side, across the whole Zell pane.
  * Along the top is a walkway for Kilix, with buttons over each pane that

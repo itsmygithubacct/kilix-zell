@@ -447,12 +447,38 @@ static void zell_notice_show(const zell_scene *s,sr_canvas *c,const char *hint){
  if(width<1||width>room)return;
  sr_text(c,(float)(right-width),(float)(c->h-22),line,0xe9d49fu,1,1);
 }
+/* Stretch only the straight rails of the original controller bezel. The
+ * corner plates and the turquoise crest keep their shape at wall scale. */
+static void desktop_command_surround(sr_canvas *background){
+ const zell_art *art=zell_art_get(ZELL_ART_MONITOR_CONTROLLER);
+ if(!art)return;
+ zell_rect wall=zell_command_wall_bounds(),upper,lower,body;
+ zell_command_term_layout(1,&upper,&body);
+ zell_command_term_layout(3,&lower,&body);
+ int mid=wall.x+wall.w/2,right=wall.x+wall.w,bottom=wall.y+wall.h;
+ const int sx[]={46,128,302,466,640,723},sy[]={260,325,692,737};
+ const int dx[]={wall.x,wall.x+36,mid-36,mid+36,right-36,right};
+ const int dy[]={wall.y,upper.y,lower.y+lower.h,bottom};
+ for(int row=0;row<3;row++)for(int col=0;col<5;col++){
+  if(row==1&&col>0&&col<4)continue;
+  sr_canvas strip;
+  if(!sr_canvas_init(&strip,sx[col+1]-sx[col],sy[row+1]-sy[row]))return;
+  for(int y=0;y<strip.h;y++)
+   memcpy(strip.px+(size_t)y*(size_t)strip.w,art->pixels+(size_t)(sy[row]+y)*(size_t)art->width+(size_t)sx[col],(size_t)strip.w*sizeof *strip.px);
+  sr_blit_scaled(background,&strip,dx[col],dy[row],dx[col+1]-dx[col],dy[row+1]-dy[row],1);
+  sr_canvas_free(&strip);
+ }
+}
 static void desktop_world_layer(const zell_scene *s,sr_canvas *c,int cx,int cy){
  static sr_canvas backgrounds[9];
  int room=s->room>=0&&s->room<9?s->room:0;
  sr_canvas *background=&backgrounds[room];
  const zell_art *a=zell_art_get(desktop_room_background(room));
- if(!background->px&&a){if(sr_canvas_init(background,ZELL_WORLD_W,ZELL_WORLD_H)){sr_canvas src;sr_canvas_wrap(&src,a->pixels,a->width,a->height);sr_blit_scaled(background,&src,0,0,ZELL_WORLD_W,ZELL_WORLD_H,1);}}
+ if(!background->px&&a&&sr_canvas_init(background,ZELL_WORLD_W,ZELL_WORLD_H)){
+  sr_canvas src;sr_canvas_wrap(&src,a->pixels,a->width,a->height);
+  sr_blit_scaled(background,&src,0,0,ZELL_WORLD_W,ZELL_WORLD_H,1);
+  if(room==1)desktop_command_surround(background);
+ }
  sr_clear(c,0x081319u);
  if(background->px){for(int y=0;y<c->h&&y+cy<ZELL_WORLD_H;y++){int w=c->w;if(w+cx>ZELL_WORLD_W)w=ZELL_WORLD_W-cx;memcpy(c->px+(size_t)y*(size_t)c->w,background->px+(size_t)(y+cy)*ZELL_WORLD_W+(size_t)cx,(size_t)w*4);}}
  if(s->room)desktop_room(s,c,cx,cy,false);

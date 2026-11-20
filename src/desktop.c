@@ -60,12 +60,12 @@ const zell_station zell_stations[ZELL_STATIONS]={
  {"Workshop hatch","Device workshop downstairs",.62f,.645f,ZELL_ART_WORKSHOP_HATCH},
  {"Dictation switch","Listen once; review words before sending",.078f,.34f,16},
  {"Music mute switch","Pause or resume the DJ and room music",.092f,.34f,16},
- {"YOLO switch","Enable or disable shared coding-agent YOLO mode",264.f/1536.f,820.f/1024.f,-1},
- {"Agent updates switch","Choose and update installed coding agents",936.f/1536.f,820.f/1024.f,-1},
+ {"YOLO switch","Enable or disable shared coding-agent YOLO mode",393.f/1536.f,820.f/1024.f,-1},
+ {"Agent updates switch","Choose and update installed coding agents",893.f/1536.f,820.f/1024.f,-1},
  {"Mana console","Coding-token balances and the providers' usage pages",.50f,484.f/1024.f,ZELL_ART_WORKER},
  {"Workshop computer","Sit at the stool and use this computer.",797.f/1536.f,408.f/1024.f,-1},
- {"Fleet board","Saved fleets and their live workers",1272.f/1536.f,820.f/1024.f,-1},
- {"Floor panel","Reserved, not an available action.",600.f/1536.f,820.f/1024.f,-1},
+ {"Fleet board","Saved fleets and their live workers",1143.f/1536.f,820.f/1024.f,-1},
+ {"Floor panel","Reserved, not an available action.",643.f/1536.f,820.f/1024.f,-1},
  /* Between the staff above and the older hatches below. The open lids
   * rise into the gap while the stone rims stay on the cave floor. */
  {"Game room hatch","Games downstairs",.30f,.52f,ZELL_ART_GAME_HATCH},
@@ -447,8 +447,7 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
     float oldx=s->x,oldy=s->y;
     s->x+=dx/d*speed/(float)steps;s->y+=dy/d*speed/(float)steps;
     float nx=s->x/(float)ZELL_WORLD_W,ny=s->y/(float)ZELL_WORLD_H;
-    /* The Command Center's walls are rectangles in the block table, so its
-     * side strips and openings can run past the .135W/.865W line. */
+    /* The Command Center has its own aisles out to the cave mouths. */
     if(s->room!=1&&nx<.135f){s->x=(float)ZELL_WORLD_W*.135f;blocked=true;}
     if(s->room!=1&&nx>.865f){s->x=(float)ZELL_WORLD_W*.865f;blocked=true;}
     {
@@ -466,14 +465,28 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
      if(zell_desktop_blocked(s,s->x,s->y)){s->x=oldx;s->y=oldy;blocked=true;}
     }
     for(int i=0;i<ZELL_STATIONS;i++){
-     if(!zell_desktop_station_visible(s,i)||i==28||i==46||i==47||i==ZELL_WORKSHOP_COMPUTER||i==ZELL_COMMAND_COMPUTER||i==ZELL_FLOOR_PANEL||i==ZELL_FLEET_BOARD||(s->room==0&&i>=6&&!(i>=32&&i<=41)))continue;
+     if(!zell_desktop_station_visible(s,i)||i==28||i==ZELL_WORKSHOP_COMPUTER)continue;
+     /* Only staff stand on the Command Center floor. The console bank has
+      * one footprint, and the four floor panels are flush with the stone. */
+     if(s->room==1&&(i<29||i>31))continue;
+     if(s->room==0&&i>=6&&!(i>=32&&i<=41))continue;
      float ax=s->x-zell_stations[i].x*ZELL_WORLD_W,ay=s->y-zell_stations[i].y*ZELL_WORLD_H;
+     if(s->room==1){
+      /* The staff's feet occupy a short strip. Walk past their shoulders
+       * on the south floor, or slide along the feet on diagonal contact. */
+      if(fabsf(ax)<20.f&&fabsf(ay)<8.f){
+       if(fabsf(oldy-zell_stations[i].y*ZELL_WORLD_H)>=8.f)s->y=oldy;
+       else s->x=oldx;
+       blocked=true;break;
+      }
+      continue;
+     }
      if(ax*ax+ay*ay<26*26){s->x=oldx;s->y=oldy;blocked=true;break;}
     }
     /* Through an opening in the Command Center's top corners. */
-    if(s->room==1&&(s->x<(float)ZELL_COMMAND_OPENING_DEPTH||s->x>(float)(ZELL_WORLD_W-ZELL_COMMAND_OPENING_DEPTH))){
-     zell_panes_enter(s,s->x<(float)ZELL_WORLD_W*.5f?ZELL_ROOM_PANES_LEFT:ZELL_ROOM_PANES_RIGHT);
-     return 1;
+    if(s->room==1){
+     int passage=command_passage(s->x,s->y);
+     if(passage){zell_panes_enter(s,passage);return 1;}
     }
     /* The Command Center's open bottom is a way out on a blocked step too:
      * sliding down a side wall leaves the room, never the world. */
@@ -603,9 +616,15 @@ static int clicked_hatch(const zell_scene *s,int x,int y){
  }
  return margin;
 }
-/* The shared edges are both the screen bezels and the picking boundaries. */
-enum { WALL_LEFT=96, WALL_COL=(ZELL_WORLD_W-2*WALL_LEFT)/3,
-       WALL_TOP=ZELL_ROOM_HUD_BOTTOM, WALL_SEAM=386, MANA_BOTTOM=484, WALL_BOTTOM=680 };
+/* One metal surround encloses the adjoining tiles. Its outside edge is
+ * also the edge Kilix walks around on the way to the cave mouths. */
+enum { WALL_LEFT=276, WALL_COL=(ZELL_WORLD_W-2*WALL_LEFT)/3,
+       WALL_SIDE_RIM=20, WALL_TOP_RIM=29, WALL_FOOT_RIM=18,
+       WALL_TOP=ZELL_ROOM_HUD_BOTTOM+WALL_TOP_RIM, WALL_SEAM=386, MANA_BOTTOM=484, WALL_BOTTOM=680 };
+zell_rect zell_command_wall_bounds(void){
+ return (zell_rect){WALL_LEFT-WALL_SIDE_RIM,ZELL_ROOM_HUD_BOTTOM,
+                    3*WALL_COL+2*WALL_SIDE_RIM,WALL_BOTTOM+WALL_FOOT_RIM-ZELL_ROOM_HUD_BOTTOM};
+}
 static void wall_tile(int col,int top,int bottom,zell_rect *frame,zell_rect *body){
  *frame=(zell_rect){WALL_LEFT+col*WALL_COL,top,WALL_COL,bottom-top};
  *body=(zell_rect){frame->x+7,top+32,WALL_COL-14,bottom-top-38};
@@ -640,7 +659,7 @@ void zell_floor_panel_layout(int index,zell_rect *frame,zell_rect *glass){
  zell_rect r={0};
  if(index>=0&&index<ZELL_FLOOR_PANELS){
   const zell_station *p=&zell_stations[stations[index]];
-  r=(zell_rect){(int)(p->x*ZELL_WORLD_W)-149,(int)(p->y*ZELL_WORLD_H)-112,298,112};
+  r=(zell_rect){(int)(p->x*ZELL_WORLD_W)-117,(int)(p->y*ZELL_WORLD_H)-112,234,112};
  }
  if(frame)*frame=r;
  if(glass)*glass=r.w?(zell_rect){r.x+6,r.y+5,r.w-12,r.h-11}:r;

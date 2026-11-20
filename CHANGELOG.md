@@ -4,6 +4,7 @@
 
 These changes are not in the 0.1.1 runtime archive that Plebian-OS 0.2.3 pins.
 
+- Redraw the Command Center with open aisles from the landing to both cave mouths. Restore the jeweled bronze frame around the live screens and register quick directional taps between frames.
 - Run immediately with Shift and steer while running. Increase walking and running speed throughout the desktop.
 - Add expiring process-load speech bubbles, a Messages history and an Updates panel with live maintenance terminals.
 - Equip Kilix with a bronze fire-cat shield on the standing and walking sprites.

@@ -717,6 +717,18 @@ static void test_command_wall(void){
         s.room=1;zell_room_view_identity(&s);
         for(int i=0;i<ZELL_COMMAND_TERMS;i++)await_wall(&s,i,"wall$");
         kittykb_input_init(&keyboard.input);
+        /* A press and release can both arrive between rendered frames. */
+        s.x=ZELL_WORLD_W*.5f;s.y=ZELL_WORLD_H*.91f;
+        float origin=s.x;
+        const char left_tap[]="\033[1;1:1D\033[1;1:3D";
+        desktop_input_feed(&s,left_tap,sizeof left_tap-1);
+        read_controls(&s,&c);assert(c.move_x==-1);zell_scene_tick(&s,&c);
+        assert(s.x<origin);
+        read_controls(&s,&c);assert(!c.move_x);
+        const char right_tap[]="\033[100;1:1u\033[100;1:3u";
+        desktop_input_feed(&s,right_tap,sizeof right_tap-1);
+        read_controls(&s,&c);assert(c.move_x==1);zell_scene_tick(&s,&c);
+        assert(s.x==origin);
         kittykb_event key={.key=KITTYKB_KEY_F6,.action=KITTYKB_ACTION_PRESS};
         assert(command_cycle(&s,&key)&&s.command_focus==2);
         const char typed[]="printf '\\033[2J\\033[Hworker-%s\\n' one\r";

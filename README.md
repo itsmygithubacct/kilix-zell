@@ -370,8 +370,9 @@ The lower row of floor hatches leads to the **Command Center**, **Vault**,
 **Workshop**, and **Laundry**, from left to right. Walk off the south edge of
 the Command Center to return to the cave. Git Wizard, Pilot and Key Master
 stand along that edge. Above them, four black-glass floor panels show YOLO,
-Spare, agent updates and saved fleets. Up the strip beside the screens on
-either side wall is an opening in the top corner, and through it a room of
+Spare, agent updates and saved fleets. Walk left or right from the entrance,
+then north beside the bronze screen frame. The lantern marks the west cave
+and the turquoise crystals mark the east cave. Each opens into a room of
 panes: two side by side on the left, four on the right. A pane room is one
 Kilix tab as wide and high as the Zell pane, past the 1600x1000 cap the other
 rooms keep. Along its top is a walkway Kilix walks on; over each pane it has

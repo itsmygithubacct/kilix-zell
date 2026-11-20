@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Print and draw the furniture rectangles in src/desktop_collide.inc.
 
-Command Center screens are not copied. Collision reads them from
-zell_monitor_layout and zell_mana_console_layout.
+The Command Center screen bank supplies its footprint through zell_command_wall_bounds.
 """
 import argparse
 import re

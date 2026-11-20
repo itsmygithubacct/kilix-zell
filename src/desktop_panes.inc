@@ -180,7 +180,7 @@ void zell_panes_leave(zell_scene *s){
     if(!side)return;
     /* Back in the tunnel of the opening he left by, facing the room. */
     s->room=1;pn_stand(s);
-    s->x=side>0?70.f:(float)(ZELL_WORLD_W-70);
+    s->x=side>0?(float)ZELL_COMMAND_DOOR_CENTER:(float)(ZELL_WORLD_W-ZELL_COMMAND_DOOR_CENTER);
     s->y=(float)(ZELL_COMMAND_OPENING_TOP+ZELL_COMMAND_OPENING_BOTTOM)*.5f;
     s->direction=side>0?3:2;
 }
