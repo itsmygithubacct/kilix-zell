@@ -120,6 +120,7 @@ void zell_desktop_start(zell_scene *s){zell_desktop_init(s);zell_desktop_enter_h
 void zell_desktop_enter_hall(zell_scene *s){s->room=0;s->x=(float)ZELL_WORLD_W*.50f;s->y=(float)ZELL_WORLD_H*ZELL_HALL_ENTRY_Y;s->direction=ZELL_DIR_UP;s->step=0;s->step_ticks=0;}
 void zell_desktop_init(zell_scene *s){s->desktop=true;s->x=(float)ZELL_WORLD_W*.51f;s->y=(float)ZELL_WORLD_H*.48f;s->station=0;s->desktop_launch=false;s->hp=100;s->max_hp=100;s->stamina=100;s->mana=-1;s->update_age_days=-1;s->mana_age=-1;s->os_health=-1;s->dirty_files=0;}
 bool zell_desktop_station_visible(const zell_scene *s,int station){
+ if(station<0||station>=ZELL_STATIONS)return false;
  if(s->room==0)return station<ZELL_CAVE_STATIONS||station==32||station==37||station==38||(station>=42&&station<=45)||(station>=ZELL_GAME_HATCH&&station<=ZELL_LIBRARY_HATCH);
  /* A pane room is all terminal: nothing in it is a station. */
  if(ZELL_ROOM_IS_PANES(s->room))return false;
@@ -514,6 +515,12 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
  if(s->mode==ZELL_MODE_LAUNCHER&&zell_edit_text(s->launcher_query,sizeof s->launcher_query,c->edits))s->menu_index=0;
  int count=s->mode==ZELL_MODE_LAUNCHER?zell_desktop_launcher_count(s):zell_desktop_actions(s->station);
  if(c->cancel){s->mode=ZELL_MODE_WALK;return 1;}
+ /* The visible drive bins can change while the Laundry launcher is open.
+  * Let the player see the new selection before accepting Enter. */
+ if(s->menu_index>=count&&s->mode==ZELL_MODE_LAUNCHER){
+  s->menu_index=count?count-1:0;
+  return 1;
+ }
  if(c->move_y&&s->menu_hold==0&&count){s->menu_index=(s->menu_index+c->move_y+count)%count;s->menu_hold=9;}else if(s->menu_hold>0)s->menu_hold--;
  if(c->confirm&&count){
   if(s->mode==ZELL_MODE_LAUNCHER){int a=zell_desktop_launcher_action(s,s->menu_index),station=zell_desktop_launcher_station(s,s->menu_index);open_station(s,station);if(a>=0&&s->mode==ZELL_MODE_DESK){s->menu_index=a;s->desktop_launch=true;}}
@@ -683,20 +690,32 @@ void zell_utility_rects(const zell_scene *s,zell_utility_layout *l){
  if(bw>maxw)bw=maxw;
  if(bh>maxh)bh=maxh;
  l->box=(zell_rect){w-bw-8,bottom-29-bh,bw,bh};
+ /* A short pane uses the whole canvas for the open panel. */
+ bool short_pane=h<240;
+ if(short_pane){bw=w-8;if(bw>maxw)bw=maxw;bh=h-8;l->box=(zell_rect){w-bw-4,4,bw,bh};}
  int x=l->box.x,y=l->box.y;
  l->close=(zell_rect){x+bw-32,y+4,26,22};
  l->older=(zell_rect){x+bw-158,y+4,56,22};
  l->newer=(zell_rect){x+bw-98,y+4,56,22};
  l->all=(zell_rect){x+12,y+34,44,22};
  l->stamina=(zell_rect){x+62,y+34,78,22};
+ if(bw<300){
+  int cell=(bw-8)/4;
+  l->all=(zell_rect){x+4,y+31,cell-1,20};
+  l->stamina=(zell_rect){x+4+cell,y+31,cell-1,20};
+  l->older=(zell_rect){x+4+2*cell,y+31,cell-1,20};
+  l->newer=(zell_rect){x+4+3*cell,y+31,cell-1,20};
+ }
  int start=y+(h<330?77:104),row=h<420?21:25;
- int columns=h<300?2:1,cell=(bw-20)/columns;
+ if(short_pane){start=y+(s->utility_term?30:62);row=16;}
+ int columns=h<300?2:1,margin=short_pane?4:10,cell=(bw-2*margin)/columns;
+ int button_h=short_pane?row-1:row-2;
  int rows=(ZELL_MAINT_ACTIONS+columns-1)/columns;
  if(s->utility_term&&h<380){
-  l->action[s->utility_term-1]=(zell_rect){x+10,start,bw-20,row-2};
+  l->action[s->utility_term-1]=(zell_rect){x+margin,start,bw-2*margin,button_h};
   rows=1;
  }else for(int i=0;i<ZELL_MAINT_ACTIONS;i++)
-  l->action[i]=(zell_rect){x+10+i%columns*cell,start+i/columns*row,cell-(columns-1)*2,row-2};
+  l->action[i]=(zell_rect){x+margin+i%columns*cell,start+i/columns*row,cell-(columns-1)*2,button_h};
  int yy=start+rows*row+4;
  l->body=(zell_rect){x+12,yy,bw-24,y+bh-yy-9};
 }
@@ -756,7 +775,7 @@ static bool utility_click(zell_scene *s){
  int x=s->mouse_x,y=s->mouse_y;
  zell_utility_layout l;zell_utility_rects(s,&l);
  int panel=rect_holds(&l.messages,x,y)?ZELL_MESSAGES_PANEL:rect_holds(&l.updates,x,y)?ZELL_UPDATES_PANEL:0;
- if(panel){
+ if(panel&&!(s->utility_panel&&rect_holds(&l.box,x,y))){
   s->utility_panel=s->utility_panel==panel?0:panel;s->utility_term=0;s->message_scroll=0;
   s->command_focus=0;
  }else if(!s->utility_panel)return false;
@@ -775,7 +794,7 @@ static bool utility_click(zell_scene *s){
  s->mouse_click=false;return true;
 }
 bool zell_desktop_click(zell_scene *s){
- if(utility_click(s))return true;
+ if((s->utility_panel||!zell_theater_menu_open())&&utility_click(s))return true;
  /* Screen-space theater hits consume the click before any world conversion. */
  if(zell_theater_click(s))return true;
  if(!s->desktop||!s->mouse_valid||!s->mouse_click||s->mode!=ZELL_MODE_WALK)return false;

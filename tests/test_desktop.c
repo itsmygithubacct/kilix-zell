@@ -1368,6 +1368,68 @@ static void check_two_line_cue(int width,int height,bool fullscreen){
     zell_theater_test_reset();
 }
 #endif
+static void test_small_utility_panels(void){
+    zell_scene s;
+    zell_utility_layout dock;
+    const int sizes[][2]={{160,120},{256,200},{320,240}};
+    place_room(&s,0,768.f,850.f);
+    s.mouse_valid=true;
+    for(size_t i=0;i<sizeof sizes/sizeof sizes[0];i++){
+        zell_scene_resize(&s,sizes[i][0],sizes[i][1]);
+        s.utility_panel=ZELL_MESSAGES_PANEL;
+        zell_utility_rects(&s,&dock);
+        assert(dock.older.x>=dock.box.x&&!rects_overlap(&dock.older,&dock.stamina));
+        assert(!rects_overlap(&dock.all,&dock.stamina)&&!rects_overlap(&dock.older,&dock.newer));
+        s.utility_panel=ZELL_UPDATES_PANEL;
+        for(int action=0;action<ZELL_MAINT_ACTIONS;action++){
+            zell_utility_rects(&s,&dock);
+            zell_rect row=dock.action[action];
+            assert(row.y>=dock.box.y&&row.y+row.h<=dock.box.y+dock.box.h);
+            s.mouse_x=row.x+row.w/2;s.mouse_y=row.y+row.h/2;s.mouse_click=true;
+            assert(zell_desktop_click(&s)&&s.utility_term==action+1);
+            zell_utility_rects(&s,&dock);
+            assert(dock.body.w>=8&&dock.body.h>=16&&dock.body.y+dock.body.h<=dock.box.y+dock.box.h);
+            row=dock.action[action];s.mouse_x=row.x+2;s.mouse_y=row.y+2;s.mouse_click=true;
+            assert(zell_desktop_click(&s)&&!s.utility_term&&s.utility_panel==ZELL_UPDATES_PANEL);
+        }
+    }
+}
+static void test_theater_remote_layout(void){
+    zell_scene s;
+    zell_rect panel,rows[12];
+    int count;
+    const int sizes[][2]={{160,120},{320,200},{640,240},{640,400}};
+    const char *listing="{\"event\":\"listing\",\"id\":\"folder\",\"entries\":["
+        "{\"name\":\"one\",\"path\":\"/clips/one.mp4\"},"
+        "{\"name\":\"two\",\"path\":\"/clips/two.mp4\"},"
+        "{\"name\":\"three\",\"path\":\"/clips/three.mp4\"}]}";
+    zell_theater_test_reset();
+    place_room(&s,6,768.f,850.f);
+    s.mouse_valid=true;
+    zell_room_view_identity(&s);
+    assert(zell_theater_apply_line(&s,listing)==0&&!zell_theater_menu_open());
+    click_world(&s,886.f,862.f);
+    assert(zell_desktop_click(&s)&&zell_theater_menu_open());
+    for(size_t size=0;size<sizeof sizes/sizeof sizes[0];size++){
+        zell_scene_resize(&s,sizes[size][0],sizes[size][1]);
+        zell_theater_menu_layout(&s,&panel,rows,12,&count);
+        assert(count==12&&panel.x>=0&&panel.y>=0);
+        assert(panel.x+panel.w<=s.width&&panel.y+panel.h<=s.height);
+        for(int i=0;i<count;i++){
+            assert(rows[i].w>0&&rows[i].h>0&&rows[i].x>=panel.x&&rows[i].y>=panel.y);
+            assert(rows[i].x+rows[i].w<=panel.x+panel.w&&rows[i].y+rows[i].h<=panel.y+panel.h);
+            for(int j=0;j<i;j++)assert(!rects_overlap(&rows[i],&rows[j]));
+        }
+    }
+    /* At 640x400 the single file row shares its space with Next. */
+    for(int i=0;i<4;i++){
+        s.mouse_click=true;s.mouse_x=panel.x+panel.w-20;s.mouse_y=panel.y+panel.h-18;
+        assert(zell_desktop_click(&s)&&zell_theater_menu_open());
+    }
+    s.mouse_click=true;s.mouse_x=panel.x+18;s.mouse_y=panel.y+panel.h-18;
+    assert(zell_desktop_click(&s)&&strstr(zell_theater_last_command(),"/clips/two.mp4"));
+    zell_theater_test_reset();
+}
 static void test_theater(void){
     zell_scene s;
     zell_controls c;
@@ -1404,6 +1466,14 @@ static void test_theater(void){
     zell_room_view_identity(&s);
     click_world(&s,886.f,862.f);
     assert(zell_desktop_click(&s)&&zell_theater_menu_open()&&zell_theater_queue_count()==0);
+    y0=s.y;
+    c=(zell_controls){.move_y=1,.launcher=true};
+    zell_desktop_tick(&s,&c);
+    assert(s.mode==ZELL_MODE_WALK&&s.y==y0&&zell_theater_menu_open());
+    c=(zell_controls){.cancel=true};zell_desktop_tick(&s,&c);
+    assert(!zell_theater_menu_open()&&s.mode==ZELL_MODE_WALK);
+    click_world(&s,886.f,862.f);
+    assert(zell_desktop_click(&s)&&zell_theater_menu_open());
     zell_theater_menu_layout(&s,&panel,rows,12,&nrow);
     assert(nrow>=1&&rows[0].w>0);
     s.mouse_click=true;s.mouse_x=rows[0].x+2;s.mouse_y=rows[0].y+2;
@@ -1620,6 +1690,16 @@ static void test_theater(void){
     assert(zell_desktop_tick(&s,&c)==1);
     assert(strstr(zell_theater_last_command(),"\"key\":\"Enter\""));
     assert(strstr(zell_theater_last_command(),"\"action\":\"down\""));
+    s.x=750.f;s.y=860.f;
+    c=(zell_controls){.move_y=1,.launcher=true};
+    zell_desktop_tick(&s,&c);
+    assert(s.y==860.f&&s.mode==ZELL_MODE_WALK);
+    click_world(&s,750.f,860.f);
+    zell_desktop_click(&s);
+    assert(!zell_theater_wants_keys(&s));
+    c=(zell_controls){.move_y=1};
+    zell_desktop_tick(&s,&c);
+    assert(s.y>860.f);
     {
         zell_rect picture,caption,help,drop;
         zell_theater_fullscreen_layout(1920,1080,&picture,&caption,&help,&drop);
@@ -3756,6 +3836,13 @@ int main(void) {
     assert(!zell_desktop_station_visible(&s,28));
     strcpy(s.launcher_query,"Way back to the cave");assert(zell_desktop_launcher_count(&s)==0);
     s.launcher_query[0]=0;
+    /* A drive was removed while the last row was selected. */
+    s.mode=ZELL_MODE_LAUNCHER;s.menu_index=4;s.disk_count=2;
+    zell_scene_tick(&s,&(zell_controls){.confirm=true});
+    assert(s.mode==ZELL_MODE_LAUNCHER&&s.menu_index==3&&!s.desktop_launch);
+    zell_scene_tick(&s,&(zell_controls){.confirm=true});
+    assert(s.station==35&&s.mode==ZELL_MODE_DESK);
+    s.mode=ZELL_MODE_WALK;s.disk_count=3;
     assert(!zell_desktop_station_visible(&s,23));
     assert(zell_desktop_station_visible(&s,34)&&zell_desktop_station_visible(&s,35));
     s.room=3;assert(zell_desktop_station_visible(&s,40)&&!zell_desktop_station_visible(&s,41));
@@ -3965,6 +4052,8 @@ int main(void) {
     test_contract_fixtures();
     test_obstacles();
     test_workshop_hop();
+    test_small_utility_panels();
+    test_theater_remote_layout();
     test_theater();
     test_names_show_only_beside_kilix();
     test_command_center();

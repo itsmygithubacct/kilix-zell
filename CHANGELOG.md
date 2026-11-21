@@ -4,6 +4,12 @@
 
 These changes are not in the 0.1.1 runtime archive that Plebian-OS 0.2.3 pins.
 
+- Preserve symbolic links during Porter file operations and Vault restores. Backup verification also reports extra files in a snapshot.
+- Keep tasks, local library references, and DJ subscriptions in sync across open tabs.
+- Keep theater input with the remote or browser while it has focus. All remote controls and file pages are reachable in short panes.
+- Fit the Messages filters, update actions, and expanded maintenance terminal in the smallest supported panes.
+- Keep the Laundry launcher selection in range when a mounted drive disappears.
+- Keep station helpers, side-room shells, and theater controls available when the installed game is upgraded during play.
 - Add a dice-marked trapdoor to the Workshop that opens the current PuzzLLM in a Kilix tab.
 - Move the Command Center tunnels to the lower corners. Walk straight left from the landing for two panes or right for four. The jeweled bronze frame and its live screens span the full width of the room above them.
 - Make all four Command Center floor panels solid. Kilix can use the controls from the front and walk around either end.

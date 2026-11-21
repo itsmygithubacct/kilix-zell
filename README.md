@@ -5,14 +5,13 @@ in a green adventurer outfit. Six staff members in the cave help with
 questions, logs, settings, system health, media, and documents. More staff
 work in the rooms below it.
 
-The cave and the original downstairs rooms use a fixed **1536×1024 world**.
-Characters and furniture keep their size. The camera follows Kilix in those
-rooms, so a smaller pane shows less of the room. A hatch row in the cave opens
-four more rooms: the game room, the movie theater, the meditation room, and
-the library. Those rooms fit between the top bar and the status line, including
-in a large window. In both rows, the nearest hatch lifts its lid as Kilix
-approaches and closes as he walks away. Press Enter beside a hatch or click
-it to go downstairs. Walk south through the doorway to return to the cave.
+The cave and eight downstairs rooms use a fixed **1536×1024 world**. Each
+view stays in place as Kilix walks and scales down to fit a smaller pane.
+The upper row of hatches leads to the Game Room, Movie Theater, Meditation
+Room, and Library. The lower row leads to the Command Center, Vault,
+Workshop, and Laundry. The nearest hatch lifts its lid as Kilix approaches
+and closes as he walks away. Press Enter beside a hatch or click it to go
+downstairs. Walk south to return to the cave.
 Work areas sit along the walls, leaving the central floor open.
 
 In the Workshop, the dice-marked trapdoor to the right of the entrance stairs
@@ -77,7 +76,9 @@ stations without walking. Menus scroll on smaller panes.
 
 ## Movie theater
 
-The remote in the theater opens the picture controls.
+Click the remote to open the picture controls. Escape leaves a text field
+first, then closes the remote. Click the theater floor to return keyboard
+control to Kilix after interacting with a web page.
 
 - Open a video file, a folder of videos, or an http or https URL.
 - Choose Chrome, Chromium, or Firefox ESR for a URL. The page stays in the
@@ -393,11 +394,12 @@ pane is a button for every coding agent found on PATH. When the shell is at
 its prompt, pressing a button types that agent's command and gives the pane
 keyboard focus. Under the walkway each pane has a title bar: what it runs,
 Zoom (the pane over the whole room, and back), and Restart (click twice for a
-new shell). Click a pane or its title bar and every key is the pane's; click
-the walkway and the keys are Kilix's again: the arrows walk him, and Enter or
-Space presses the button he stands on. The panes have no scrollback, mouse or
-paste yet. A thin green line at the walkway's end on the side he came in by
-is the way back: walk into it. The shells are started by `tools/zell_panes.py` the first
+new shell). Click a pane or its title bar to type. Use Shift+Page Up or
+Shift+Page Down for scrollback and Ctrl+Shift+V to paste. Mouse input works
+in terminal apps that request it. Click the walkway to move Kilix with the
+arrows. Enter or Space presses the button he stands on. Walk into the thin
+green line at the end where he arrived to return. The shells are started by
+`tools/zell_panes.py` the first
 time he enters and keep running, unpainted, while he is elsewhere, until Zell
 closes. They start in your home folder. They are Zell's own shells, not
 Kilix windows: Kilix does not list them, and they cannot be sent text as Zell's

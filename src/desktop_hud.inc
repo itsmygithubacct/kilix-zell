@@ -68,9 +68,9 @@ static void desktop_utilities(const zell_scene *s,sr_canvas *c){
  desktop_text(c,b.x+12,b.y+7,s->utility_panel==ZELL_MESSAGES_PANEL?"Messages":"Updates",0xf0dbadu,b.w-45);
  hud_button(c,l.close,"X",false);
  if(s->utility_panel==ZELL_MESSAGES_PANEL){
-  hud_button(c,l.older,"Older",false);hud_button(c,l.newer,"Newer",false);
+  hud_button(c,l.older,l.older.w<46?"<":"Older",false);hud_button(c,l.newer,l.newer.w<46?">":"Newer",false);
   hud_button(c,l.all,"All",!s->stamina_messages_only);
-  hud_button(c,l.stamina,"Stamina",s->stamina_messages_only);
+  hud_button(c,l.stamina,l.stamina.w<62?"Load":"Stamina",s->stamina_messages_only);
   int y=b.y+65,skip=s->message_scroll;
   bool any=false;
   for(int i=0;i<s->message_count&&y+36<b.y+b.h;i++){
@@ -87,16 +87,21 @@ static void desktop_utilities(const zell_scene *s,sr_canvas *c){
   if(!any)desktop_text(c,b.x+12,y,s->stamina_messages_only?"No stamina remarks yet":"No messages yet",0xaabdc0u,b.w-24);
   return;
  }
- int x=b.x+12,y=b.y+34;
+ int x=b.x+(b.w<200?4:12),y=b.y+(s->height<240?28:34);
  char health[140],age[90];
  if(s->upgraded_at){
   int64_t hours=((int64_t)time(NULL)-s->upgraded_at)/3600;if(hours<0)hours=0;
-  snprintf(age,sizeof age,"Last upgrade  %lldd %lldh ago",(long long)(hours/24),(long long)(hours%24));
- }else snprintf(age,sizeof age,"Last upgrade  unknown");
- if(s->hp>=0)snprintf(health,sizeof health,"Health %d%%   %s",s->hp,age);
- else snprintf(health,sizeof health,"Health unknown   %s",age);
- desktop_text(c,x,y,health,0xdbe9dfu,b.w-24);
- desktop_text(c,x,y+17,b.w<450?"OS: -10 HP/day (minimum 10)":"OS health loses 10 HP per full day, down to 10.",0xaac0c1u,b.w-24);
+  snprintf(age,sizeof age,"%lldd %lldh",(long long)(hours/24),(long long)(hours%24));
+ }else snprintf(age,sizeof age,"unknown");
+ char hp[16];
+ if(s->hp>=0)snprintf(hp,sizeof hp,"%d%%",s->hp);else snprintf(hp,sizeof hp,"%s",b.w<300?"?":"unknown");
+ if(b.w<300)snprintf(health,sizeof health,"HP %s  %s",hp,age);
+ else snprintf(health,sizeof health,"Health %s   Last upgrade  %s%s",hp,age,s->upgraded_at?" ago":"");
+ if(s->height>=240||!s->utility_term){
+  int width=b.w-2*(x-b.x);
+  desktop_text(c,x,y,health,0xdbe9dfu,width);
+  desktop_text(c,x,y+17,b.w<300?"-10 HP/day, min 10":b.w<450?"OS: -10 HP/day (minimum 10)":"OS health loses 10 HP per full day, down to 10.",0xaac0c1u,width);
+ }
  if(s->height>=330){
   char penalty[32],extra[116];
   if(s->dirty_files>=0)snprintf(penalty,sizeof penalty,"-%d HP",s->dirty_files);
@@ -107,12 +112,16 @@ static void desktop_utilities(const zell_scene *s,sr_canvas *c){
  static const char *const actions[]={"OS upgrade   sudo apt update && sudo apt -y upgrade","Clean package cache   sudo apt clean",
      "Clean obsolete packages   sudo apt autoclean","Rotate due logs   sudo logrotate /etc/logrotate.conf","Browse user cache"};
  static const char *const compact[]={"OS upgrade","APT clean","APT autoclean","Rotate logs","Browse cache"};
+ static const char *const narrow[]={"Upgrade","Clean","Old pkgs","Logs","Cache"};
  for(int i=0;i<ZELL_MAINT_ACTIONS;i++){
   zell_rect r=l.action[i];if(r.w<1)continue;
   bool active=s->utility_term==i+1;
   cell_fill(c,r.x,r.y,r.w,r.h,active?0x25473du:0x21343bu);
-  desktop_text(c,r.x+8,r.y+(r.h-16)/2,active?"v":">",0xa6d9c4u,12);
-  desktop_text(c,r.x+26,r.y+(r.h-16)/2,r.w<320?compact[i]:actions[i],0xd5e2dcu,r.w-34);
+  if(r.w<138)desktop_text(c,r.x+2,r.y+(r.h-16)/2,narrow[i],0xd5e2dcu,r.w-3);
+  else {
+   desktop_text(c,r.x+8,r.y+(r.h-16)/2,active?"v":">",0xa6d9c4u,12);
+   desktop_text(c,r.x+26,r.y+(r.h-16)/2,r.w<320?compact[i]:actions[i],0xd5e2dcu,r.w-34);
+  }
  }
  if(s->utility_term&&l.body.h>=16){
   cell_fill(c,l.body.x-2,l.body.y-2,l.body.w+4,l.body.h+4,COMMAND_GLASS);

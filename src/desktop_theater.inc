@@ -479,7 +479,6 @@ int zell_theater_apply_line(zell_scene *s,const char *line){
         char id[40];
         th_take_entries(line);
         if(th_json_string(line,"id",id,sizeof id)&&th.pending_id[0]&&strcmp(id,th.pending_id)==0)th_clear_pending();
-        th.menu=true;
         return 0;
     }
     if(strcmp(event,"install")==0){
@@ -749,7 +748,7 @@ static void th_toggle_cc(zell_scene *s){
 }
 static void th_set_fullscreen(zell_scene *s,bool on){
     th.fullscreen=on;
-    if(on)th.popout=false;
+    if(on){th.popout=false;th.menu=false;th.focus=0;}
     th.sent_w=th.sent_h=0;
     (void)s;
 }
@@ -761,7 +760,7 @@ static void th_dock(zell_scene *s){
 }
 static void th_pop(zell_scene *s){
     if(th.popout){th_dock(s);return;}
-    th.popout=true;th.fullscreen=false;th.sent_w=th.sent_h=0;
+    th.popout=true;th.fullscreen=false;th.menu=false;th.sent_w=th.sent_h=0;
     if(th.browser[0])zell_theater_submit(s,"{\"cmd\":\"popout\"}");
 }
 static void th_pointer(zell_scene *s,int x,int y){
@@ -824,51 +823,55 @@ typedef struct th_menu_hit {
 } th_menu_hit;
 static void th_menu_hit_build(const zell_scene *s,th_menu_hit *hit){
     float sx,sy;
-    int width,height,pw=300,row_h=20,x,y,max_ph,rows_fit,action_vis,file_budget,ph;
+    int width,height,pw,row_h,x,y,max_ph,rows_fit,file_budget,ph;
     memset(hit,0,sizeof *hit);
     if(!s||!th.menu||th.fullscreen)return;
     width=s->width>0?s->width:1;height=s->height>0?s->height:1;
+    pw=width>=316?300:width-16;
+    row_h=height<180?16:20;
     zell_world_to_screen(s,840.f+92.f,790.f,&sx,&sy);
     x=(int)sx-pw-8;y=(int)sy;
     if(x+pw>width-8)x=width-pw-8;
     if(x<8)x=8;
     max_ph=height-40-80;
     if(max_ph<160)max_ph=height-48;
-    if(max_ph<160)max_ph=160;
+    if(max_ph<144)max_ph=height-8;
     rows_fit=(max_ph-16)/row_h;
-    if(rows_fit<8)rows_fit=8;
+    if(rows_fit<2)rows_fit=2;
     if(rows_fit>28)rows_fit=28;
-    file_budget=th.listing_n>0?1:0;
-    action_vis=rows_fit-file_budget;
-    if(action_vis>12)action_vis=12;
-    if(action_vis<1)action_vis=1;
-    file_budget=th.listing_n>0?rows_fit-action_vis:0;
+    /* In a short pane the remote uses columns so all twelve controls fit.
+     * Leave at least one row for file selection and paging. */
+    int available=rows_fit-(th.listing_n>0);
+    int columns=(12+available-1)/available;
+    int action_rows=(12+columns-1)/columns;
+    int cell_w=(pw-16)/columns;
+    file_budget=th.listing_n>0?rows_fit-action_rows:0;
     if(file_budget>16)file_budget=16;
-    ph=16+(action_vis+file_budget)*row_h;
+    ph=16+(action_rows+file_budget)*row_h;
     if(y+ph>height-40)y=height-40-ph;
     if(y<8)y=8;
     hit->panel=(zell_rect){x,y,pw,ph};
-    for(int i=0;i<action_vis&&i<12;i++)hit->action[hit->action_n++]=(zell_rect){x+8,y+8+i*row_h,pw-16,row_h-2};
+    for(int i=0;i<12;i++)hit->action[hit->action_n++]=(zell_rect){x+8+(i%columns)*cell_w,y+8+(i/columns)*row_h,cell_w,row_h-2};
     if(th.listing_n>0&&file_budget>0){
         int reserve=0,shown,remain;
         if(th.list_scroll<0||th.list_scroll>=th.listing_n)th.list_scroll=0;
         remain=th.listing_n-th.list_scroll;
-        if(remain>file_budget)reserve=1;
+        if(remain>file_budget||th.list_scroll>0)reserve=1;
         shown=file_budget-reserve;
-        if(shown<1){shown=1;reserve=0;}
+        if(shown<1)shown=1;
         for(int i=0;i<shown&&th.list_scroll+i<th.listing_n&&hit->file_n<16;i++){
-            hit->file[hit->file_n]=(zell_rect){x+8,y+8+(action_vis+i)*row_h,pw-16,row_h-2};
+            hit->file[hit->file_n]=(zell_rect){x+8,y+8+(action_rows+i)*row_h,pw-16,row_h-2};
             hit->file_i[hit->file_n]=th.list_scroll+i;
             hit->file_n++;
         }
         if(reserve){
-            if(hit->file_n>0&&shown>=file_budget){
+            if(file_budget==1){
                 zell_rect *last=&hit->file[hit->file_n-1];
                 int keep=last->w-72;
                 if(keep<80)keep=80;
                 hit->next=(zell_rect){last->x+keep,last->y,last->w-keep,last->h};
                 last->w=keep;
-            }else hit->next=(zell_rect){x+8,y+8+(action_vis+shown)*row_h,pw-16,row_h-2};
+            }else hit->next=(zell_rect){x+8,y+8+(action_rows+hit->file_n)*row_h,pw-16,row_h-2};
             hit->has_next=1;
         }
     }
@@ -914,6 +917,7 @@ bool zell_theater_click(zell_scene *s){
         }
         s->mouse_click=false;return true;
     }
+    if(th.menu&&th_menu_click(s)){s->mouse_click=false;return true;}
     if(th.popout){
         th_window(s,&frame,&image,&dock,&close_r);
         if(rect_holds(&close_r,s->mouse_x,s->mouse_y)){th_close_active(s);s->mouse_click=false;return true;}
@@ -936,7 +940,6 @@ bool zell_theater_click(zell_scene *s){
         th_use(s,th.item_id[i]);
         s->mouse_click=false;return true;
     }
-    if(th.menu&&th_menu_click(s)){s->mouse_click=false;return true;}
     if(s->room==6&&!th.popout){
         float wx,wy;
         zell_screen_to_world(s,(float)s->mouse_x,(float)s->mouse_y,&wx,&wy);
@@ -947,6 +950,7 @@ bool zell_theater_click(zell_scene *s){
             if(lx>=0&&ly>=0&&lx<1408&&ly<585){th.page_keys=true;th_pointer(s,lx,ly);s->mouse_click=false;return true;}
         }
     }
+    th.page_keys=false;
     return false;
 }
 static const char *th_key_name(unsigned key){
@@ -999,8 +1003,7 @@ static void th_send_key(zell_scene *s,const zell_controls *c){
 int zell_theater_input(zell_scene *s,const zell_controls *c){
     th_pump(s);
     if(!s||!c)return 0;
-    /* The station terminal owns the keyboard, including phase 5. */
-    if(s->mode==ZELL_MODE_SERVICE)return 0;
+    if(s->mode!=ZELL_MODE_WALK)return 0;
     bool editing=th.focus&&c->edits[0];
     if(editing){
         if(th.focus==2)zell_edit_text(th.url,sizeof th.url,c->edits);
@@ -1009,12 +1012,16 @@ int zell_theater_input(zell_scene *s,const zell_controls *c){
     if(th.fullscreen&&c->cancel){th_set_fullscreen(s,false);return 1;}
     if(c->fullscreen_key&&(th.items>0||th.fullscreen||th.menu)){th_set_fullscreen(s,!th.fullscreen);return 1;}
     if(th.focus&&c->cancel){th.focus=0;return 1;}
-    if(th.page_keys&&th.browser[0]&&!th.focus&&c->key_press){th_send_key(s,c);return 1;}
+    if(th.menu&&c->cancel){th.menu=false;return 1;}
+    if(zell_theater_wants_keys(s)){
+        if(c->key_press)th_send_key(s,c);
+        return 1;
+    }
     if(th.focus&&c->confirm){
         if(th.focus==1)th_open_path(s,"file",th.path);
         return 1;
     }
-    return editing;
+    return th.menu||th.fullscreen||editing;
 }
 bool zell_theater_typing(const zell_scene *s){(void)s;return th.focus==1||th.focus==2;}
 void zell_theater_shutdown(void){
@@ -1175,8 +1182,8 @@ bool zell_theater_install_action_ok(const char *browser,const char *action,const
     return false;
 }
 bool zell_theater_wants_keys(const zell_scene *s){
-    (void)s;
-    return th.page_keys&&th.browser[0]&&th.focus==0&&!th.menu;
+    return s&&s->mode==ZELL_MODE_WALK&&(s->room==6||th.popout||th.fullscreen)&&
+           th.page_keys&&th.browser[0]&&!th.focus&&!th.menu;
 }
 int zell_theater_listing_count(void){return th.listing_n;}
 const char *zell_theater_listing_path(int index){

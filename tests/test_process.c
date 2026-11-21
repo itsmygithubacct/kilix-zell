@@ -42,6 +42,21 @@ static void test_source_renderer_paths(void)
 }
 #endif
 
+static void test_drive_refresh(void){
+    zell_scene scene;
+    zell_scene_init(&scene,960,600);zell_desktop_init(&scene);
+    scene.room=2;
+    char drives[]="D313020410a32302042",swapped[]="D323120420a31312041",removed[]="D31312041";
+    service_frame(&scene,drives,SERVICE_ORIGIN_MONITOR,0,0); /* 10 A, 20 B */
+    assert(scene.disk_count==2&&scene.disk_used[1]==20);
+    scene.mode=ZELL_MODE_LAUNCHER;scene.menu_index=1;
+    service_frame(&scene,swapped,SERVICE_ORIGIN_MONITOR,0,0);
+    assert(scene.menu_index==0&&!strcmp(scene.disk_labels[0],"B")&&scene.disk_used[0]==21);
+    service_frame(&scene,removed,SERVICE_ORIGIN_MONITOR,0,0);
+    zell_controls enter={.confirm=true};
+    zell_desktop_tick(&scene,&enter);
+    assert(scene.mode==ZELL_MODE_LAUNCHER&&!scene.desktop_launch);
+}
 static void test_terminal_transport(zell_scene *scene){
     char restart[]="J31",notice[]="N32204a6f622066696e6973686564",audio[]="A312031";
     service_frame(scene,restart,SERVICE_ORIGIN_MONITOR,0,0);service_frame(scene,notice,SERVICE_ORIGIN_MONITOR,0,0);service_frame(scene,audio,SERVICE_ORIGIN_MONITOR,0,0);
@@ -1357,6 +1372,7 @@ int main(int argc,char **argv)
     test_stamina_messages();
     test_text_fields_receive_queued_keys();
     test_paste_question();
+    test_drive_refresh();
     test_terminal_transport(&scene);
     test_menu_and_mana(&scene);
     test_contract_frames(&scene);

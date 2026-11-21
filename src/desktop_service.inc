@@ -97,6 +97,32 @@ static bool window_prepare_slot0(zell_scene *s,int *generation){
     *generation=gen;
     return true;
 }
+static void service_disk_bin(zell_scene *s,const char *row){
+    int used;char label[96];
+    if(s->disk_count>=8||sscanf(row,"%d %95[^\n]",&used,label)!=2||used< -1||used>100)return;
+    int i=s->disk_count++;
+    s->disk_used[i]=used;
+    snprintf(s->disk_labels[i],sizeof s->disk_labels[i],"%s",label);
+}
+static void service_disks(zell_scene *s,char *rows){
+    bool selecting=s->mode==ZELL_MODE_LAUNCHER&&s->room==2&&!s->launcher_query[0];
+    int station=selecting?zell_desktop_launcher_station(s,s->menu_index):-1;
+    char previous[96]="";
+    if(station>=20&&station<20+s->disk_count)
+        snprintf(previous,sizeof previous,"%s",s->disk_labels[station-20]);
+    s->disk_count=0;s->disks_ready=true;
+    char *next;
+    for(char *row=strtok_r(rows,"\n",&next);row;row=strtok_r(NULL,"\n",&next))service_disk_bin(s,row);
+    if(!selecting)return;
+    if(previous[0]){
+        station=-1;
+        for(int i=0;i<s->disk_count;i++)if(!strcmp(previous,s->disk_labels[i])){station=20+i;break;}
+    }
+    int count=zell_desktop_launcher_count(s);
+    for(int i=0;i<count;i++)if(zell_desktop_launcher_station(s,i)==station){s->menu_index=i;return;}
+    /* The highlighted drive disappeared. The next tick settles the cursor. */
+    s->menu_index=count;
+}
 static void service_frame(zell_scene *s,char *frame,int origin,int slot,int generation){
     /* A job frame is ignored unless zell_window_accepts_frame says this slot
      * still has the generation captured with the owning pipe. */
@@ -179,14 +205,8 @@ static void service_frame(zell_scene *s,char *frame,int origin,int slot,int gene
         }
         return;
     }
-    if(kind=='D'){s->disk_count=0;s->disks_ready=true;return;}
-    if(kind=='B'&&s->disk_count<8){
-        int used;char label[96];
-        if(sscanf(decoded,"%d %95[^\n]",&used,label)==2&&used>=-1&&used<=100){
-            int i=s->disk_count++;s->disk_used[i]=used;snprintf(s->disk_labels[i],96,"%s",label);
-        }
-        return;
-    }
+    if(kind=='D'){service_disks(s,decoded);return;}
+    if(kind=='B'){service_disk_bin(s,decoded);return;} /* Older monitors stream one bin per frame. */
     return;
     }
     /* Telemetry belongs to the monitor. A job M is a menu even when the title is numeric. */

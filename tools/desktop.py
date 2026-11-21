@@ -533,11 +533,13 @@ def desktop(station,action):
             DIALOGUE.send('W',f"{weather['state']} {weather['icon']} {weather['temperature']}\n{weather['place']}\n{weather['condition']}")
             try:drives=zell_rooms.disks()
             except OSError:drives=[]
-            DIALOGUE.send('D')
+            bins=[]
             for index,disk in enumerate(drives[:8]):
                 used=disk.get('used_percent');percent=round(used) if isinstance(used,(int,float)) else -1
                 label=disk['label'] if index<7 or len(drives)<=8 else 'More drives (Enter)'
-                DIALOGUE.send('B',f'{percent} {label}')
+                label=' '.join(label.splitlines())[:95]
+                bins.append(f'{percent} {label}')
+            DIALOGUE.send('D','\n'.join(bins))
             try:
                 import zell_fleets
                 try:fleet_snapshot=zell_rooms._snapshot()
