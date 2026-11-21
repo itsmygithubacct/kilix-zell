@@ -10,7 +10,7 @@
 #define ZELL_ROOM_VITALS_H 38
 #define ZELL_ROOM_HUD_BOTTOM (ZELL_ROOM_VITALS_Y + ZELL_ROOM_VITALS_H)
 #define ZELL_ROOM_STATUS_STRIP 30
-#define ZELL_STATIONS 57
+#define ZELL_STATIONS 58
 /* The Command Center computer that zooms into a usage browser. */
 #define ZELL_MANA_CONSOLE 48
 #define ZELL_WORKSHOP_COMPUTER 49
@@ -29,6 +29,7 @@
 #define ZELL_HATCH_FOOT_OFFSET 14
 /* Shell below the Mana readout in the center of the wall. */
 #define ZELL_COMMAND_COMPUTER 56
+#define ZELL_PUZZLLM_HATCH 57
 /* The Command Center's controller and four worker screens. */
 #define ZELL_COMMAND_SCREEN_FIRST 15
 #define ZELL_COMMAND_SCREEN_LAST 19
@@ -54,6 +55,7 @@ extern const zell_station zell_stations[ZELL_STATIONS];
 typedef struct { int station, open_art; const char *label; } zell_cave_hatch;
 extern const zell_cave_hatch zell_cave_hatches[ZELL_DOWNSTAIRS_ROOMS+1];
 int zell_hatch_room(int station);
+const zell_cave_hatch *zell_station_hatch(int station);
 void zell_desktop_camera(const zell_scene *s, int *x, int *y);
 void zell_desktop_init(zell_scene *s);
 void zell_desktop_enter_hall(zell_scene *s);

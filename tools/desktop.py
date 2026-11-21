@@ -433,6 +433,21 @@ def vitals_snapshot():
 
 def desktop(station,action):
     ui=sys.modules.get(__name__) or SimpleNamespace(**globals())
+    if station==57:
+        import zell_puzzllm
+        print('Opening PuzzLLM…',flush=True)
+        try:
+            argv=[str(zell_puzzllm.launcher())]
+            state=os.environ.get('PUZZLLM_STATE')
+            if state:
+                # The new tab inherits the Kilix broker's environment.
+                argv=['env','PUZZLLM_STATE='+str(Path(state).expanduser().resolve()),*argv]
+            status=open_tab(argv,title='PuzzLLM')
+        except (OSError,RuntimeError,subprocess.TimeoutExpired) as error:
+            print(f'Could not open PuzzLLM: {error}',flush=True)
+            status=1
+        if status:raise SystemExit(status)
+        return 0
     if station==46:return zell_agents.switch(ui)
     if station==47:return zell_agents.updates(ui)
     if station in zell_os.STATIONS:return zell_os.hub(ui,zell_os.STATIONS[station],action)

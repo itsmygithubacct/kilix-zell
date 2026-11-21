@@ -77,12 +77,13 @@ static void desktop_label(sr_canvas *c,int x,int y,const char *text,uint32_t col
  sr_text(c,(float)(x-w/2),(float)y,text,color,1,1);
 }
 static void desktop_text(sr_canvas *c,int x,int y,const char *text,uint32_t color,int width);
-static void desktop_hatch(sr_canvas *c,int art,int x,int y,bool selected,const char *label){
+static void desktop_hatch(sr_canvas *c,const zell_cave_hatch *hatch,int x,int y,bool selected){
  /* Each cutout is compiled at the height it is drawn at. */
+ int art=selected?hatch->open_art:zell_stations[hatch->station].art;
  const zell_art *cut=zell_art_get(art);int height=cut?cut->height:76;
  if(selected)sr_fill_ellipse(c,(float)x,(float)(y+2),54,12,0x80e5c4u,.55f);
  desktop_art(c,art,x,y+ZELL_HATCH_FOOT_OFFSET,height);
- if(selected)desktop_label(c,x,y+28,label,0xa8f3d5u);
+ if(selected)desktop_label(c,x,y+28,hatch->label,0xa8f3d5u);
 }
 /* NeuroTerm owns VT state, colors and cell attributes. Cache the pixels at
  * the fitted terminal's resolution so even a small room has 8x16 text. */
@@ -266,8 +267,10 @@ static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
  for(int i=15;i<ZELL_STATIONS;i++){
   if(!zell_desktop_station_visible(s,i)||zell_desktop_station_in_front(s,i)!=front)continue;
   if(i==ZELL_COMMAND_COMPUTER){if(!front)desktop_monitor(s,c,ZELL_COMMAND_SHELL,cx,cy);continue;}
-  if(i>=ZELL_WORKSHOP_COMPUTER)continue;
   int x=(int)(zell_stations[i].x*ZELL_WORLD_W)-cx,y=(int)(zell_stations[i].y*ZELL_WORLD_H)-cy;
+  const zell_cave_hatch *hatch=zell_station_hatch(i);
+  if(hatch){desktop_hatch(c,hatch,x,y,i==near);continue;}
+  if(i>=ZELL_WORKSHOP_COMPUTER)continue;
   if(i==ZELL_MANA_CONSOLE){desktop_mana_console(s,c,cx,cy);continue;}
   if(i>=46)continue;
   if(i==28)continue;
@@ -360,12 +363,8 @@ static void desktop_cave(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
  for(int i=0;i<ZELL_STATIONS&&s->room==0;i++){
   if(!zell_desktop_station_visible(s,i)||zell_desktop_station_in_front(s,i)!=front)continue;
   const zell_station *p=&zell_stations[i];int x=(int)(p->x*(float)ZELL_WORLD_W)-cx,y=(int)(p->y*(float)ZELL_WORLD_H)-cy;
-  int room=zell_hatch_room(i);
-  if(room){
-   const zell_cave_hatch *hatch=&zell_cave_hatches[room];
-   desktop_hatch(c,i==near?hatch->open_art:p->art,x,y,i==near,hatch->label);
-   continue;
-  }
+  const zell_cave_hatch *hatch=zell_station_hatch(i);
+  if(hatch){desktop_hatch(c,hatch,x,y,i==near);continue;}
   if(i>=ZELL_WORKSHOP_COMPUTER)continue;
   int h=(i<6||(i>=32&&i<42))?height:height*3/4;
   if(i==12){x+=ZELL_SWITCH_WALL_DX;y+=ZELL_SWITCH_WALL_DY;}
@@ -519,7 +518,11 @@ static void desktop_chrome(const zell_scene *s,sr_canvas *c,int cx,int cy){
  if(c->w>=500&&s->mode==ZELL_MODE_WALK&&s->room!=6&&s->room!=1){
   int mx=c->w-140,my=42;sr_fill_rect(c,(float)mx,(float)my,128,88,0x0c1921u,.9f);
   sr_stroke_rect(c,(float)mx,(float)my,128,88,1,0x4b7777u,1);
-  for(int i=0;i<ZELL_STATIONS;i++)if((i<ZELL_WORKSHOP_COMPUTER||(i>=ZELL_GAME_HATCH&&i<=ZELL_LIBRARY_HATCH)||i==ZELL_COMMAND_COMPUTER)&&zell_desktop_station_visible(s,i))sr_fill_circle(c,(float)(mx+4)+zell_stations[i].x*120,(float)(my+4)+zell_stations[i].y*80,2,0xd9ba79u,1);
+  for(int i=0;i<ZELL_STATIONS;i++){
+   if(!zell_desktop_station_visible(s,i))continue;
+   if(i>=ZELL_WORKSHOP_COMPUTER&&i!=ZELL_COMMAND_COMPUTER&&!zell_station_hatch(i))continue;
+   sr_fill_circle(c,(float)(mx+4)+zell_stations[i].x*120,(float)(my+4)+zell_stations[i].y*80,2,0xd9ba79u,1);
+  }
   {
    float x0,y0,x1,y1;
    zell_screen_to_world(s,0.f,0.f,&x0,&y0);

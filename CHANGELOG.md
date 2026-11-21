@@ -4,6 +4,7 @@
 
 These changes are not in the 0.1.1 runtime archive that Plebian-OS 0.2.3 pins.
 
+- Add a dice-marked trapdoor to the Workshop that opens the current PuzzLLM in a Kilix tab.
 - Move the Command Center tunnels to the lower corners. Walk straight left from the landing for two panes or right for four. The jeweled bronze frame and its live screens span the full width of the room above them.
 - Make all four Command Center floor panels solid. Kilix can use the controls from the front and walk around either end.
 - Register quick directional taps between frames, including Shift taps and arrow taps on the pane-room walkways.

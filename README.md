@@ -15,6 +15,16 @@ approaches and closes as he walks away. Press Enter beside a hatch or click
 it to go downstairs. Walk south through the doorway to return to the cave.
 Work areas sit along the walls, leaving the central floor open.
 
+In the Workshop, the dice-marked trapdoor to the right of the entrance stairs
+opens PuzzLLM in a separate Kilix tab. Walk near it and press Enter, or click
+the lid. Zell keeps your place in the Workshop.
+
+The hatch checks the `work/puzzllm` branch of `kilix-games` on each visit to
+PuzzLLM. It builds the active development checkout when it contains the
+published revision. Otherwise it downloads and builds that revision in the
+user cache. An existing build can be used offline. Set `PUZZLLM_ROOT` to the
+game's source directory to play a specific local checkout. [PuzzLLM source](https://github.com/itsmygithubacct/kilix-games/tree/work/puzzllm/puzzllm)
+
 ## Start
 
 ```sh

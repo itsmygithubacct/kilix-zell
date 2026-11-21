@@ -1011,6 +1011,43 @@ static void test_lower_hatches(void){
     sr_canvas_free(&away);sr_canvas_free(&near);
 }
 
+static void test_workshop_puzzllm_hatch(void){
+    zell_scene s;
+    zell_scene_init(&s,ZELL_WORLD_W,ZELL_WORLD_H);
+    zell_desktop_init(&s);
+    int station=ZELL_PUZZLLM_HATCH;
+    for(int room=0;room<=ZELL_DOWNSTAIRS_ROOMS;room++){
+        s.room=room;
+        assert(zell_desktop_station_visible(&s,station)==(room==4));
+    }
+    s.room=4;s.mouse_valid=true;
+    zell_room_view_identity(&s);
+    const zell_station *p=&zell_stations[station];
+    int x=(int)(p->x*ZELL_WORLD_W),y=(int)(p->y*ZELL_WORLD_H);
+    int top=y+ZELL_HATCH_FOOT_OFFSET-zell_art_get(p->art)->height;
+    s.x=768;s.y=860;
+    sr_canvas away,near;
+    assert(sr_canvas_init(&away,s.width,s.height)&&sr_canvas_init(&near,s.width,s.height));
+    zell_draw(&s,&away);
+    click_world(&s,(float)x,(float)top-10);
+    assert(!zell_desktop_click(&s));
+    click_world(&s,(float)x,(float)y-20);
+    assert(zell_desktop_click(&s)&&s.desktop_launch&&s.room==4&&s.station==station);
+
+    s.mode=ZELL_MODE_WALK;s.desktop_launch=false;s.x=(float)x+84;s.y=(float)y;
+    assert(zell_desktop_near(&s)==station);
+    zell_draw(&s,&near);
+    assert(rect_diffs(&away,&near,(zell_rect){x-24,top-14,48,12})>250);
+    click_world(&s,(float)x,(float)top-10);
+    assert(zell_desktop_click(&s)&&s.desktop_launch&&s.station==station);
+
+    s.mode=ZELL_MODE_WALK;s.desktop_launch=false;
+    zell_controls enter={.confirm=true};
+    zell_scene_tick(&s,&enter);
+    assert(s.desktop_launch&&s.station==station&&s.room==4&&s.x==(float)x+84&&s.y==(float)y);
+    sr_canvas_free(&away);sr_canvas_free(&near);
+}
+
 static void test_four_rooms(void){
     zell_scene s;
     zell_controls c;
@@ -3920,6 +3957,7 @@ int main(void) {
 #endif
     test_room_fit();
     test_lower_hatches();
+    test_workshop_puzzllm_hatch();
     test_four_rooms();
     test_fleet_board();
     test_notice_deadlines();

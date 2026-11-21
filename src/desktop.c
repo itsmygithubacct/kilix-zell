@@ -75,7 +75,8 @@ const zell_station zell_stations[ZELL_STATIONS]={
  {"Movie theater hatch","Screen downstairs",.46f,.52f,ZELL_ART_THEATER_HATCH},
  {"Meditation room hatch","Quiet room downstairs",.62f,.52f,ZELL_ART_MEDITATION_HATCH},
  {"Library hatch","Reading room downstairs",.78f,.52f,ZELL_ART_LIBRARY_HATCH},
- {"Command computer","Shell and mana scripts",.50f,(float)WALL_BOTTOM/ZELL_WORLD_H,ZELL_ART_WORKER}
+ {"Command computer","Shell and mana scripts",.50f,(float)WALL_BOTTOM/ZELL_WORLD_H,ZELL_ART_WORKER},
+ {"PuzzLLM hatch","Play the coding puzzle rooms",960.f/ZELL_WORLD_W,780.f/ZELL_WORLD_H,ZELL_ART_GAME_HATCH}
 };
 static const char *const actions[ZELL_STATIONS][17]={
  {"Ask the wizard","First-run tour of Zell",NULL},
@@ -106,7 +107,8 @@ static const char *const actions[ZELL_STATIONS][17]={
  [53]={"Go down to the movie theater",NULL},
  [54]={"Go down to the meditation room",NULL},
  [55]={"Go down to the library",NULL},
- [56]={"Open a shell beside the mana scripts",NULL}
+ [56]={"Open a shell beside the mana scripts",NULL},
+ [ZELL_PUZZLLM_HATCH]={"Play PuzzLLM",NULL}
 };
 int zell_desktop_actions(int station){int n=0;
  if(station<0||station>=ZELL_STATIONS)return 0;
@@ -125,7 +127,7 @@ bool zell_desktop_station_visible(const zell_scene *s,int station){
  if(s->room==2)return (station>=20&&station<20+s->disk_count)||station==34||station==35;
  /* The Sentinel keeps the Vault with its keeper; the Signalman and the
   * Merchant work in the Workshop. */
- return (s->room==3&&(station==40||station==39))||(s->room==4&&(station==41||station==33||station==36||station==ZELL_WORKSHOP_COMPUTER));
+ return (s->room==3&&(station==40||station==39))||(s->room==4&&(station==41||station==33||station==36||station==ZELL_WORKSHOP_COMPUTER||station==ZELL_PUZZLLM_HATCH));
 }
 static bool contains_folded(const char *haystack,const char *needle){
  for(;*haystack;haystack++){size_t i=0;while(needle[i]&&haystack[i]&&tolower((unsigned char)haystack[i])==tolower((unsigned char)needle[i]))i++;if(!needle[i])return true;}
@@ -378,6 +380,12 @@ int zell_hatch_room(int station){
   if(zell_cave_hatches[room].station==station)return room;
  return 0;
 }
+const zell_cave_hatch *zell_station_hatch(int station){
+ static const zell_cave_hatch puzzle={ZELL_PUZZLLM_HATCH,ZELL_ART_GAME_HATCH_OPEN,"PuzzLLM"};
+ if(station==ZELL_PUZZLLM_HATCH)return &puzzle;
+ int room=zell_hatch_room(station);
+ return room?&zell_cave_hatches[room]:NULL;
+}
 static void open_station(zell_scene *s,int n){
  s->command_focus=0;
  if(n==ZELL_WORKSHOP_COMPUTER){workshop_begin_hop(s);return;}
@@ -395,7 +403,7 @@ static void open_station(zell_scene *s,int n){
  if(n==10){s->voice_on=!s->voice_on;s->voice_changed=true;s->mode=ZELL_MODE_WALK;}
  else if(n==44){s->dictation_on=!s->dictation_on;s->dictation_changed=true;s->mode=ZELL_MODE_WALK;}
  else if(n==ZELL_FLOOR_PANEL){s->mode=ZELL_MODE_WALK;s->desktop_launch=false;}
- else {s->mode=ZELL_MODE_DESK;if(n==12||(n>=15&&n<=31)||(n>=45&&n<=47)||n==ZELL_COMMAND_COMPUTER)s->desktop_launch=true;}}
+ else {s->mode=ZELL_MODE_DESK;if(n==12||(n>=15&&n<=31)||(n>=45&&n<=47)||n==ZELL_COMMAND_COMPUTER||n==ZELL_PUZZLLM_HATCH)s->desktop_launch=true;}}
 #include "desktop_collide.inc"
 int zell_desktop_tick(zell_scene *s,const zell_controls *c){
  if(!s->desktop)return 0;
@@ -462,7 +470,7 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
      if(zell_desktop_blocked(s,s->x,s->y)){s->x=oldx;s->y=oldy;}
     }
     for(int i=0;i<ZELL_STATIONS;i++){
-     if(!zell_desktop_station_visible(s,i)||i==28||i==ZELL_WORKSHOP_COMPUTER)continue;
+     if(!zell_desktop_station_visible(s,i)||i==28||i==ZELL_WORKSHOP_COMPUTER||i==ZELL_PUZZLLM_HATCH)continue;
      /* The wall and floor panels already contributed their rectangles.
       * Only the Command Center staff need a separate body check. */
      if(s->room==1&&(i<29||i>31))continue;
@@ -599,8 +607,10 @@ static int clicked_hatch(const zell_scene *s,int x,int y){
  int near=zell_desktop_near(s),margin=-1;
  /* A raised lid can reach the row above. Prefer the painted sprite at
   * the pointer, in front-to-back order, then the forgiving frame bounds. */
- for(int room=ZELL_DOWNSTAIRS_ROOMS;room>0;room--){
-  const zell_cave_hatch *hatch=&zell_cave_hatches[room];
+ for(int i=ZELL_STATIONS-1;i>=0;i--){
+  if(!zell_desktop_station_visible(s,i))continue;
+  const zell_cave_hatch *hatch=zell_station_hatch(i);
+  if(!hatch)continue;
   const zell_station *p=&zell_stations[hatch->station];
   const zell_art *art=zell_art_get(hatch->station==near?hatch->open_art:p->art);
   zell_rect drawn=hatch_world_rect(p,art);
@@ -779,6 +789,8 @@ bool zell_desktop_click(zell_scene *s){
    zell_rect hit={88+i*21,298,21,77};
    if(rect_holds(&hit,ix,iy)){s->mouse_click=false;open_station(s,ids[i]);return true;}
   }
+ }
+ if(s->room==0||s->room==4){
   int hatch=clicked_hatch(s,ix,iy);
   if(hatch>=0){s->mouse_click=false;open_station(s,hatch);return true;}
  }
