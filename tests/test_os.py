@@ -65,6 +65,51 @@ for key in core.TASKS:
     setattr(CatalogTests,'test_row_'+key.replace('.','_').replace('-','_'),row_test(key))
 
 class SafetyTests(unittest.TestCase):
+    def test_restore_keeps_the_selected_backup_link(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);snapshot=root/'snapshot';snapshot.mkdir()
+            (snapshot/'notes').write_text('saved')
+            (snapshot/'current').symlink_to('notes')
+            restored=root/'restored'
+            with patch.object(files,'backup_record',return_value={'destination':str(snapshot)}), \
+                 patch('builtins.input',side_effect=[str(snapshot/'current'),str(restored),'restore']):
+                files.restore()
+            self.assertEqual(restored.readlink(),Path('notes'))
+            self.assertEqual((snapshot/'notes').read_text(),'saved')
+
+    def test_porter_operates_on_the_selected_link(self):
+        with tempfile.TemporaryDirectory() as tmp, redirect_stdout(io.StringIO()):
+            root=Path(tmp)
+            original=root/'notes.txt';original.write_text('keep me')
+            link=root/'shortcut';link.symlink_to(original.name)
+            copied=root/'copy';renamed=root/'renamed'
+            with patch('builtins.input',side_effect=['1',str(link),str(copied),'copy']):
+                files.copy_move()
+            self.assertEqual(copied.readlink(),Path(original.name))
+            with patch('builtins.input',side_effect=[str(link),renamed.name,'rename']):
+                files.rename()
+            self.assertFalse(link.is_symlink())
+            self.assertEqual(renamed.readlink(),Path(original.name))
+            dangling=root/'outdated';dangling.symlink_to('old-name')
+            with patch('builtins.input',side_effect=['2',str(dangling),str(link),'move']):
+                files.copy_move()
+            self.assertEqual(link.readlink(),Path('old-name'))
+            with patch('builtins.input',side_effect=['1',str(renamed),'trash']), patch.object(files,'run') as command:
+                files.trash()
+            command.assert_called_once_with(['gio','trash','--',renamed])
+            self.assertEqual(original.read_text(),'keep me')
+
+    def test_verification_reports_extra_snapshot_files_and_keeps_them(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source=Path(tmp)/'source';source.mkdir()
+            (source/'notes').write_text('original')
+            snapshot=Path(tmp)/'snapshot'
+            files.backup_copy(source,snapshot)
+            (snapshot/'extra').write_text('keep this too')
+            with self.assertRaisesRegex(RuntimeError,'extra'):
+                files.verify_backup(source,snapshot)
+            self.assertEqual((snapshot/'extra').read_text(),'keep this too')
+
     def test_restart_detects_kernel_and_gpu_module_changes(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);(root/'boot').mkdir();(root/'boot/vmlinuz-7.2.0').touch()
