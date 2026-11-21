@@ -52,6 +52,25 @@ class LibraryTests(unittest.TestCase):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name)
         self.state=patch.object(desktop,'BASE',self.root/'state');self.state.start()
     def tearDown(self):self.state.stop();self.tmp.cleanup()
+    def test_open_libraries_preserve_edits_made_during_a_scan(self):
+        books=self.root/'Books';books.mkdir()
+        first=books/'one.txt';second=self.root/'two.txt'
+        first.touch();second.touch()
+        left=local.Library(desktop,'documents');right=local.Library(desktop,'documents')
+        left.add(books,folder=True)
+        right.add(second)
+        self.assertCountEqual(right.data['files'],[str(first),str(second)])
+        third=books/'three.txt';third.touch()
+        def scan(path):
+            right.remove('folders',str(books))
+            return [str(first),str(third)],[]
+        with patch.object(left,'scan',side_effect=scan):
+            self.assertEqual(left.refresh(),(0,[]))
+        left.remove_file(str(first))
+        saved=local.Library(desktop,'documents')
+        self.assertEqual(saved.data['files'],[str(second)])
+        self.assertEqual(saved.data['folders'],[])
+
     def test_scan_filter_dedup_refresh_and_removal_preserve_originals(self):
         books=self.root/'Books';books.mkdir();(books/'one.epub').write_text('book')
         (books/'song.mp3').write_text('song');(books/'.hidden.pdf').touch()
@@ -80,11 +99,13 @@ class LibraryTests(unittest.TestCase):
         result=subprocess.run([str(launcher),'argument with spaces','--version'],capture_output=True,text=True,env=env,check=True)
         self.assertEqual(result.stdout.splitlines(),[str(app/'weights/neuronte-split-v9.nrt'),'argument with spaces','--version'])
     def test_launcher_does_not_fall_back_to_legacy_zell(self):
+        legacy=self.root/'legacy';legacy.mkdir()
+        (legacy/'zell').write_text('#!/bin/sh\necho legacy\n');(legacy/'zell').chmod(0o755)
         app=self.root/'kilix-apps/kilix-zell';app.mkdir(parents=True)
-        (app/'zell').write_text('#!/bin/sh\nexit 0\n');(app/'zell').chmod(0o755)
-        env=dict(os.environ,ZELL_NEURONTE_HOME='',GPU_TERMINAL_HOME=str(self.root/'runtime'),GPU_TERMINAL_SOURCE_HOME=str(self.root))
+        (app/'zell-neuronte').write_text('#!/bin/sh\necho neuronte\n');(app/'zell-neuronte').chmod(0o755)
+        env=dict(os.environ,ZELL_NEURONTE_HOME=str(legacy),GPU_TERMINAL_HOME=str(self.root/'runtime'),GPU_TERMINAL_SOURCE_HOME=str(self.root))
         result=subprocess.run([str(Path(__file__).resolve().parents[1]/'bin/zell')],capture_output=True,text=True,env=env)
-        self.assertEqual(result.returncode,127)
-        self.assertIn('make install',result.stderr)
+        self.assertEqual(result.returncode,0)
+        self.assertEqual(result.stdout.strip(),'neuronte')
 
 if __name__=='__main__':unittest.main()

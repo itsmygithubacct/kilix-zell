@@ -1,26 +1,12 @@
 """Private local tasks and opt-in station conversations; never vault content."""
-from contextlib import contextmanager
 import datetime
-import fcntl
 import json
-import os
 import uuid
+from zell_paths import state_lock
 
 TASKS = 'tasks.json'
 HISTORY = 'conversations.json'
 SETTINGS = 'conversation-settings.json'
-
-
-@contextmanager
-def _conversation_lock(ui):
-    # Wizard replies use this same directory lock in history.c.
-    ui.BASE.mkdir(parents=True, exist_ok=True, mode=0o700)
-    fd = os.open(ui.BASE, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        yield
-    finally:
-        os.close(fd)
 
 
 def _enabled(ui):
@@ -46,23 +32,32 @@ def tasks(ui):
             title = input('Task: ').strip()[:500]
             if not title:
                 continue
-            if len(rows) >= 200:
-                ui.page_text('The task board holds 200 tasks. Remove a finished task first.')
-                continue
-            rows.append(dict(id=uuid.uuid4().hex, title=title, done=False))
-        else:
+            with state_lock(ui.BASE):
+                rows = _rows(ui, TASKS)
+                if len(rows) < 200:
+                    rows.append(dict(id=uuid.uuid4().hex, title=title, done=False))
+                    ui.state_write(TASKS, rows)
+                    continue
+            ui.page_text('The task board holds 200 tasks. Remove a finished task first.')
+            continue
+        row = next((r for r in rows if r.get('id') == picked), None)
+        if row is None:
+            continue
+        done = not row.get('done')
+        action = ui.choose(str(row.get('title', '')), [('Mark done' if done else 'Reopen', 'toggle'),
+                                                       ('Remove task', 'remove')])
+        if action not in ('toggle', 'remove'):
+            continue
+        with state_lock(ui.BASE):
+            rows = _rows(ui, TASKS)
             row = next((r for r in rows if r.get('id') == picked), None)
             if row is None:
                 continue
-            action = ui.choose(str(row['title']), [('Reopen' if row.get('done') else 'Mark done', 'toggle'),
-                                                  ('Remove task', 'remove')])
-            if action == 'toggle':
-                row['done'] = not row.get('done')
-            elif action == 'remove':
+            if action == 'remove':
                 rows.remove(row)
             else:
-                continue
-        ui.state_write(TASKS, rows)
+                row['done'] = done
+            ui.state_write(TASKS, rows)
 
 
 def recorder(ui, station):
@@ -73,7 +68,7 @@ def recorder(ui, station):
     def record(role, text):
         if not _enabled(ui):
             return
-        with _conversation_lock(ui):
+        with state_lock(ui.BASE):
             # The setting may have changed while another tab held the lock.
             if _enabled(ui):
                 rows = _rows(ui, HISTORY)
@@ -111,10 +106,10 @@ def conversations(ui):
                 'Key Master and terminal contents are always excluded. Reports may contain personal data.',
                 [('Enable history', True), ('Cancel', False)]) is not True:
                 continue
-            with _conversation_lock(ui):
+            with state_lock(ui.BASE):
                 ui.state_write(SETTINGS, {'enabled': not enabled})
         elif action == 'clear':
             if ui.choose('Clear saved conversations?', [('Cancel', False), ('Clear', True)]) is True:
-                with _conversation_lock(ui):
+                with state_lock(ui.BASE):
                     ui.state_write(HISTORY, [])
                     (ui.BASE/'wizard-conversations.jsonl').unlink(missing_ok=True)

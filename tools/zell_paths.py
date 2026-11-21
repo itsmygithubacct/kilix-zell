@@ -6,8 +6,22 @@ in KILIX_ZELL_ARCHIVE_ONLY separated by colons. Zell then refuses to start
 coding sessions or active file work there.
 """
 from __future__ import annotations
+from contextlib import contextmanager
+import fcntl
 import os
 from pathlib import Path
+
+
+@contextmanager
+def state_lock(directory):
+    """Serialize state updates with other stations and the native Wizard."""
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
 
 
 def state_root():

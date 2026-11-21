@@ -74,6 +74,27 @@ class JournalTests(unittest.TestCase):
                 journal.tasks(desktop)
             self.assertEqual(desktop.state_read(journal.TASKS, []), [])
 
+    def test_open_task_boards_preserve_other_edits(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(desktop, 'BASE', Path(root)):
+            other = dict(id='other', title='From the controller', done=False)
+            def add_elsewhere(prompt):
+                desktop.state_write(journal.TASKS, [other])
+                return 'From the Noticeboard'
+            with patch.object(desktop, 'choose', side_effect=['add', None]), patch('builtins.input', side_effect=add_elsewhere):
+                journal.tasks(desktop)
+            rows = desktop.state_read(journal.TASKS, [])
+            self.assertEqual([r['title'] for r in rows], ['From the controller', 'From the Noticeboard'])
+
+            def edit_elsewhere(title, choices):
+                if title == other['title']:
+                    rows[1]['done'] = True
+                    desktop.state_write(journal.TASKS, rows[1:])
+                    return 'toggle'
+                return other['id'] if len(choices) == 3 else None
+            with patch.object(desktop, 'choose', side_effect=edit_elsewhere):
+                journal.tasks(desktop)
+            self.assertEqual(desktop.state_read(journal.TASKS, []), rows[1:])
+
 
 if __name__ == '__main__':
     unittest.main()
