@@ -283,22 +283,12 @@ static bool th_cmd_is(const char *json,const char *name){
     snprintf(pat,sizeof pat,"\"cmd\":\"%s\"",name);
     return json&&strstr(json,pat)!=NULL;
 }
-static bool th_script(char *dst,size_t cap,const char *name){
-    ssize_t n=readlink("/proc/self/exe",dst,cap-48);
-    char *slash;
-    if(n<0||(size_t)n+48>=cap)return false;
-    dst[n]=0;
-    slash=strrchr(dst,'/');
-    if(!slash)return false;
-    snprintf(slash+1,(size_t)(dst+cap-(slash+1)),"tools/%s",name);
-    return access(dst,R_OK)==0;
-}
 static bool th_start(zell_scene *s){
     char script[4096],fd_text[24];
     int to_child[2],from_child[2];
     (void)s;
     if(th.pid>0)return true;
-    if(!th_script(script,sizeof script,"zell_theater.py")){
+    if(!zell_runtime_tool_path(script,sizeof script,"zell_theater.py")||access(script,R_OK)!=0){
         th_set_error("Could not start the theater helper. tools/zell_theater.py is not beside this program.");
         return false;
     }

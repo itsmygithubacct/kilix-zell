@@ -1199,8 +1199,16 @@ static void test_paste_question(void){
     zell_panes_test_reset();
     kittykb_input_init(&keyboard.input);zell_input_free(&pointer_input);
 }
-int main(void)
+int main(int argc,char **argv)
 {
+    if(argc==2&&!strcmp(argv[1],"--test-runtime-upgrade")){
+        char path[PATH_MAX];
+        assert(zell_runtime_directory());
+        puts("ready");fflush(stdout);
+        assert(getchar()=='\n');
+        assert(zell_runtime_tool_path(path,sizeof path,"desktop.py"));
+        return access(path,R_OK)==0?0:1;
+    }
 #ifdef ZELL_RENDER_NEURONTE
     test_source_renderer_paths();
 #endif

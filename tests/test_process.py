@@ -3,12 +3,27 @@ import os
 import pathlib
 import pty
 import select
+import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 import time
 
 with tempfile.TemporaryDirectory(prefix="zell-process-") as directory:
+    app = pathlib.Path(directory)/"install"
+    app.mkdir()
+    binary = app/"zell"
+    shutil.copy2(sys.argv[1], binary)
+    with subprocess.Popen([binary, "--test-runtime-upgrade"], stdin=subprocess.PIPE, stdout=subprocess.PIPE) as probe:
+        assert select.select([probe.stdout], [], [], 5)[0] and probe.stdout.readline() == b"ready\n"
+        previous = app.with_name("previous")
+        app.rename(previous)
+        (app/"tools").mkdir(parents=True)
+        (app/"tools/desktop.py").touch()
+        shutil.rmtree(previous)
+        probe.communicate(b"\n", timeout=5)
+        assert probe.returncode == 0, "the running game lost its station helpers after an upgrade"
     fake = pathlib.Path(directory) / "kilix-llm"
     fake.write_text("""#!/usr/bin/env python3
 import os, sys, time

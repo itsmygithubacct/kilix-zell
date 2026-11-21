@@ -7,6 +7,7 @@
 #include <time.h>
 #include "draw.h"
 #include "command_term.h"
+#include "runtime.h"
 #include "desktop_assets.h"
 /* The live tiles share their edges inside one full-width bronze frame. */
 enum { WALL_SIDE_RIM=21, WALL_COL=(ZELL_WORLD_W-2*WALL_SIDE_RIM)/3,

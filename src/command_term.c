@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "command_term.h"
+#include "runtime.h"
 #include "desktop.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -30,12 +31,8 @@ const zell_command_screen *zell_command_term_screen(int index){
 
 /* Installed games keep tools beside the binary. Test programs live in build/. */
 static char *tool_path(const char *name){
-    char exe[PATH_MAX];
-    ssize_t n=readlink("/proc/self/exe",exe,sizeof exe-1);
-    if(n<0||n>=(ssize_t)sizeof exe-1)return NULL;
-    exe[n]=0;
-    char *slash=strrchr(exe,'/');if(!slash)return NULL;
-    *slash=0;
+    const char *exe=zell_runtime_directory();
+    if(!exe)return NULL;
     const char *roots[]={"tools","../tools"};
     for(size_t i=0;i<sizeof roots/sizeof roots[0];i++){
         char *path=NULL;

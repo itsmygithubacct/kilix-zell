@@ -53,7 +53,7 @@ APP_OBJS := \
 	$(BUILD)/voice.o \
 	$(BUILD)/history.o \
 	$(BUILD)/sprites.o \
-	$(BUILD)/room.o
+	$(BUILD)/room.o $(BUILD)/runtime.o
 
 TEST_OBJS := \
 	$(BUILD)/test_scene.o \
@@ -66,7 +66,7 @@ TEST_OBJS := \
 	$(BUILD)/voice.o \
 	$(BUILD)/history.o \
 	$(BUILD)/sprites.o \
-	$(BUILD)/room.o \
+	$(BUILD)/room.o $(BUILD)/runtime.o \
 	$(BUILD)/soft_raster.o
 
 .PHONY: all test clean
@@ -104,6 +104,9 @@ $(BUILD)/model.o: $(ROOT)/src/model.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/voice.o: $(ROOT)/src/voice.c | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/runtime.o: $(ROOT)/src/runtime.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/history.o: $(ROOT)/src/history.c | $(BUILD)
@@ -247,7 +250,7 @@ N_COMMON := \
 	$(BUILD)/voice.o \
 	$(BUILD)/history.o \
 	$(BUILD)/sprites.o \
-	$(BUILD)/room.o
+	$(BUILD)/room.o $(BUILD)/runtime.o
 
 SNAP_COMMON := \
 	$(BUILD)/desktop.o $(COMMAND_OBJS) \
@@ -258,7 +261,7 @@ SNAP_COMMON := \
 	$(BUILD)/voice.o \
 	$(BUILD)/history.o \
 	$(BUILD)/sprites.o \
-	$(BUILD)/room.o \
+	$(BUILD)/room.o $(BUILD)/runtime.o \
 	$(BUILD)/soft_raster.o
 
 # Same link as LIB_OBJS, with the canvas pair where that has soft-raster.
@@ -277,7 +280,7 @@ SNAP_NEURONTE := \
 	$(BUILD)/voice.o \
 	$(BUILD)/history.o \
 	$(BUILD)/sprites.o \
-	$(BUILD)/room.o \
+	$(BUILD)/room.o $(BUILD)/runtime.o \
 	$(CANVAS_OBJS)
 
 .PHONY: neuronte test-neuronte snap

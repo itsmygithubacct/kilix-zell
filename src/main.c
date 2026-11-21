@@ -6,6 +6,7 @@
 #include "history.h"
 #include "model.h"
 #include "router.h"
+#include "runtime.h"
 #include "scene.h"
 #include "voice.h"
 
@@ -1332,10 +1333,7 @@ static bool renderer_file(const char *variable, const char *directory,
 
 static bool configure_renderer(void)
 {
-    char *binary = realpath("/proc/self/exe", NULL);
-    char *slash = binary ? strrchr(binary, '/') : NULL;
-    if (slash) *slash = '\0';
-    const char *directory = slash ? binary : NULL;
+    const char *directory = zell_runtime_directory();
     /* Keep the helpers' explicit checkout override for a source run. */
     const char *home = getenv("NEURONTE_HOME");
     bool use_build = !home || !*home;
@@ -1345,7 +1343,6 @@ static bool configure_renderer(void)
                             use_build ? ZELL_NEURONTE_LIBRARY : NULL) &&
               renderer_file("KILIX_ZELL_NEURONTE_DISPLAY", directory,
                             "libexec/neuronte-display/neuronte_display.py", ZELL_NEURONTE_DISPLAY);
-    free(binary);
     return ok;
 }
 #endif
@@ -1362,6 +1359,10 @@ int main(int argc, char **argv)
     }
     if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
         fputs("zell: run it inside a Kilix pane\n", stderr);
+        return 1;
+    }
+    if (!zell_runtime_directory()) {
+        fputs("zell: could not locate the runtime directory\n", stderr);
         return 1;
     }
 #ifdef ZELL_RENDER_NEURONTE

@@ -281,10 +281,7 @@ static void service_start_mode(desktop_service *p,zell_scene *s,bool monitor){
     s->service_scroll=0;s->service_send=s->service_cancel=false;
     }
     char script[4096],station[16],action[16];int to_child[2],from_child[2];
-    ssize_t n=readlink("/proc/self/exe",script,sizeof script-32);
-    if(n<0)goto failed;
-    script[n]=0;char *slash=strrchr(script,'/');if(!slash)goto failed;
-    strcpy(slash+1,"tools/desktop.py");
+    if(!zell_runtime_tool_path(script,sizeof script,"desktop.py"))goto failed;
     snprintf(station,sizeof station,"%d",monitor?-1:s->station);snprintf(action,sizeof action,"%d",s->menu_index);
     if(pipe(to_child)!=0)goto failed;
     if(pipe(from_child)!=0){close(to_child[0]);close(to_child[1]);goto failed;}
@@ -409,7 +406,6 @@ static void service_pump(desktop_service *p,zell_scene *s){
 static bool service_start_install(desktop_service *p,zell_scene *s){
     char script[4096],payload[8192];
     int to_child[2],from_child[2],generation=0;
-    ssize_t n;
     if(!p||!s||p->pid>0)return false;
     if(!zell_theater_install_json(payload,sizeof payload))return false;
     if(!window_prepare_slot0(s,&generation))return false;
@@ -429,14 +425,7 @@ static bool service_start_install(desktop_service *p,zell_scene *s){
     s->windows[0].minimized=s->windows[0].maximized=false;
     s->service_text[0]=s->service_title[0]=s->service_input[0]=0;
     s->service_scroll=0;s->service_send=s->service_cancel=false;
-    n=readlink("/proc/self/exe",script,sizeof script-32);
-    if(n<0)goto failed;
-    script[n]=0;
-    {
-        char *slash=strrchr(script,'/');
-        if(!slash)goto failed;
-        strcpy(slash+1,"tools/desktop.py");
-    }
+    if(!zell_runtime_tool_path(script,sizeof script,"desktop.py"))goto failed;
     if(pipe(to_child)!=0)goto failed;
     if(pipe(from_child)!=0){close(to_child[0]);close(to_child[1]);goto failed;}
     p->frame_fd=(int)syscall(SYS_memfd_create,"zell-terminal",0);

@@ -879,7 +879,7 @@ static bool pn_start(void){
     char script[4096],fd_text[24];
     int to_child[2],from_child[2];
     if(pn.pid>0)return true;
-    if(!th_script(script,sizeof script,"zell_panes.py")){pn_fail("The panes need tools/zell_panes.py beside Zell.");return false;}
+    if(!zell_runtime_tool_path(script,sizeof script,"zell_panes.py")||access(script,R_OK)!=0){pn_fail("The panes need tools/zell_panes.py beside Zell.");return false;}
     if(pipe(to_child)!=0){pn_fail("Could not start the panes.");return false;}
     if(pipe(from_child)!=0){close(to_child[0]);close(to_child[1]);pn_fail("Could not start the panes.");return false;}
     (void)pn_grow_pipe(from_child[0]);
