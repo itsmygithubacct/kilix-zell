@@ -17,8 +17,16 @@ static const zell_block zell_blocks[]={
 {4,207.f,760.f,310.f,932.f}, /* workshop: left stair-mouth rock */
 {4,1220.f,770.f,1328.f,932.f}, /* workshop: right stair-mouth rock */
 {5,0.f,0.f,1536.f,380.f}, /* game: back wall and center cabinets; floor starts at 380 */
-{5,72.f,336.f,424.f,680.f}, /* game: left cabinets */
-{5,1056.f,280.f,1504.f,656.f}, /* game: right cabinets */
+/* Game Room furniture stands on its floor footprint; the floor behind each
+ * piece stays open and the foreground's depth hides him there. */
+{5,60.f,336.f,368.f,420.f}, /* game: bookshelf */
+{5,78.f,565.f,358.f,652.f}, /* game: chess table, the floor under its top */
+{5,316.f,560.f,430.f,630.f}, /* game: right stool, the chess seat */
+{5,1058.f,380.f,1110.f,470.f}, /* game: pool table, left end on its back leg */
+{5,1110.f,380.f,1150.f,492.f}, /* game: pool table, front rail stepping down */
+{5,1150.f,380.f,1190.f,515.f}, /* game: pool table, front rail stepping down */
+{5,1190.f,380.f,1252.f,552.f}, /* game: pool table, to its front leg */
+{5,1240.f,380.f,1504.f,646.f}, /* game: pinball, to its front legs within reach */
 {5,200.f,724.f,256.f,1024.f}, /* game: left crystal rocks */
 {5,256.f,744.f,336.f,1024.f}, /* game: left boulder */
 {5,336.f,778.f,384.f,1024.f}, /* game: ferns on the left boulder */

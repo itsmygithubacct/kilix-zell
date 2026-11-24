@@ -39,7 +39,7 @@ static void place_room(zell_scene *s,int room,float x,float y){
 /* Same bodies the movement loop refuses, so an approach is not stopped early. */
 static int body_near(const zell_scene *s,float x,float y){
     for(int i=0;i<ZELL_STATIONS;i++){
-        if(!zell_desktop_station_visible(s,i)||i==28||i==ZELL_WORKSHOP_COMPUTER||i==ZELL_CHESS_STOOL||i==ZELL_PUZZLLM_ARCADE)continue;
+        if(!zell_desktop_station_visible(s,i)||i==28||i==ZELL_WORKSHOP_COMPUTER||i==ZELL_CHESS_STOOL||zell_arcade_game(i))continue;
         if(s->room==1&&(i<29||i>31))continue;
         if(s->room==0&&i>=6&&!(i>=32&&i<=41))continue;
         float ax=x-zell_stations[i].x*(float)ZELL_WORLD_W;
@@ -95,6 +95,12 @@ static void walk_into_rect(zell_scene *s,float x0,float y0,float x1,float y1){
     if(s->room!=room||s->leave||zell_desktop_blocked(s,s->x,s->y))
         fprintf(stderr,"approach failed room %d at %.1f %.1f edge %.1f\n",room,s->x,s->y,edge);
     assert(s->room==room&&!s->leave&&!zell_desktop_blocked(s,s->x,s->y));
+    {
+        float at=dir_x?s->x:s->y;
+        bool stopped=dir_x>0||dir_y>0?at<edge&&at>edge-ZELL_WALK_SPEED-0.05f:at>=edge&&at<edge+ZELL_WALK_SPEED+0.05f;
+        if(!stopped)fprintf(stderr,"block %.0f %.0f %.0f %.0f room %d: from %.0f,%.0f dir %d,%d stopped at %.1f,%.1f, edge %.0f\n",
+                            x0,y0,x1,y1,room,start_x,start_y,dir_x,dir_y,s->x,s->y,edge);
+    }
     if(dir_y>0){assert(s->y<edge&&s->y>edge-ZELL_WALK_SPEED-0.05f);assert(s->x==start_x);}
     if(dir_y<0){assert(s->y>=edge&&s->y<edge+ZELL_WALK_SPEED+0.05f);assert(s->x==start_x);}
     if(dir_x>0){assert(s->x<edge&&s->x>edge-ZELL_WALK_SPEED-0.05f);assert(s->y==start_y);}
@@ -1059,7 +1065,10 @@ static void test_workshop_puzzllm_hatch(void){
 /* Pixels under the solid foreground (alpha 240 and up; the painting tops
  * out at 252) near his feet that clearly differ between a frame with him at
  * (x,y) and one with him across the room. */
-static int game_room_visible_over_front(float x,float y){
+/* Solid foreground pixels over his body that change when he stands at x,y,
+ * against a frame with him across the room. deeper picks the pixels that
+ * stand deeper than his feet, which must hide him, or the rest, under him. */
+static int game_room_shown(float x,float y,bool deeper){
     const zell_art *front=zell_art_get(ZELL_ART_GAME_FOREGROUND);
     int w=ZELL_WORLD_W,h=ZELL_WORLD_H+ZELL_ROOM_HUD_BOTTOM+ZELL_ROOM_STATUS_STRIP,n=0;
     sr_canvas here,away;
@@ -1070,9 +1079,14 @@ static int game_room_visible_over_front(float x,float y){
     zell_room_view_identity(&a);zell_room_view_identity(&b);
     assert(a.room_view.scale==1.f);
     zell_draw(&a,&here);zell_draw(&b,&away);
-    for(int wy=(int)y-ZELL_KILIX_DRAW_HEIGHT;wy<(int)y;wy++)
-        for(int wx=(int)x-40;wx<(int)x+40;wx++){
-            if((front->pixels[(size_t)wy*ZELL_WORLD_W+(size_t)wx]>>24)<240u)continue;
+    int x0,y0,x1,y1;
+    assert(zell_desktop_kilix_box(&a,&x0,&y0,&x1,&y1));
+    /* His body only: a station's label can sit under his feet. */
+    for(int wy=y0;wy<(int)y-8;wy++)
+        for(int wx=x0;wx<x1;wx++){
+            /* The sheet's opaque pixels are 252; softer ones let him tint through. */
+            if((front->pixels[(size_t)wy*ZELL_WORLD_W+(size_t)wx]>>24)<250u)continue;
+            if(((float)zell_desktop_front_depth(5,wx,wy)>y)!=deeper)continue;
             float sx,sy;zell_world_to_screen(&a,(float)wx,(float)wy,&sx,&sy);
             size_t at=(size_t)sy*(size_t)w+(size_t)sx;
             int diff=0;
@@ -1125,7 +1139,8 @@ static void test_game_room_games(void){
     s.room=5;
     /* He reaches the stool's floor point from the room entry, and it is clear. */
     assert(!zell_desktop_blocked(&s,floor_x,floor_y));
-    assert(zell_desktop_blocked(&s,seat_x,seat_y));
+    /* The stool's legs stand on blocked floor; he reaches the seat only by the hop. */
+    assert(zell_desktop_blocked(&s,seat_x,600.f));
     assert(zell_desktop_near(&s)==ZELL_CHESS_STOOL);
     assert(strcmp(zell_desktop_action(ZELL_CHESS_STOOL,0),"Play Chess Bash")==0);
     assert(strcmp(zell_desktop_action(ZELL_PUZZLLM_ARCADE,0),"Play PuzzLLM")==0);
@@ -1197,8 +1212,33 @@ static void test_game_room_games(void){
     assert(zell_desktop_click(&s)&&s.station==ZELL_PUZZLLM_ARCADE&&s.desktop_launch);
     place_room(&s,5,1000.f,700.f);
     zell_room_view_identity(&s);s.mouse_valid=true;
-    click_world(&s,560.f,200.f);
-    assert(!zell_desktop_click(&s)&&!s.desktop_launch);
+    /* The side cabinets: Terminal Lander on the left, Bashed Earth on the right. */
+    {
+        const int side[2]={ZELL_LANDER_ARCADE,ZELL_TANKS_ARCADE};
+        const float body_x[2]={547.f,993.f};
+        assert(strcmp(zell_arcade_game(ZELL_LANDER_ARCADE),"Terminal Lander")==0);
+        assert(strcmp(zell_arcade_game(ZELL_TANKS_ARCADE),"Bashed Earth")==0);
+        assert(strcmp(zell_arcade_game(ZELL_PUZZLLM_ARCADE),"PuzzLLM")==0);
+        assert(!zell_arcade_game(ZELL_CHESS_STOOL)&&!zell_arcade_game(ZELL_PUZZLLM_HATCH));
+        for(int i=0;i<2;i++){
+            for(int room=0;room<=ZELL_DOWNSTAIRS_ROOMS;room++){
+                s.room=room;assert(zell_desktop_station_visible(&s,side[i])==(room==5));
+            }
+            place_room(&s,5,body_x[i],400.f);
+            assert(zell_desktop_near(&s)==side[i]);
+            zell_scene_tick(&s,&enter);
+            assert(s.station==side[i]&&s.desktop_launch&&s.mode==ZELL_MODE_DESK);
+            place_room(&s,5,768.f,700.f);
+            zell_room_view_identity(&s);s.mouse_valid=true;
+            click_world(&s,body_x[i],250.f);
+            assert(zell_desktop_click(&s)&&s.station==side[i]&&s.desktop_launch);
+        }
+        /* Between the cabinets, the wall pillars open nothing. */
+        place_room(&s,5,768.f,700.f);
+        zell_room_view_identity(&s);s.mouse_valid=true;
+        click_world(&s,660.f,250.f);
+        assert(!zell_desktop_click(&s)&&!s.desktop_launch);
+    }
     /* Neither station is a body he bumps into. */
     place_room(&s,5,768.f,440.f);
     zell_controls up={.move_y=-1};
@@ -1233,14 +1273,54 @@ static void test_game_room(void){
         for(int t=0;t<400&&s.room==5;t++)zell_scene_tick(&s,&se);
         assert(s.room==5&&s.y<830.f);
     }
-    /* In front of the stools and the pinball the furniture goes under him;
-     * beside the right stool, behind its feet, it covers him. */
-    place_room(&s,5,220.f,700.f);assert(!zell_desktop_foreground_in_front(&s));
-    s.x=380.f;s.y=690.f;assert(!zell_desktop_foreground_in_front(&s));
-    s.x=440.f;s.y=650.f;assert(!zell_desktop_foreground_in_front(&s));
-    s.x=440.f;s.y=600.f;assert(zell_desktop_foreground_in_front(&s));
-    s.x=1300.f;s.y=690.f;assert(!zell_desktop_foreground_in_front(&s));
-    s.x=1030.f;s.y=520.f;assert(!zell_desktop_foreground_in_front(&s));
+    /* Furniture blocks only its floor footprint. The floor behind the chess
+     * table and the stool, and around the pool table, is open. */
+    {
+        const float open[][2]={{300.f,450.f},{400.f,540.f},{1100.f,520.f},{1200.f,600.f},
+                               {1040.f,420.f},{1230.f,600.f}};
+        const float solid[][2]={{250.f,600.f},{370.f,600.f},{1100.f,450.f},{1130.f,485.f},{1170.f,508.f},{1200.f,520.f},
+                                {1280.f,600.f},{300.f,400.f}};
+        for(size_t i=0;i<sizeof open/sizeof open[0];i++)assert(!zell_desktop_blocked(&s,open[i][0],open[i][1]));
+        for(size_t i=0;i<sizeof solid/sizeof solid[0];i++)assert(zell_desktop_blocked(&s,solid[i][0],solid[i][1]));
+    }
+    /* Each foreground pixel stands on the floor at the bottom of its piece:
+     * the stool's cushion stands with its front legs, the pool table's corner
+     * with its back leg, and clear pixels stand nowhere. */
+    assert(zell_desktop_foreground_by_depth(5)&&!zell_desktop_foreground_by_depth(6));
+    assert(zell_desktop_front_depth(5,372,540)>=620);
+    /* The cushion's run bridges the gap down to the stool's back legs. */
+    assert(zell_desktop_front_depth(5,344,530)>=590&&zell_desktop_front_depth(5,344,530)<=605);
+    assert(zell_desktop_front_depth(5,416,560)>=605&&zell_desktop_front_depth(5,416,560)<=615);
+    assert(zell_desktop_front_depth(5,1207,520)>=540&&zell_desktop_front_depth(5,1207,520)<=556);
+    assert(zell_desktop_front_depth(5,768,600)==-1&&zell_desktop_front_depth(6,768,600)==-1);
+    /* The pool table's left pocket hangs over its back leg and stands with it. */
+    assert(zell_desktop_front_depth(5,1064,380)==468);
+    /* Along the pool table's front rail he stands in front of it; next to its
+     * front leg, or the pinball's, the leg nearer the viewer covers his side. */
+    {
+        place_room(&s,5,1170.f,519.f);assert(zell_desktop_foreground_in_front(&s));
+        place_room(&s,5,1220.f,556.f);assert(zell_desktop_foreground_in_front(&s));
+        const float rail[][2]={{1100.f,474.f},{1130.f,496.f},{1210.f,560.f}};
+        for(size_t i=0;i<sizeof rail/sizeof rail[0];i++){
+            assert(!zell_desktop_blocked(&s,rail[i][0],rail[i][1]));
+            place_room(&s,5,rail[i][0],rail[i][1]);assert(!zell_desktop_foreground_in_front(&s));
+        }
+        place_room(&s,5,(float)ZELL_WORLD_W*.50f,(float)ZELL_WORLD_H*ZELL_ROOM_ENTRY_Y);
+    }
+    /* In front of the stools, the pool table and the pinball the furniture
+     * goes under him; behind the chess table, the right stool's front legs,
+     * the pool table's back leg or the pinball's front leg, it covers him. */
+    {
+        const float under[][2]={{220.f,700.f},{380.f,690.f},{440.f,650.f},{1300.f,690.f},{1030.f,520.f},
+                                {1100.f,520.f},{1150.f,600.f}};
+        const float over[][2]={{440.f,600.f},{300.f,450.f},{400.f,540.f},{1040.f,420.f},{1230.f,600.f}};
+        for(size_t i=0;i<sizeof under/sizeof under[0];i++){
+            place_room(&s,5,under[i][0],under[i][1]);assert(!zell_desktop_foreground_in_front(&s));
+        }
+        for(size_t i=0;i<sizeof over/sizeof over[0];i++){
+            place_room(&s,5,over[i][0],over[i][1]);assert(zell_desktop_foreground_in_front(&s));
+        }
+    }
     /* The other rooms keep their foregrounds over him; rooms without one have none. */
     for(int room=0;room<=8;room++){
         s.room=room;s.x=768.f;s.y=600.f;
@@ -1257,10 +1337,17 @@ static void test_game_room(void){
         assert((front->pixels[(size_t)630*ZELL_WORLD_W+85u]>>24)>=240u);
     }
 #ifndef ZELL_RENDER_NEURONTE
-    /* Drawn: in front of the left stool he shows over its solid pixels; beside
-     * the right stool, behind its feet, none of him shows through them. */
-    assert(game_room_visible_over_front(220.f,700.f)>50);
-    assert(game_room_visible_over_front(440.f,600.f)==0);
+    /* Drawn: none of him shows through a pixel deeper than his feet, and he
+     * shows over the pixels in front of which he stands. Between the pool
+     * table and the pinball he is both. */
+    {
+        const float spots[][2]={{220.f,700.f},{440.f,600.f},{300.f,450.f},{1230.f,600.f},{1100.f,520.f}};
+        for(size_t i=0;i<sizeof spots/sizeof spots[0];i++)
+            assert(game_room_shown(spots[i][0],spots[i][1],true)==0);
+        assert(game_room_shown(220.f,700.f,false)>50);
+        assert(game_room_shown(1230.f,600.f,false)>50);
+        assert(game_room_shown(1100.f,520.f,false)>50);
+    }
 #endif
 }
 static void test_four_rooms(void){
@@ -1268,7 +1355,7 @@ static void test_four_rooms(void){
     zell_controls c;
     const int hatches[4]={ZELL_GAME_HATCH,ZELL_THEATER_HATCH,ZELL_MEDITATION_HATCH,ZELL_LIBRARY_HATCH};
     const float xs[4]={.30f,.46f,.62f,.78f};
-    const int expect_blocks[4]={14,3,3,3};
+    const int expect_blocks[4]={20,3,3,3};
     const float floors[4]={380.f,735.f,400.f,400.f};
     float sx,sy,wx,wy;
     assert(ZELL_ART_GAME_ROOM==ZELL_ART_WORKSHOP_STOOL+1);

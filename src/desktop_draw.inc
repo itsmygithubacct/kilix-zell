@@ -49,6 +49,26 @@ static void desktop_chess_stool_front(sr_canvas *c,int cx,int cy){
  sr_canvas src;sr_canvas_wrap(&src,pixels,W,H);
  sr_blit_scaled(c,&src,X0-cx,Y0-cy,W,H,1.f);
 }
+/* The foreground pixels deeper than his feet, inside the box his sprite and
+ * shadow cover, drawn back over him. */
+static void desktop_front_over(const zell_scene *s,sr_canvas *c,int art,int cx,int cy){
+ enum { SIDE=256 };
+ static uint32_t patch[SIDE*SIDE];
+ const zell_art *a=zell_art_get(art);
+ int x0,y0,x1,y1;
+ if(!a||!zell_desktop_kilix_box(s,&x0,&y0,&x1,&y1))return;
+ if(x1-x0>SIDE)x1=x0+SIDE;
+ if(y1-y0>SIDE)y1=y0+SIDE;
+ int w=x1-x0,h=y1-y0;bool any=false;
+ for(int y=0;y<h;y++)for(int x=0;x<w;x++){
+  int d=zell_desktop_front_depth(s->room,x0+x,y0+y);
+  uint32_t px=(float)d>s->y?a->pixels[(size_t)(y0+y)*ZELL_WORLD_W+(size_t)(x0+x)]:0u;
+  patch[y*w+x]=px;any=any||px;
+ }
+ if(!any)return;
+ sr_canvas src;sr_canvas_wrap(&src,patch,w,h);
+ sr_blit_scaled(c,&src,x0-cx,y0-cy,w,h,1.f);
+}
 /* Full-canvas foreground. The asset compiler keeps the 1536x1024 anchor. */
 static void desktop_registered_front(sr_canvas *c,int art,int cx,int cy){
  const zell_art *sheet=zell_art_get(art);if(!sheet)return;
@@ -282,12 +302,12 @@ static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
  for(int i=15;i<ZELL_STATIONS;i++){
   /* The stool and cabinet are painted in the room. Mark them only when near:
    * the glow on the floor under him, the labels over the furniture. */
-  if(i==ZELL_CHESS_STOOL||i==ZELL_PUZZLLM_ARCADE){
+  if(i==ZELL_CHESS_STOOL||zell_arcade_game(i)){
    if(!zell_desktop_station_visible(s,i)||i!=near||s->seat_ticks>0)continue;
    int x=(int)(zell_stations[i].x*ZELL_WORLD_W)-cx,y=(int)(zell_stations[i].y*ZELL_WORLD_H)-cy;
    if(!front)sr_fill_ellipse(c,(float)x,(float)y,40,6,0x80e5c4u,.65f);
    else {
-    desktop_label(c,x,y+15,i==ZELL_CHESS_STOOL?"Chess Bash":"PuzzLLM",0xb9f8dbu);
+    desktop_label(c,x,y+15,i==ZELL_CHESS_STOOL?"Chess Bash":zell_arcade_game(i),0xb9f8dbu);
     desktop_label(c,x,y+40,i==ZELL_CHESS_STOOL?"Enter: hop up and play":"Enter: play",0xa8f3d5u);
    }
    continue;
@@ -507,8 +527,9 @@ static void desktop_world_layer(const zell_scene *s,sr_canvas *c,int cx,int cy){
   }
  }
  int front=desktop_room_foreground(s->room);
- bool front_hides=front>=0&&zell_desktop_foreground_in_front(s);
- /* Furniture nearer the back wall than his feet goes under him. */
+ bool by_depth=front>=0&&zell_desktop_foreground_by_depth(s->room);
+ bool front_hides=front>=0&&!by_depth&&zell_desktop_foreground_in_front(s);
+ /* The whole layer goes under him; its deeper pixels come back over him. */
  if(front>=0&&!front_hides)desktop_registered_front(c,front,cx,cy);
  if(s->mode==ZELL_MODE_WALK&&s->running){
   float px=s->x-(float)cx,py=s->y-(float)cy;
@@ -532,6 +553,7 @@ static void desktop_world_layer(const zell_scene *s,sr_canvas *c,int cx,int cy){
  if(s->room==4&&s->seated&&s->seat_ticks==ZELL_SEAT_HOP_TICKS)desktop_stool_front(c,cx,cy);
  if(s->room==5&&s->seated&&s->seat_ticks==ZELL_SEAT_HOP_TICKS)desktop_chess_stool_front(c,cx,cy);
  if(front_hides)desktop_registered_front(c,front,cx,cy);
+ else if(by_depth&&s->seat_ticks==0)desktop_front_over(s,c,front,cx,cy);
  if(s->room)desktop_room(s,c,cx,cy,true);else desktop_cave(s,c,cx,cy,true);
  if(s->debug_blocks[0].enabled){
   int blocks=zell_desktop_block_count(s);

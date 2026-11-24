@@ -10,7 +10,7 @@
 #define ZELL_ROOM_VITALS_H 38
 #define ZELL_ROOM_HUD_BOTTOM (ZELL_ROOM_VITALS_Y + ZELL_ROOM_VITALS_H)
 #define ZELL_ROOM_STATUS_STRIP 30
-#define ZELL_STATIONS 60
+#define ZELL_STATIONS 62
 /* The Command Center computer that zooms into a usage browser. */
 #define ZELL_MANA_CONSOLE 48
 #define ZELL_WORKSHOP_COMPUTER 49
@@ -32,8 +32,11 @@
 #define ZELL_PUZZLLM_HATCH 57
 /* The Game Room's right stool at the chess table. Landing on it opens Chess Bash. */
 #define ZELL_CHESS_STOOL 58
-/* The middle arcade cabinet on the Game Room's back wall opens PuzzLLM. */
+/* The Game Room's three arcade cabinets on its back wall: Terminal Lander
+ * on the left, PuzzLLM in the middle and Bashed Earth on the right. */
 #define ZELL_PUZZLLM_ARCADE 59
+#define ZELL_LANDER_ARCADE 60
+#define ZELL_TANKS_ARCADE 61
 /* The Command Center's controller and four worker screens. */
 #define ZELL_COMMAND_SCREEN_FIRST 15
 #define ZELL_COMMAND_SCREEN_LAST 19
@@ -87,8 +90,17 @@ int zell_desktop_block_table(int index,int *room,float *x0,float *y0,float *x1,f
 bool zell_desktop_station_in_front(const zell_scene *s,int station);
 /* Kilix's walking sprite is drawn this many world pixels tall. */
 #define ZELL_KILIX_DRAW_HEIGHT 84
-/* True when the room's full-canvas foreground is drawn over Kilix. */
+/* True when any of the room's full-canvas foreground is drawn over Kilix. */
 bool zell_desktop_foreground_in_front(const zell_scene *s);
+/* Rooms whose foreground is ordered pixel by pixel against his feet. */
+bool zell_desktop_foreground_by_depth(int room);
+/* The floor row a foreground pixel stands on, or -1 where it is clear. */
+int zell_desktop_front_depth(int room,int x,int y);
+bool zell_desktop_kilix_box(const zell_scene *s,int *x0,int *y0,int *x1,int *y1);
+/* A pixel this opaque belongs to a piece of furniture; runs of them bridge
+ * gaps this tall, such as between a stool's cushion and its stretchers. */
+#define ZELL_FRONT_SOLID 96u
+#define ZELL_FRONT_RUN_GAP 40
 float zell_desktop_speed_factor(const zell_scene *s);
 int zell_desktop_launcher_count(const zell_scene *s);
 int zell_desktop_launcher_station(const zell_scene *s,int index);
@@ -326,6 +338,8 @@ int zell_seat_draw_dy(const zell_scene *s);
 void zell_workshop_floor_point(float *x,float *y);
 void zell_workshop_seat_point(float *x,float *y);
 void zell_chess_floor_point(float *x,float *y);
+/* An arcade cabinet's game name, or NULL for any other station. */
+const char *zell_arcade_game(int station);
 void zell_chess_seat_point(float *x,float *y);
 /* World row where the chess stool's front starts covering him once seated. */
 #define ZELL_CHESS_FRONT_TOP 528

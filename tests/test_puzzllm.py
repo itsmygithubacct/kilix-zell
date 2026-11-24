@@ -121,6 +121,14 @@ class ChessStool(unittest.TestCase):
         tab.assert_not_called()
         self.assertIn('no compiler found',' '.join(str(c.args[0]) for c in shown.call_args_list))
 
+    def test_side_cabinets_open_their_games(self):
+        done = subprocess.CompletedProcess([],0,'','')
+        for station, game, title in ((60,'terminal-lander','Terminal Lander'),(61,'bashed-earth','Bashed Earth')):
+            with patch.object(desktop.subprocess,'run',return_value=done) as run,patch.object(desktop,'open_tab',return_value=0) as tab:
+                self.assertEqual(desktop.desktop(station,0),0)
+            self.assertEqual(run.call_args.args[0],['kilix','games','play',game,'--setup-only'])
+            tab.assert_called_once_with(['kilix','games','play',game],title=title)
+
     def test_tab_failure_exits_nonzero(self):
         done = subprocess.CompletedProcess([],0,'','')
         with patch.object(desktop.subprocess,'run',return_value=done),patch.object(desktop,'open_tab',return_value=1):

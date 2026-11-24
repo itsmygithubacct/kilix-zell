@@ -8,6 +8,8 @@ These changes are not in the 0.1.1 runtime archive that Plebian-OS 0.2.3 pins.
 - Draw the Game Room's chess table, stools, pool table and pinball over Kilix only when he stands behind them. The left stool's front leg now stands behind the rock instead of on it.
 - Hop up onto the Game Room's right stool at the chess table to play Chess Bash. Zell installs Kilix's pinned build the first time, then opens it in a new tab. Enter on the stool plays again, and walking away hops down.
 - Open PuzzLLM from the middle arcade cabinet in the Game Room, as well as from the Workshop hatch.
+- Play Terminal Lander from the Game Room's left arcade cabinet and Bashed Earth from its right one, through Kilix's pinned builds.
+- Walk around the Game Room's furniture. Collision now follows each piece's footprint, so the floor behind the chess table and the stool, and around the pool table, is open. Each piece covers Kilix only where it stands nearer than his feet, so a leg in front of him hides his side while the table behind him stays under him.
 
 - Preserve symbolic links during Porter file operations and Vault restores. Backup verification also reports extra files in a snapshot.
 - Keep tasks, local library references, and DJ subscriptions in sync across open tabs.
