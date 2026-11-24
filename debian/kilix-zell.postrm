@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+if [ "${1:-}" = remove ] || [ "${1:-}" = purge ]; then
+    rm -f /usr/libexec/kilix-zell/zell-neuronte
+    rmdir /usr/libexec/kilix-zell 2>/dev/null || true
+fi
+#DEBHELPER#
+exit 0

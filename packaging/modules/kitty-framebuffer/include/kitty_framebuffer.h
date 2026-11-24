@@ -1,0 +1,469 @@
+#ifndef KITTY_FRAMEBUFFER_H
+#define KITTY_FRAMEBUFFER_H
+
+/*
+ * A C11/POSIX terminal framebuffer presenter for the Kitty graphics
+ * protocol.  Applications hand it RGBA frames; the library strips them to
+ * RGB, zlib-compresses, base64-encodes and pushes them down the terminal
+ * connection inside DEC 2026 synchronized updates, alternating between two
+ * image ids so the screen never shows a half-decoded or blank frame.
+ *
+ * Encoding runs on a presenter thread with a newest-frame-wins pending
+ * slot: a slow terminal costs dropped frames, never a stalled caller.
+ *
+ * This header is presentation only.  Keyboard input is a separate concern;
+ * compose this library with an input library or plain read() calls.
+ */
+
+#include <pthread.h>
+#include <signal.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <termios.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define KITTYFB_VERSION_MAJOR 0
+#define KITTYFB_VERSION_MINOR 5
+#define KITTYFB_VERSION_PATCH 0
+#define KITTYFB_CONTROL_SEQUENCE_MAX 64
+
+/*
+ * How frame pixels reach the terminal.
+ *
+ * INLINE zlib-compresses and base64-encodes every frame into the escape
+ * stream.  It works over ssh and through tmux, and it is the only choice
+ * when the terminal does not share a filesystem with this process.  It
+ * also costs a full compressed copy of every frame in terminal input:
+ * photographic content compresses poorly, so a 640x360 frame is ~600 KB
+ * of escape stream however fast the encoder is.
+ *
+ * SHM writes pixels into a POSIX shared-memory object and sends only its
+ * name (t=s).  The terminal unlinks the object once it has read it, which
+ * is the consumption acknowledgement a bounded ring of slots is built on.
+ * The escape stream carries tens of bytes per frame instead of hundreds
+ * of kilobytes.  It requires a local terminal sharing /dev/shm.
+ *
+ * AUTO picks SHM when shm_open() works and the session is not running
+ * under tmux, and INLINE otherwise.  The choice is made once, in
+ * kittyfb_start(), and does not change for the life of the session.
+ */
+typedef enum kittyfb_transport {
+    KITTYFB_TRANSPORT_AUTO = 0,
+    KITTYFB_TRANSPORT_INLINE,
+    KITTYFB_TRANSPORT_SHM
+} kittyfb_transport;
+
+/* Opaque; the session holds an array of these when the shared-memory
+ * transport is active. */
+struct kittyfb_shm_slot;
+
+typedef struct kittyfb_options {
+    /* Save termios and switch the input descriptor's terminal to raw
+     * mode; restored on stop.  Disable when the application owns raw
+     * mode.  Default true. */
+    bool manage_raw_mode;
+
+    /* Enter the alternate screen on start and leave it on stop.
+     * Default true. */
+    bool manage_alt_screen;
+
+    /* Hide the cursor on start and show it again on stop.  Default
+     * true. */
+    bool hide_cursor;
+
+    /* Send a Kitty graphics query paired with a primary device
+     * attributes request before drawing anything.  Terminals without
+     * graphics support still answer the DA1, which bounds the wait.
+     * When the terminal does not answer the graphics query, start fails
+     * with errno = ENOTSUP.  Default true.  The presence of the
+     * KITTYFB_SKIP_PROBE environment variable also skips the probe. */
+    bool probe_graphics;
+
+    /* Install a SIGWINCH handler that flags a pending resize check.
+     * kittyfb_check_resize() also re-reads the window size directly, so
+     * resizes are detected even without the handler; applications that
+     * own SIGWINCH should disable this and call kittyfb_notify_resize()
+     * from their handler.  Default true. */
+    bool install_winch_handler;
+
+    /* Wait for the first probe response byte at most this long, in
+     * milliseconds; high-latency connections to capable terminals need
+     * a generous window.  Default 1000. */
+    int probe_timeout_ms;
+
+    /* Optional NUL-terminated terminal mode controls, each at most
+     * KITTYFB_CONTROL_SEQUENCE_MAX bytes.  enter_sequence is written by
+     * the same bounded output path as the framebuffer setup.  The leave
+     * sequence is copied into the prebuilt normal/emergency restore and
+     * emitted before the cursor and alternate screen are restored.
+     * Defaults NULL. */
+    const char *enter_sequence;
+    const char *leave_sequence;
+
+    /* Framebuffer pixel dimension bounds.  The chosen size is derived
+     * from the terminal's reported pixel geometry, clamped into these
+     * bounds, then snapped to whole cells and even pixel counts.
+     * Defaults 640x400 .. 1600x1000. */
+    int min_width;
+    int min_height;
+    int max_width;
+    int max_height;
+
+    /* The pair of Kitty image ids alternated between frames.  Must be
+     * positive and distinct.  Change them when the application also
+     * places its own images.  Defaults 1 and 2. */
+    int image_id_a;
+    int image_id_b;
+
+    /* zlib compression level, -1 (zlib default) or 0..9.  Level 1 is
+     * fast enough to encode full frames at game frame rates and is the
+     * default.  Unused by the shared-memory transport, which does not
+     * compress. */
+    int zlib_level;
+
+    /* Frame transport; see kittyfb_transport.  Default AUTO. */
+    kittyfb_transport transport;
+
+    /* Shared-memory slots in flight.  A frame arriving while every slot
+     * is still unread is dropped, exactly as a frame arriving while the
+     * encoder is busy is dropped; more slots tolerate a slower terminal
+     * before that happens.  1..16, default 3.  Ignored by INLINE. */
+    int shm_slots;
+} kittyfb_options;
+
+typedef struct kittyfb_stats {
+    uint64_t frames_presented;  /* frames accepted by kittyfb_present() */
+    uint64_t frames_encoded;    /* frames fully encoded and written */
+    uint64_t frames_dropped;    /* pending frames replaced before encoding */
+    uint64_t encode_failures;   /* compression, allocation, write failures */
+    uint64_t damage_presents;   /* kittyfb_present_damage() calls patched */
+    uint64_t damage_fallbacks;  /* ...and calls that fell back to a full frame */
+    uint64_t damage_bytes;      /* escape-stream bytes written by patches */
+    uint64_t scroll_presents;   /* scroll-composed frames plus exposed patches */
+    uint64_t scroll_fallbacks;  /* scroll calls retransmitted as full frames */
+    uint64_t scroll_bytes;      /* compose and patch escape-stream bytes */
+} kittyfb_stats;
+
+/* Public so callers can allocate it without malloc; fields are internal. */
+typedef struct kittyfb_session {
+    kittyfb_options options;
+    int input_fd;
+    int output_fd;
+
+    /* chosen geometry; guarded by frame_lock once the session is active */
+    int width;
+    int height;
+    int cell_width;
+    int cell_height;
+    int origin_x;
+    int origin_y;
+    char origin_sequence[32];
+    bool clear_pending;
+
+    /* saved terminal state */
+    struct termios saved_termios;
+    struct sigaction saved_winch_action;
+    int saved_output_flags;
+    bool termios_saved;
+    bool winch_handler_installed;
+    bool output_flags_saved;
+
+    /* lifecycle guards shared with async-signal paths */
+    volatile sig_atomic_t active;
+    volatile sig_atomic_t shutdown_claimed;
+    volatile sig_atomic_t presenter_disabled;
+    volatile sig_atomic_t write_cancel;
+
+    /* presenter thread state; guarded by frame_lock */
+    pthread_t presenter_thread;
+    pthread_mutex_t frame_lock;
+    pthread_cond_t frame_cond;
+    /* Held for the length of one escape-stream burst, so a synchronous
+     * damage patch and the presenter's frame never interleave bytes on
+     * the terminal.  Never taken while frame_lock is held. */
+    pthread_mutex_t output_lock;
+    uint8_t *pending_buffer;
+    uint8_t *encode_buffer;
+    size_t pending_capacity;
+    size_t encode_capacity;
+    int frame_width;
+    int frame_height;
+    bool frame_pending;
+    bool presenter_running;
+    bool presenter_started;
+    bool presenter_failed;
+    kittyfb_stats stats;
+
+    /* encoder scratch; presenter thread (or synchronous fallback) only */
+    uint8_t *rgb_buffer;
+    uint8_t *z_buffer;
+    char *b64_buffer;
+    char *packet_buffer;
+    size_t rgb_capacity;
+    size_t z_capacity;
+    size_t b64_capacity;
+    size_t packet_capacity;
+    int shown_image_id;
+
+    /* shared-memory transport; presenter thread (or the synchronous
+     * fallback) only, except for teardown under kittyfb_stop() */
+    struct kittyfb_shm_slot *shm_slots;
+    int shm_slot_count;
+    bool shm_active;
+
+    /* prebuilt restore sequence for the async-signal path */
+    char emergency[224];
+    size_t emergency_length;
+} kittyfb_session;
+
+void kittyfb_options_init(kittyfb_options *options);
+
+/* Initialize once before the first start; sessions may then cycle through
+ * any number of start/stop pairs. */
+void kittyfb_session_init(kittyfb_session *session);
+
+/*
+ * Measure the terminal, switch it to raw mode, probe for graphics
+ * support, enter the alternate screen and hide the cursor (each step as
+ * configured).  Returns 0, or -1 with errno set: ENOTSUP when the
+ * terminal answered the device-attributes query but not the graphics
+ * query, ENOTTY when a required descriptor is not a terminal, EBUSY when
+ * the session is already active.
+ *
+ * The output descriptor must be a terminal.  The input descriptor must
+ * be a terminal when manage_raw_mode or probe_graphics is set.  The
+ * output descriptor is made non-blocking for the session's lifetime so
+ * no write - including the async-signal restore - can hang on a stalled
+ * terminal connection.
+ */
+int kittyfb_start(
+    kittyfb_session *session,
+    int input_fd,
+    int output_fd,
+    const kittyfb_options *options);
+
+/*
+ * The transport actually in use, resolved during kittyfb_start().  Never
+ * returns AUTO: it reports what AUTO decided, and reports INLINE when an
+ * explicit SHM request could not be honored (no /dev/shm, or a container
+ * that denies it).  Meaningful only while the session is active.
+ */
+kittyfb_transport kittyfb_active_transport(const kittyfb_session *session);
+
+/* Chosen framebuffer pixel size and terminal cell pixel size.  Valid
+ * after a successful start; call from the thread that presents. */
+int kittyfb_width(const kittyfb_session *session);
+int kittyfb_height(const kittyfb_session *session);
+int kittyfb_cell_width(const kittyfb_session *session);
+int kittyfb_cell_height(const kittyfb_session *session);
+
+/*
+ * Where the frame's top-left corner sits inside the terminal, in pixels.
+ *
+ * The frame is centered rather than pinned to the corner, so terminal
+ * pixel coordinates and frame pixel coordinates differ by this much.
+ * Anything that reads a pointer position needs it: an SGR pixel-mouse
+ * report is relative to the terminal, and subtracting this turns it into
+ * a coordinate in the frame the application drew.
+ *
+ * Both are zero when the frame fills its axis, and both are multiples of
+ * the cell size, because a graphics placement starts at a cell boundary.
+ * Valid after a successful start, and updated by kittyfb_check_resize().
+ */
+int kittyfb_origin_x(const kittyfb_session *session);
+int kittyfb_origin_y(const kittyfb_session *session);
+
+/*
+ * Queue one RGBA frame (width * height * 4 bytes, alpha ignored) for
+ * presentation.  The frame is copied out before returning; encoding and
+ * the terminal write happen on the presenter thread.  If the encoder is
+ * still busy when the next frame arrives, the newest frame replaces the
+ * pending one.  Falls back to synchronous encoding when the presenter
+ * thread cannot be created.  Returns false on invalid arguments, an
+ * inactive session, allocation failure, or a latched presenter failure.
+ */
+bool kittyfb_present(
+    kittyfb_session *session,
+    const uint8_t *rgba,
+    int width,
+    int height);
+
+/*
+ * A rectangle of the frame, in framebuffer pixels.  x1/y1 are exclusive.
+ */
+typedef struct kittyfb_rect {
+    int x0;
+    int y0;
+    int x1;
+    int y1;
+} kittyfb_rect;
+
+/*
+ * Present only the parts of a frame that changed.
+ *
+ * kittyfb_present() re-transmits the whole image every time, which is
+ * right for video - where every pixel is new - and badly wrong for an
+ * interactive editor, where moving the pointer changes a few hundred
+ * pixels and a full 1920x1080 frame costs ~1.5 MB of escape stream per
+ * mouse motion.  This edits the image already on screen in place
+ * instead, so the wire cost follows what actually changed.
+ *
+ * `rgba` is the complete new frame, the same buffer kittyfb_present()
+ * would take; the rects say which parts of it to send.  Passing the
+ * whole frame rather than loose tiles keeps the caller's composition
+ * unchanged and lets this decide, from the damaged area, whether
+ * patching is even the cheaper option.
+ *
+ * Falls back to a full kittyfb_present() automatically when:
+ *
+ *   - nothing has been presented yet, so there is no image to edit;
+ *   - a full frame is pending/in flight, resize requires a clear, or the
+ *     displayed frame has different dimensions;
+ *   - the damaged area exceeds a fraction of the frame where patching
+ *     stops paying (many small rects cost more in per-rect overhead than
+ *     one clean frame);
+ *
+ * That fallback is why a caller can use this unconditionally and does
+ * not have to reason about when it helps.  Cost-free overlapping or
+ * adjacent rectangles are coalesced before that decision.
+ *
+ * This call is synchronous and serializes with the asynchronous full-frame
+ * encoder/writer; the final on-screen result therefore follows API call order.
+ *
+ * Returns false on invalid arguments, an inactive session, or a latched
+ * presenter failure.  Rects are clamped to the framebuffer; empty or
+ * inverted ones are skipped rather than rejected, because a caller
+ * computing damage from geometry should not have to special-case the
+ * frame edges.
+ */
+bool kittyfb_present_damage(
+    kittyfb_session *session,
+    const uint8_t *rgba,
+    int width,
+    int height,
+    const kittyfb_rect *rects,
+    size_t rect_count);
+
+/*
+ * Present a frame whose retained pixels are the previous frame shifted by
+ * (dx, dy).  Pixels moving right/down use positive values.  The newly exposed
+ * edge strips are patched automatically from rgba; extra_rects names any
+ * other pixels that changed (for example a fixed toolbar).
+ *
+ * On the Kilix Kitty fork this uses overlapping same-frame replacement
+ * composition (a=c,C=1,N=2), followed by inline a=f patches in one synchronized
+ * update.  The terminal may execute the compose on its GPU or its existing CPU
+ * path.  Other terminals, invalid/large shifts, missing displayed state,
+ * queued frames, and uneconomical damage transparently fall back to
+ * kittyfb_present().  A zero shift is equivalent to present_damage().
+ */
+bool kittyfb_present_scroll(
+    kittyfb_session *session,
+    const uint8_t *rgba,
+    int width,
+    int height,
+    int dx,
+    int dy,
+    const kittyfb_rect *extra_rects,
+    size_t extra_rect_count);
+
+/*
+ * Like kittyfb_present_scroll(), but shift only scroll_region.  Pixels outside
+ * that rectangle are retained in place, so fixed toolbars, sidebars, and other
+ * chrome need no repair patch.  Newly exposed strips are clipped to the region;
+ * extra_rects remains available for independent changes elsewhere in the
+ * frame.  The region is clamped to the framebuffer and x1/y1 are exclusive.
+ *
+ * This is the preferred form for document and editor viewports: it preserves
+ * the terminal's retained pixels exactly where the application preserves them,
+ * reducing both protocol traffic and the number of states that must be composed
+ * atomically.  The same capability checks and full-frame fallback apply.
+ */
+bool kittyfb_present_scroll_region(
+    kittyfb_session *session,
+    const uint8_t *rgba,
+    int width,
+    int height,
+    const kittyfb_rect *scroll_region,
+    int dx,
+    int dy,
+    const kittyfb_rect *extra_rects,
+    size_t extra_rect_count);
+
+/*
+ * Re-read the terminal size and re-derive the framebuffer geometry.
+ * Cheap; call once per frame.  Returns true - with the new size stored
+ * through width/height when non-NULL - only when the framebuffer pixel
+ * size changed; the caller must then present frames at the new size.
+ * Any geometry change (including centering-only changes) schedules a
+ * screen clear with the next presented frame.
+ */
+bool kittyfb_check_resize(kittyfb_session *session, int *width, int *height);
+
+/* Flag a pending resize from an application-owned SIGWINCH handler.
+ * Async-signal-safe. */
+void kittyfb_notify_resize(void);
+
+/*
+ * Unlink shared-memory frames left behind by processes that died without
+ * unwinding, and return how many were removed.  Objects owned by a live
+ * process are never touched, so this is safe to call while other
+ * sessions are running.
+ *
+ * Optional, and only useful on systems that expose shared memory as a
+ * directory (Linux); elsewhere it returns 0.  Call it at startup if the
+ * application is long-lived or crash-prone.  A normal kittyfb_stop()
+ * already releases this session's objects, and an emergency restore
+ * deliberately leaves them for a later call rather than doing filesystem
+ * work in a signal handler.
+ */
+int kittyfb_reap_orphans(void);
+
+/*
+ * Join the presenter and restore the terminal while retaining all
+ * high-water heap frame and encoder buffers.  Shared-memory mappings are
+ * released rather than pinning tmpfs while the process is stopped.  Use
+ * before process suspension, then call kittyfb_start() after continuation;
+ * that start recreates the ring and re-resolves the transport.  A later
+ * kittyfb_stop() releases retained storage even if the session was not
+ * restarted.  Safe to call twice.
+ */
+void kittyfb_suspend(kittyfb_session *session);
+
+/*
+ * Join the presenter thread, free its buffers and restore the terminal:
+ * close any half-written graphics escape, end a pending synchronized
+ * update, delete this session's two image ids (and no other images),
+ * show the cursor, leave the alternate screen and restore termios and
+ * descriptor flags.  Safe to call twice; the session may be started
+ * again afterwards.
+ */
+void kittyfb_stop(kittyfb_session *session);
+
+/*
+ * Async-signal-safe restore for fatal-signal handlers: no locks, no
+ * thread join.  Fences the presenter thread so it emits no further
+ * bytes, then writes a prebuilt restore sequence - ending the
+ * synchronized update first, since a truncated update would freeze the
+ * terminal - and restores termios and descriptor flags.  A later
+ * kittyfb_stop() still reclaims the presenter thread and its memory.
+ */
+void kittyfb_emergency_restore(kittyfb_session *session);
+
+/* True once the presenter has latched a failure (the terminal stopped
+ * consuming output, compression failed, or memory ran out); subsequent
+ * kittyfb_present() calls return false.  Cleared by the next start. */
+bool kittyfb_failed(const kittyfb_session *session);
+
+/* Snapshot the frame counters.  Callable while the session is active. */
+void kittyfb_get_stats(kittyfb_session *session, kittyfb_stats *out);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
