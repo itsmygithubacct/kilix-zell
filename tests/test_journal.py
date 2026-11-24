@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -15,7 +16,7 @@ import zell_journal as journal
 class JournalTests(unittest.TestCase):
     def test_opt_in_and_vault_exclusion(self):
         ui = SimpleNamespace(state_read=Mock(return_value={}), state_write=Mock())
-        self.assertIsNone(journal.recorder(ui, 1))
+        journal.recorder(ui, 1)('report', 'off by default')
         ui.state_read.return_value = {'enabled': True}
         for station in (-1, 9, 31):
             self.assertIsNone(journal.recorder(ui, station))
@@ -37,6 +38,29 @@ class JournalTests(unittest.TestCase):
             self.assertEqual(desktop.state_read(journal.HISTORY, []), [])
             self.assertFalse(wizard.exists())
 
+    def test_open_stations_share_history_and_honor_opt_out(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(desktop, 'BASE', Path(root)):
+            first, second = (journal.recorder(desktop, station) for station in (1, 2))
+            first('report', 'before opting in')
+            self.assertFalse((desktop.BASE/journal.HISTORY).exists())
+            with patch.object(desktop, 'choose', side_effect=['toggle', True, None]):
+                journal.conversations(desktop)
+
+            def report(i):
+                (first if i % 2 else second)('report', str(i))
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                list(pool.map(report, range(24)))
+            rows = desktop.state_read(journal.HISTORY, [])
+            self.assertCountEqual([row['text'] for row in rows], map(str, range(24)))
+            with patch.object(desktop, 'choose', side_effect=['toggle', None]):
+                journal.conversations(desktop)
+            first('report', 'after opting out')
+            self.assertEqual(desktop.state_read(journal.HISTORY, []), rows)
+            with patch.object(desktop, 'choose', side_effect=['clear', True, None]):
+                journal.conversations(desktop)
+            second('reply', 'after clearing')
+            self.assertEqual(desktop.state_read(journal.HISTORY, []), [])
+
     def test_tasks_persist_add_complete_and_remove(self):
         with tempfile.TemporaryDirectory() as root, patch.object(desktop, 'BASE', Path(root)), \
              patch.object(desktop, 'choose', side_effect=['add', None]), patch('builtins.input', return_value='Finish artwork'):
@@ -49,6 +73,27 @@ class JournalTests(unittest.TestCase):
             with patch.object(desktop, 'choose', side_effect=[row['id'], 'remove', None]):
                 journal.tasks(desktop)
             self.assertEqual(desktop.state_read(journal.TASKS, []), [])
+
+    def test_open_task_boards_preserve_other_edits(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(desktop, 'BASE', Path(root)):
+            other = dict(id='other', title='From the controller', done=False)
+            def add_elsewhere(prompt):
+                desktop.state_write(journal.TASKS, [other])
+                return 'From the Noticeboard'
+            with patch.object(desktop, 'choose', side_effect=['add', None]), patch('builtins.input', side_effect=add_elsewhere):
+                journal.tasks(desktop)
+            rows = desktop.state_read(journal.TASKS, [])
+            self.assertEqual([r['title'] for r in rows], ['From the controller', 'From the Noticeboard'])
+
+            def edit_elsewhere(title, choices):
+                if title == other['title']:
+                    rows[1]['done'] = True
+                    desktop.state_write(journal.TASKS, rows[1:])
+                    return 'toggle'
+                return other['id'] if len(choices) == 3 else None
+            with patch.object(desktop, 'choose', side_effect=edit_elsewhere):
+                journal.tasks(desktop)
+            self.assertEqual(desktop.state_read(journal.TASKS, []), rows[1:])
 
 
 if __name__ == '__main__':

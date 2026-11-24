@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""Tell Zell how much mana is left.
+
+    set-mana codex 62             Codex has 62% left
+    set-mana grok 40 codex 100    several at once
+    set-mana all 50               all three
+    set-mana                      be asked for each one
+"""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import zell_mana_manual as manual  # noqa: E402
+
+
+def ask():
+    if not sys.stdin.isatty():
+        raise ValueError('give a provider and a percentage left, for example: set-mana codex 62')
+    print('Percentage LEFT for each provider, 0 to 100. Press Enter to leave one as it is.')
+    wanted = {}
+    for provider in manual.PROVIDERS:
+        while True:
+            answer = input(f'  {provider}: ').strip()
+            if not answer:
+                break
+            try:
+                wanted[provider] = manual.percent(answer)
+                break
+            except ValueError as error:
+                print(f'  {error}')
+    return wanted
+
+
+def main(words):
+    if words and words[0] in ('-h', '--help', 'help'):
+        print(__doc__.strip())
+        return 0
+    try:
+        wanted = manual.pairs(words) if words else ask()
+        if not wanted:
+            print('Nothing was changed.')
+            return 0
+        manual.set_values(manual.state_dir(), wanted)
+    except (ValueError, OSError) as error:
+        print(f'set-mana: {error}', file=sys.stderr)
+        print('Nothing was changed.', file=sys.stderr)
+        return 2
+    except (EOFError, KeyboardInterrupt):
+        print('\nNothing was changed.')
+        return 1
+    for provider in manual.PROVIDERS:
+        if provider in wanted:
+            print(f'{provider}: {wanted[provider]}% left, set by hand.')
+    print('The Mana console shows it within a few seconds.')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

@@ -112,8 +112,10 @@ class DialogueTests(unittest.TestCase):
         self.assertEqual(desktop.fit_neuronte(after,(800,480))[2:6],['--cols','100','--rows','30'])
 
     def test_combined_git_and_os_health_floors(self):
-        base={'health':90,'fatigue':100,'mana':-1,'age_days':1,'mana_age':-1,'details':'OS'}
-        with patch.object(desktop.zell_vitals,'snapshot',side_effect=lambda ui:dict(base)),patch.object(desktop.zell_projects,'dirty_summary',return_value={'count':12,'details':'project changes','known':True}) as dirty:
+        base={'health':90,'stamina':100,'mana':-1,'age_days':1,'mana_age':-1,'details':'OS'}
+        # The restart check reads this machine's kernel and driver, so it is replaced here.
+        current={'needed':False,'reasons':[],'text':'No restart requirement detected.'}
+        with patch.object(desktop.zell_vitals,'snapshot',side_effect=lambda ui:dict(base)),patch('zell_system.restart_status',return_value=current),patch.object(desktop.zell_projects,'dirty_summary',return_value={'count':12,'details':'project changes','known':True}) as dirty:
             self.assertEqual(desktop.vitals_snapshot()['health'],78)
             dirty.return_value={'count':200,'details':'changes','known':True}
             self.assertEqual(desktop.vitals_snapshot()['health'],1)
@@ -121,6 +123,22 @@ class DialogueTests(unittest.TestCase):
             self.assertEqual(desktop.vitals_snapshot()['health'],90)
             base['health']=-1
             self.assertEqual(desktop.vitals_snapshot()['health'],-1)
+
+    def test_pending_restart_caps_health_before_the_git_penalty(self):
+        base={'health':90,'stamina':100,'mana':-1,'age_days':1,'mana_age':-1,'details':'OS'}
+        waiting={'needed':True,'reasons':['A newer installed kernel is waiting for restart: 7.2.0'],'text':'A newer installed kernel is waiting for restart: 7.2.0'}
+        with patch.object(desktop.zell_vitals,'snapshot',side_effect=lambda ui:dict(base)),patch('zell_system.restart_status',return_value=waiting),patch.object(desktop.zell_projects,'dirty_summary',return_value={'count':0,'details':'not watched','known':True}) as dirty:
+            status=desktop.vitals_snapshot()
+            self.assertEqual((status['health'],status['os_health'],status['restart_needed']),(85,85,1))
+            self.assertIn('7.2.0',status['details'])
+            dirty.return_value={'count':12,'details':'project changes','known':True}
+            self.assertEqual(desktop.vitals_snapshot()['health'],73)
+            # A lower reading is kept; an unknown one becomes the cap.
+            dirty.return_value={'count':0,'details':'not watched','known':True}
+            base['health']=60
+            self.assertEqual(desktop.vitals_snapshot()['health'],60)
+            base['health']=-1
+            self.assertEqual(desktop.vitals_snapshot()['health'],85)
 
     def test_failed_tab_launch_reports_failure(self):
         result=subprocess.CompletedProcess([],1,stdout='',stderr='caller unavailable')

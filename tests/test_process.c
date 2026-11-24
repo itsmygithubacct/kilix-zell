@@ -11,6 +11,52 @@ static void graceful_exit(int signum){
     const char done='G';(void)write(graceful_fd,&done,1);_exit(0);
 }
 
+#ifdef ZELL_RENDER_NEURONTE
+static void test_source_renderer_paths(void)
+{
+    const pid_t child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        unsetenv("NEURONTE_HOME");
+        unsetenv("ZELL_NEURONTE_WEIGHTS");
+        unsetenv("ZELL_NEURONTE_LIBRARY");
+        unsetenv("KILIX_ZELL_NEURONTE_DISPLAY");
+        assert(configure_renderer());
+        const struct { const char *name, *path; } files[] = {
+            {"ZELL_NEURONTE_WEIGHTS", ZELL_NEURONTE_WEIGHTS},
+            {"ZELL_NEURONTE_LIBRARY", ZELL_NEURONTE_LIBRARY},
+            {"KILIX_ZELL_NEURONTE_DISPLAY", ZELL_NEURONTE_DISPLAY}
+        };
+        for (size_t i = 0; i < sizeof files / sizeof files[0]; i++) {
+            if (access(files[i].path, R_OK) == 0) {
+                const char *value = getenv(files[i].name);
+                assert(value && !strcmp(value, files[i].path));
+            }
+        }
+        assert(setenv("ZELL_NEURONTE_WEIGHTS", "custom.nrt", 1) == 0);
+        assert(configure_renderer() && !strcmp(zell_neuronte_weights(), "custom.nrt"));
+        _exit(0);
+    }
+    int status;
+    assert(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
+#endif
+
+static void test_drive_refresh(void){
+    zell_scene scene;
+    zell_scene_init(&scene,960,600);zell_desktop_init(&scene);
+    scene.room=2;
+    char drives[]="D313020410a32302042",swapped[]="D323120420a31312041",removed[]="D31312041";
+    service_frame(&scene,drives,SERVICE_ORIGIN_MONITOR,0,0); /* 10 A, 20 B */
+    assert(scene.disk_count==2&&scene.disk_used[1]==20);
+    scene.mode=ZELL_MODE_LAUNCHER;scene.menu_index=1;
+    service_frame(&scene,swapped,SERVICE_ORIGIN_MONITOR,0,0);
+    assert(scene.menu_index==0&&!strcmp(scene.disk_labels[0],"B")&&scene.disk_used[0]==21);
+    service_frame(&scene,removed,SERVICE_ORIGIN_MONITOR,0,0);
+    zell_controls enter={.confirm=true};
+    zell_desktop_tick(&scene,&enter);
+    assert(scene.mode==ZELL_MODE_LAUNCHER&&!scene.desktop_launch);
+}
 static void test_terminal_transport(zell_scene *scene){
     char restart[]="J31",notice[]="N32204a6f622066696e6973686564",audio[]="A312031";
     service_frame(scene,restart,SERVICE_ORIGIN_MONITOR,0,0);service_frame(scene,notice,SERVICE_ORIGIN_MONITOR,0,0);service_frame(scene,audio,SERVICE_ORIGIN_MONITOR,0,0);
@@ -218,7 +264,7 @@ static void test_menu_and_mana(zell_scene *scene){
     assert(strcmp(scene->service_choices[2],"Filter (all)")==0);
     expect_mana(scene,1,1,1);
     scene->service_index=2;
-    frame_line(line,sizeof line,'G',"10 20 30");
+    frame_line(line,sizeof line,'G',"mana 10 20 30");
     peer_pump(&mon,&mon_svc,scene,line);
     expect_mana(scene,10,20,30);
     assert(scene->service_count==3&&scene->service_index==2);
@@ -267,9 +313,9 @@ static void test_menu_and_mana(zell_scene *scene){
     assert(mon_svc.length==0&&job_svc.length==0);
     peer_pump(&mon,&mon_svc,scene,"Gzz\n");
     peer_pump(&job,&job_svc,scene,"Mzz\n");
-    frame_line(line,sizeof line,'G',"10 20 no");
+    frame_line(line,sizeof line,'G',"mana 10 20 no");
     peer_pump(&mon,&mon_svc,scene,line);
-    frame_line(line,sizeof line,'G',"8 8 8");
+    frame_line(line,sizeof line,'G',"mana 8 8 8");
     peer_pump(&job,&job_svc,scene,line);
     scene->hp=42;scene->restart_needed=true;
     frame_line(line,sizeof line,'V',"9 9 9 9 9");
@@ -280,7 +326,7 @@ static void test_menu_and_mana(zell_scene *scene){
     expect_mana(scene,4,5,6);
     expect_numeric_menu(scene);
     {
-        const char *prefix="G3720382039"; /* "7 8 9", which must not apply */
+        const char *prefix="G6d616e61203720382039"; /* "mana 7 8 9", which must not apply */
         size_t prefix_len=strlen(prefix),total=9000;
         char *big=malloc(total+2);
         assert(big);
@@ -294,11 +340,11 @@ static void test_menu_and_mana(zell_scene *scene){
     }
     expect_mana(scene,4,5,6);
     expect_numeric_menu(scene);
-    frame_line(line,sizeof line,'G',"-2 -3 101");
+    frame_line(line,sizeof line,'G',"mana -2 -3 101");
     peer_pump(&mon,&mon_svc,scene,line);
     expect_mana(scene,-2,-1,-1);
     expect_numeric_menu(scene);
-    frame_line(line,sizeof line,'G',"3 3 3");
+    frame_line(line,sizeof line,'G',"mana 3 3 3");
     line[strlen(line)-1]=0; /* no newline: the frame is still partial */
     peer_pump(&mon,&mon_svc,scene,line);
     assert(mon_svc.length>0);
@@ -517,13 +563,44 @@ static void test_contract_frames(zell_scene *scene){
         "grok 30 unknown vault unknown";
     char ninth[1024];
     size_t used=0;
+    send_text(&job,&job_svc,scene,'Z',"12345");
+    assert(!scene->upgraded_at);
+    send_text(&mon,&mon_svc,scene,'Z',"12345");
+    assert(scene->upgraded_at==12345);
+    int messages=scene->message_count;
+    send_text(&mon,&mon_svc,scene,'I',"100\tDesktop\tBattery connected");
+    send_text(&mon,&mon_svc,scene,'I',"100\tDesktop\tBattery connected");
+    assert(scene->message_count==messages+1);
+    send_text(&mon,&mon_svc,scene,'E',"101\tKilix\tMemory is tight. editor uses the most RAM.");
+    assert(scene->message_count==messages+2&&strstr(scene->bubble,"editor"));
+    assert(scene->bubble_until>zell_notice_clock_ms());
+    send_text(&mon,&mon_svc,scene,'e',"101\tKilix\tMemory is tight. editor uses the most RAM.");
+    assert(scene->message_count==messages+2);
     expect_numeric_menu(scene);
     assert(scene->provider_count==0&&scene->provider_generation==0);
     assert(scene->provider_check_generation==0&&scene->provider_check_running==0);
     assert(scene->fleet_count==0&&!scene->update_job_active);
-    send_text(&mon,&mon_svc,scene,'G',"10 20 30");
+    send_text(&mon,&mon_svc,scene,'G',"mana 10 20 30");
     expect_mana(scene,10,20,30);
     assert(scene->provider_count==0&&scene->provider_generation==0);
+    /* Three bare integers are never mana. They are a provider snapshot's
+     * header, and a snapshot with no rows is nothing but that header. */
+    send_text(&mon,&mon_svc,scene,'G',"19 62 5");
+    expect_mana(scene,10,20,30);
+    assert(scene->provider_count==0&&scene->provider_generation==0);
+    send_text(&mon,&mon_svc,scene,'G',"1 4 0");
+    assert(scene->provider_count==0&&scene->provider_generation==4);
+    expect_mana(scene,-1,-1,-1);
+    /* The mana line follows the snapshot and has the last word. */
+    send_text(&mon,&mon_svc,scene,'G',"mana 19 62 5");
+    expect_mana(scene,19,62,5);
+    assert(scene->provider_count==0&&scene->provider_generation==4);
+    send_text(&mon,&mon_svc,scene,'G',"mana7 8 9");
+    send_text(&mon,&mon_svc,scene,'G',"mana 1 2");
+    send_text(&mon,&mon_svc,scene,'G',"mana 1 2 3 4");
+    expect_mana(scene,19,62,5);
+    send_text(&mon,&mon_svc,scene,'G',"mana 10 20 30");
+    scene->provider_generation=0;
     expect_numeric_menu(scene);
     send_text(&mon,&mon_svc,scene,'G',versioned);
     expect_provider_snapshot(scene);
@@ -597,7 +674,7 @@ static void test_contract_frames(zell_scene *scene){
         assert(!strcmp(scene->provider_rows[5].id,"gemini")&&scene->provider_rows[5].percent==-1);
         assert(!strcmp(scene->provider_rows[6].id,"elevenlabs")&&scene->provider_rows[6].percent==0);
         expect_mana(scene,5,6,7);
-        /* A bare three-integer line is legacy mana. The extra row forces the versioned parser. */
+        /* More rows than the header allows: refused whole. */
         send_text(&mon,&mon_svc,scene,'G',"1 71 33\ncodex 1 verified api unknown");
         assert(scene->provider_count==7&&scene->provider_generation==70);
         expect_mana(scene,5,6,7);
@@ -621,8 +698,535 @@ static void test_contract_frames(zell_scene *scene){
     peer_reap(&mon,&mon_svc);
 }
 
-int main(void)
+/* The outer terminal's bytes as desktop_input_read gives them to the input
+ * scanner, with Zell's own sinks. */
+static void desktop_input_feed(zell_scene *s,const char *bytes,size_t count){
+    zell_input_sinks sinks={desktop_keys,desktop_pointer,desktop_paste,s};
+    zell_input_feed(&pointer_input,&sinks,bytes,count,now_ms());
+}
+
+static void test_stamina_messages(void){
+    zell_scene s;
+    zell_scene_init(&s,960,680);zell_desktop_init(&s);
+    frame_peer peer=frame_peer_open();
+    desktop_service monitor=peer_service(&peer,true);
+    const char *remark="Memory is tight. editor uses the most RAM.";
+    send_text(&peer,&monitor,&s,'e',"100\tKilix\tMemory is tight. editor uses the most RAM.");
+    assert(!s.bubble[0]&&s.message_count==1&&s.messages[0].stamina&&!strcmp(s.messages[0].text,remark));
+    send_text(&peer,&monitor,&s,'E',"104\tKilix\tMemory is tight. editor uses the most RAM.");
+    assert(!strcmp(s.bubble,remark)&&s.message_count==2);
+    zell_notice_set_clock(s.bubble_until+1);
+    for(int i=0;i<ZELL_SYSTEM_MESSAGES+20;i++){
+        char text[32];snprintf(text,sizeof text,"Event %d",i);
+        zell_message_add(&s,200+i,"journal",text,false);
+    }
+    assert(s.message_count==ZELL_SYSTEM_MESSAGES+2);
+    zell_utility_layout dock;zell_utility_rects(&s,&dock);
+    s.mouse_valid=s.mouse_click=true;s.mouse_x=dock.messages.x+5;s.mouse_y=dock.messages.y+5;
+    assert(zell_desktop_click(&s)&&s.utility_panel==ZELL_MESSAGES_PANEL);
+    s.mouse_click=true;s.mouse_x=dock.stamina.x+5;s.mouse_y=dock.stamina.y+5;
+    assert(zell_desktop_click(&s)&&s.stamina_messages_only);
+    zell_messages_scroll(&s,1000);assert(s.message_scroll==1);
+    for(int i=0;i<ZELL_STAMINA_MESSAGES;i++)zell_message_add(&s,400+i,"Kilix",remark,true);
+    assert(s.message_count==ZELL_MESSAGES&&s.message_scroll==ZELL_STAMINA_MESSAGES-1);
+    assert(s.messages[ZELL_STAMINA_MESSAGES-1].time==400&&!strcmp(s.messages[0].text,remark));
+    s.mouse_click=true;s.mouse_x=dock.all.x+5;s.mouse_y=dock.all.y+5;
+    assert(zell_desktop_click(&s)&&!s.stamina_messages_only&&!s.message_scroll);
+    zell_messages_scroll(&s,1000);assert(s.message_scroll==ZELL_MESSAGES-1);
+    peer_reap(&peer,&monitor);
+}
+
+static bool wall_contains(int index,const char *text){
+    const neuroterm *t=&zell_command_term_screen(index)->terminal;
+    char line[512];
+    for(int row=0;row<t->rows;row++){
+        neuroterm_row_text(t,row,line,sizeof line);
+        if(strstr(line,text))return true;
+    }
+    return false;
+}
+static void await_wall(zell_scene *s,int index,const char *text){
+    for(int i=0;i<400;i++){
+        zell_command_term_pump(s);
+        if(wall_contains(index,text))return;
+        usleep(5000);
+    }
+    fprintf(stderr,"screen %d did not display %s\n",index,text);
+    assert(false);
+}
+static void test_command_wall(void){
+    pid_t child=fork();assert(child>=0);
+    if(!child){
+        setenv("SHELL","/bin/sh",1);setenv("PS1","wall$ ",1);unsetenv("ENV");
+        zell_scene s;zell_controls c;
+        zell_scene_init(&s,1536,1024);zell_desktop_init(&s);
+        zell_command_term_pump(&s);
+        assert(!zell_command_term_screen(0)->terminal.term);
+        s.room=1;zell_room_view_identity(&s);
+        for(int i=0;i<ZELL_COMMAND_TERMS;i++){
+            await_wall(&s,i,"wall$");
+            assert(zell_command_term_screen(i)->terminal.cols>=60);
+        }
+        kittykb_input_init(&keyboard.input);
+        /* A press and release can both arrive between rendered frames. */
+        s.x=ZELL_WORLD_W*.5f;s.y=ZELL_WORLD_H*.91f;
+        float origin=s.x;
+        const char left_tap[]="\033[1;1:1D\033[1;1:3D";
+        desktop_input_feed(&s,left_tap,sizeof left_tap-1);
+        read_controls(&s,&c);assert(c.move_x==-1);zell_scene_tick(&s,&c);
+        assert(s.x<origin);
+        read_controls(&s,&c);assert(!c.move_x);
+        const char right_tap[]="\033[100;1:1u\033[100;1:3u";
+        desktop_input_feed(&s,right_tap,sizeof right_tap-1);
+        read_controls(&s,&c);assert(c.move_x==1);zell_scene_tick(&s,&c);
+        assert(s.x==origin);
+        const char run_tap[]="\033[1;2:1C\033[1;1:3C";
+        desktop_input_feed(&s,run_tap,sizeof run_tap-1);
+        read_controls(&s,&c);assert(c.move_x==1&&c.run);
+        read_controls(&s,&c);assert(!c.move_x&&!c.run);
+        kittykb_event key={.key=KITTYKB_KEY_F6,.action=KITTYKB_ACTION_PRESS};
+        assert(command_cycle(&s,&key)&&s.command_focus==2);
+        const char typed[]="printf '\\033[2J\\033[Hworker-%s\\n' one\r";
+        desktop_input_feed(&s,typed,sizeof typed-1);
+        read_controls(&s,&c);assert(!c.move_x&&!c.move_y&&!c.confirm);
+        await_wall(&s,1,"worker-one");
+        for(int i=0;i<ZELL_COMMAND_TERMS;i++)assert(wall_contains(i,"worker-one")== (i==1));
+        int cols=zell_command_term_screen(1)->terminal.cols;
+        zell_scene_resize(&s,960,680);zell_command_term_pump(&s);
+        assert(zell_command_term_screen(1)->terminal.cols<cols);
+        zell_command_focus(&s,ZELL_COMMAND_SHELL);
+        const char paste[]="printf 'mana-dir-%s\\n' \"${PWD##*/}\"";
+        desktop_paste(&s,paste,sizeof paste-1);
+        zell_command_term_key(ZELL_COMMAND_SHELL,VTERM_KEY_ENTER,VTERM_MOD_NONE);
+        await_wall(&s,ZELL_COMMAND_SHELL,"mana-dir-mana");
+        zell_command_focus(&s,-1);s.room=0;zell_command_term_pump(&s);
+        assert(wall_contains(1,"worker-one"));
+        s.room=1;zell_command_term_write(2,"exit\r",5);
+        for(int i=0;i<400&&!zell_command_term_screen(2)->message;i++){zell_command_term_pump(&s);usleep(5000);}
+        assert(zell_command_term_screen(2)->message);
+        zell_command_focus(&s,2);await_wall(&s,2,"wall$");
+        const char *sandbox=getenv("ZELL_TEST_MAINTENANCE");
+        assert(sandbox&&*sandbox);
+        setenv("KILIX_ZELL_STATE",sandbox,1);
+        zell_utility_layout dock;zell_utility_rects(&s,&dock);
+        assert(!zell_command_term_screen(ZELL_COMMAND_TERMS)->terminal.term);
+        s.mouse_valid=s.mouse_click=true;s.mouse_x=dock.updates.x+10;s.mouse_y=dock.updates.y+7;
+        assert(zell_desktop_click(&s)&&s.utility_panel==ZELL_UPDATES_PANEL&&!s.utility_term);
+        zell_command_term_pump(&s);
+        assert(!zell_command_term_screen(ZELL_COMMAND_TERMS)->terminal.term);
+        zell_utility_rects(&s,&dock);
+        s.mouse_click=true;s.mouse_x=dock.action[0].x+8;s.mouse_y=dock.action[0].y+6;
+        assert(zell_desktop_click(&s)&&s.utility_term==1);
+        await_wall(&s,ZELL_COMMAND_TERMS,"simulated-apt -y upgrade command");
+        await_wall(&s,ZELL_COMMAND_TERMS,"wall$");
+        assert(wall_contains(ZELL_COMMAND_TERMS,"simulated-apt update command"));
+        s.mouse_click=true;s.mouse_x=dock.updates.x+10;s.mouse_y=dock.updates.y+7;
+        assert(zell_desktop_click(&s)&&!s.utility_panel);
+        assert(wall_contains(ZELL_COMMAND_TERMS,"simulated-apt update command"));
+        zell_command_term_shutdown();
+        assert(waitpid(-1,NULL,WNOHANG)==-1&&errno==ECHILD);
+        zell_panes_enter(&s,ZELL_ROOM_PANES_RIGHT);
+        kittykb_input_init(&keyboard.input);
+        keyboard.input.support=(uint8_t)KITTYKB_SUPPORT_AVAILABLE;
+        keyboard.input.terminal_flags=KITTYKB_FLAG_REPORT_EVENTS|KITTYKB_FLAG_REPORT_ALL_KEYS;
+        origin=s.x;
+        desktop_input_feed(&s,left_tap,sizeof left_tap-1);
+        read_controls(&s,&c);assert(c.move_x==-1&&!c.run);zell_scene_tick(&s,&c);
+        assert(s.x<origin);
+        read_controls(&s,&c);assert(!c.move_x);
+        desktop_input_feed(&s,run_tap,sizeof run_tap-1);
+        read_controls(&s,&c);assert(c.move_x==1&&c.run);zell_scene_tick(&s,&c);
+        assert(s.x>origin);
+        read_controls(&s,&c);assert(!c.move_x&&!c.run);
+        _exit(0);
+    }
+    int status=0;assert(waitpid(child,&status,0)==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0);
+}
+
+static void test_text_fields_receive_queued_keys(void)
 {
+    zell_scene scene;
+    zell_controls controls;
+    const char search[] = "\twiz";
+    const char reply[] = "\033[200~Roomxx\033[201~\177\177 \033[111;1;111:110:101u\r";
+
+    zell_scene_init(&scene, 960, 600);
+    zell_desktop_start(&scene);
+    kittykb_input_init(&keyboard.input);
+    desktop_input_feed(&scene, search, sizeof search - 1);
+    while (keyboard.input.queue_count) {
+        read_controls(&scene, &controls);
+        zell_scene_tick(&scene, &controls);
+    }
+    assert(scene.mode == ZELL_MODE_LAUNCHER && !strcmp(scene.launcher_query, "wiz"));
+
+    scene.mode = ZELL_MODE_SERVICE;
+    scene.service_phase = 1;
+    desktop_input_feed(&scene, reply, sizeof reply - 1);
+    while (keyboard.input.queue_count) {
+        read_controls(&scene, &controls);
+        zell_scene_tick(&scene, &controls);
+    }
+    assert(scene.service_send && !strcmp(scene.service_reply, "Room one\n"));
+
+    /* Several Kitty text events can fill a batch before the queue is empty. */
+    scene.mode = ZELL_MODE_QUESTION;
+    const char eight[] = "\033[120;1;120:120:120:120:120:120:120:120u";
+    for (int i = 0; i < 40; i++) desktop_input_feed(&scene, eight, sizeof eight - 1);
+    desktop_input_feed(&scene, "\177\177yz", 4);
+    while (keyboard.input.queue_count) {
+        read_controls(&scene, &controls);
+        zell_scene_tick(&scene, &controls);
+    }
+    assert(scene.question_len == (int)sizeof scene.question - 1);
+    assert(strspn(scene.question, "x") == sizeof scene.question - 3);
+    assert(!strcmp(scene.question + scene.question_len - 2, "yz"));
+}
+/* A paste of more than one line waits, said, for Enter; any other key, a
+ * click or eight seconds drop it; Shift alone does not answer. */
+/* The Command Center's screens show Kilix panes in the floating terminal:
+ * their service is given its shared surface, as the Workshop computer's is;
+ * a station that never opens it is not. */
+static void test_service_surfaces(void){
+    /* The DJ's browser (station 4, action 9) too: any station's helper. */
+    int stations[]={ZELL_COMMAND_SCREEN_FIRST,ZELL_COMMAND_SCREEN_LAST,ZELL_WORKSHOP_COMPUTER,ZELL_COMMAND_COMPUTER,4,10};
+    bool surface[]={true,true,true,true,true,true};
+    for(int i=0;i<6;i++){
+        static zell_scene scene;
+        memset(&scene,0,sizeof scene);
+        scene.desktop=true;scene.room=1;scene.station=stations[i];scene.menu_index=stations[i]==4?9:0;
+        desktop_service svc={.in_fd=-1,.out_fd=-1,.frame_fd=-1};
+        service_start(&svc,&scene);
+        assert(svc.pid>0);
+        assert((svc.frame_map!=NULL)==surface[i]&&(svc.frame_fd>=0)==surface[i]);
+        assert((scene.terminal_pixels!=NULL)==surface[i]);
+        service_stop(&svc);
+        free(scene.terminal_pixels);scene.terminal_pixels=NULL;
+    }
+    /* The vitals monitor has none. */
+    static zell_scene scene;
+    memset(&scene,0,sizeof scene);
+    scene.desktop=true;scene.room=1;
+    desktop_service monitor={.in_fd=-1,.out_fd=-1,.frame_fd=-1};
+    service_start_mode(&monitor,&scene,true);
+    assert(monitor.pid>0&&!monitor.frame_map&&monitor.frame_fd<0&&!scene.terminal_pixels);
+    service_stop(&monitor);
+}
+/* Kilix hands a pane room its window keys while Zell says so with the
+ * user variable kilix_app_keys: set on entering one, unset on leaving it
+ * and when Zell stops, each once. */
+static void test_app_keys(void){
+    static zell_scene scene;
+    memset(&scene,0,sizeof scene);
+    scene.desktop=true;scene.room=1;
+    assert(!app_keys_change(&scene,false));
+    scene.room=ZELL_ROOM_PANES_LEFT;
+    assert(!strcmp(app_keys_change(&scene,false),"\033]1337;SetUserVar=kilix_app_keys=MQ==\007"));
+    assert(!app_keys_change(&scene,false));
+    scene.room=ZELL_ROOM_PANES_RIGHT;assert(!app_keys_change(&scene,false));
+    scene.room=1;
+    assert(!strcmp(app_keys_change(&scene,false),"\033]1337;SetUserVar=kilix_app_keys\007"));
+    assert(!app_keys_change(&scene,true));
+    scene.room=ZELL_ROOM_PANES_LEFT;
+    assert(app_keys_change(&scene,false)&&!strcmp(app_keys_change(&scene,true),"\033]1337;SetUserVar=kilix_app_keys\007"));
+    assert(!app_keys_change(&scene,true));
+    /* Not the desktop: never. */
+    scene.desktop=false;assert(!app_keys_change(&scene,false));
+    /* Each signal that ends Zell asks it to stop, so the unset is said. */
+    int signals[]={SIGINT,SIGTERM,SIGHUP,SIGQUIT};
+    struct sigaction before[4];
+    for(int i=0;i<4;i++)sigaction(signals[i],NULL,&before[i]);
+    catch_stop_signals();
+    for(int i=0;i<4;i++){
+        stop_requested=0;
+        assert(raise(signals[i])==0&&stop_requested);
+    }
+    stop_requested=0;
+    for(int i=0;i<4;i++)sigaction(signals[i],&before[i],NULL);
+}
+static void test_paste_question(void){
+    zell_scene scene;
+    kittykb_event event;
+    char shift[32];
+    int shift_n=snprintf(shift,sizeof shift,"\033[%d;2:1u",KITTYKB_KEY_LEFT_SHIFT);
+    zell_scene_init(&scene,960,600);zell_desktop_init(&scene);
+    scene.room=1;scene.mode=ZELL_MODE_WALK;
+    assert(!ZELL_ROOM_IS_PANES(scene.room));
+    kittykb_input_init(&keyboard.input);zell_input_free(&pointer_input);
+    zell_notice_set_clock(1000);
+    /* One line with no break is typed straight away. */
+    desktop_input_feed(&scene,"\033[200~ok\033[201~",14);
+    assert(kittykb_input_next(&keyboard.input,&event)&&event.key=='o');
+    assert(kittykb_input_next(&keyboard.input,&event)&&event.key=='k'&&!kittykb_input_next(&keyboard.input,&event));
+    /* Two lines wait; Shift does not answer; Enter types them. */
+    desktop_input_feed(&scene,"\033[200~ls\nrm x\n\033[201~",20);
+    assert(keyboard.input.queue_count==0&&ask_n==8);
+    assert(!strcmp(scene.notice_text,"Paste 2 lines? Enter=yes Esc=no"));
+    zell_controls controls;
+    desktop_input_feed(&scene,shift,(size_t)shift_n);
+    read_controls(&scene,&controls);
+    assert(ask_n==8&&keyboard.input.queue_count==0);
+    /* Nor does a key let go, nor the pointer moving. */
+    desktop_input_feed(&scene,"\033[97;1:3u",10);
+    read_controls(&scene,&controls);
+    assert(ask_n==8);
+    desktop_input_feed(&scene,"\033[<35;20;50M",13);
+    assert(ask_n==8&&scene.mouse_valid);
+    assert(!strcmp(scene.notice_text,"Paste 2 lines? Enter=yes Esc=no"));
+    desktop_input_feed(&scene,"\r",1);
+    read_controls(&scene,&controls);
+    assert(ask_n==0);
+    const uint32_t want[]={'l','s',KITTYKB_KEY_ENTER,'r','m',' ','x',KITTYKB_KEY_ENTER};
+    for(size_t i=0;i<sizeof want/sizeof want[0];i++)assert(kittykb_input_next(&keyboard.input,&event)&&event.key==want[i]);
+    assert(!kittykb_input_next(&keyboard.input,&event));
+    /* Any other key drops it, and says so. */
+    desktop_input_feed(&scene,"\033[200~a\r\nb\033[201~",16);
+    assert(ask_n==4&&!strcmp(scene.notice_text,"Paste 2 lines? Enter=yes Esc=no"));
+    desktop_input_feed(&scene,"q",1);
+    read_controls(&scene,&controls);
+    assert(ask_n==0&&!kittykb_input_next(&keyboard.input,&event)&&typed_n==0);
+    assert(!strcmp(scene.notice_text,"The paste was not sent."));
+    /* One line and its Enter is asked about too; a newer paste takes its
+     * place. */
+    desktop_input_feed(&scene,"\033[200~ls\n\033[201~",15);
+    assert(ask_n==3&&!strcmp(scene.notice_text,"Paste 1 line? Enter=yes Esc=no"));
+    desktop_input_feed(&scene,"\033[200~1\n2\n3\033[201~",17);
+    assert(ask_n==5&&!strcmp(scene.notice_text,"Paste 3 lines? Enter=yes Esc=no"));
+    /* Keys typed before a paste that the key queue had no room for yet go
+     * first too: until they have, nothing answers. */
+    {
+        static char many[KITTYKB_EVENT_QUEUE_CAPACITY+64+15];
+        size_t k=KITTYKB_EVENT_QUEUE_CAPACITY+64;
+        memset(many,'z',k);memcpy(many+k,"\033[200~1\n2\033[201~",15);
+        desktop_input_feed(&scene,many,k+15);
+        assert(ask_n==3&&typed_n>0);
+        read_controls(&scene,&controls);
+        assert(keyboard.input.queue_count==0&&typed_n>0);
+        assert(!paste_answer(&scene)&&ask_n==3);
+        while(typed_n){typed_feed();read_controls(&scene,&controls);}
+        assert(paste_answer(&scene)&&ask_n==3);
+        ask_drop(&scene,false);
+    }
+    /* Asked again long after, the same question is said again. */
+    zell_notice_set_clock(200000);
+    desktop_input_feed(&scene,"\033[200~1\n2\n3\033[201~",17);
+    assert(ask_n==5&&scene.notice_until_ms==200000+ZELL_PASTE_ASK_MS&&!strcmp(scene.notice_text,"Paste 3 lines? Enter=yes Esc=no"));
+    zell_notice_set_clock(1000);ask_until=1000+ZELL_PASTE_ASK_MS;
+    /* Unanswered for eight seconds it is dropped, and said. */
+    zell_notice_set_clock(1000+ZELL_PASTE_ASK_MS-1);
+    assert(paste_answer(&scene)&&ask_n==5);
+    zell_notice_set_clock(1000+ZELL_PASTE_ASK_MS);
+    assert(!paste_answer(&scene)&&ask_n==0&&!strcmp(scene.notice_text,"The paste was not sent."));
+    /* In a pane room it is said on the pane with the keys, and sent there
+     * on Enter; a click drops it. */
+    zell_notice_set_clock(20000);
+    zell_panes_test_reset();
+    zell_panes_enter(&scene,ZELL_ROOM_PANES_RIGHT);
+    scene.mouse_valid=true;scene.mouse_click=true;scene.mouse_x=10;scene.mouse_y=300;
+    assert(zell_desktop_click(&scene)&&zell_panes_keys_to_pane());
+    desktop_input_feed(&scene,"\033[200~a\nb\033[201~",15);
+    assert(ask_n==3&&!strcmp(zell_panes_notice(ZELL_ROOM_PANES_RIGHT,0),"Paste 2 lines? Enter=yes Esc=no"));
+    assert(!strcmp(zell_panes_pending(),""));
+    desktop_input_feed(&scene,"\r",1);
+    read_controls(&scene,&controls);
+    zell_panes_test_drain();
+    assert(ask_n==0&&!strcmp(zell_panes_pending(),"P 10 0 610a62\nP 10 0 .\n"));
+    /* Held, the Enter that pasted repeats and is let go: neither goes to
+     * the pane; the next key does. */
+    desktop_input_feed(&scene,"\033[200~1\n2\033[201~",15);
+    assert(ask_n==3);
+    desktop_input_feed(&scene,"\r\033[13;1:2u\033[13;1:2u\033[13;1:3ux",29);
+    read_controls(&scene,&controls);
+    read_controls(&scene,&controls);
+    zell_panes_test_drain();
+    assert(!strcmp(zell_panes_pending(),"P 10 0 610a62\nP 10 0 .\nP 10 0 310a32\nP 10 0 .\nK78\n"));
+    /* An Enter typed before the paste, read with it, goes to the pane and
+     * does not answer: the question waits for a key after it. */
+    desktop_input_feed(&scene,"\r\033[200~rm a\nrm b\n\033[201~",23);
+    assert(ask_n==10);
+    read_controls(&scene,&controls);
+    zell_panes_test_drain();
+    assert(ask_n==10&&!strcmp(zell_panes_pending(),"P 10 0 610a62\nP 10 0 .\nP 10 0 310a32\nP 10 0 .\nK78\nK0d\n"));
+    assert(!strcmp(zell_panes_notice(ZELL_ROOM_PANES_RIGHT,0),"Paste 2 lines? Enter=yes Esc=no"));
+    /* With the keys before it gone, the next key answers. */
+    read_controls(&scene,&controls);
+    desktop_input_feed(&scene,"q",1);
+    read_controls(&scene,&controls);
+    assert(ask_n==0&&!strcmp(zell_panes_notice(ZELL_ROOM_PANES_RIGHT,0),"The paste was not sent."));
+    desktop_input_feed(&scene,"\033[200~c\nd\033[201~",15);
+    assert(ask_n==3);
+    desktop_input_feed(&scene,"\033[<0;20;300M",13);
+    assert(ask_n==0&&!strcmp(zell_panes_notice(ZELL_ROOM_PANES_RIGHT,0),"The paste was not sent."));
+    assert(!strstr(zell_panes_pending(),"630a64"));
+    /* Where Kilix has the keys a paste goes nowhere: it is not asked about. */
+    scene.mouse_valid=true;scene.mouse_click=true;scene.mouse_x=950;scene.mouse_y=10;
+    assert(zell_desktop_click(&scene)&&!zell_panes_keys_to_pane());
+    desktop_input_feed(&scene,"\033[200~g\nh\033[201~",15);
+    assert(ask_n==0);
+    scene.mouse_valid=true;scene.mouse_click=true;scene.mouse_x=10;scene.mouse_y=300;
+    assert(zell_desktop_click(&scene)&&zell_panes_keys_to_pane());
+    /* Alt and an arrow move the keys; the pane is sent nothing for them. */
+    {
+        size_t before=strlen(zell_panes_pending());
+        desktop_input_feed(&scene,"\033[1;3C",6);
+        read_controls(&scene,&controls);
+        assert(zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==1&&!strcmp(zell_panes_pending()+before,"F 1\n"));
+        desktop_input_feed(&scene,"\033[1;3D\033[1;3A",12);
+        read_controls(&scene,&controls);
+        assert(!zell_panes_keys_to_pane()&&scene.x==120.f&&!strcmp(zell_panes_pending()+before,"F 1\nF 0\n"));
+        /* Held keys are known only from a terminal that reports releases,
+         * as kitty does once asked: so here, until the paste tests. */
+        uint8_t support=keyboard.input.support;uint32_t flags=keyboard.input.terminal_flags;
+        keyboard.input.support=(uint8_t)KITTYKB_SUPPORT_AVAILABLE;
+        keyboard.input.terminal_flags|=KITTYKB_FLAG_REPORT_EVENTS|KITTYKB_FLAG_REPORT_ALL_KEYS;
+        /* On the walkway, Alt held, Right takes him over the next pane but
+         * he does not walk, though Right is held. */
+        char held[64];
+        int n=snprintf(held,sizeof held,"\033[%d;3:1u\033[1;3:1C",KITTYKB_KEY_LEFT_ALT);
+        desktop_input_feed(&scene,held,(size_t)n);
+        read_controls(&scene,&controls);
+        assert(scene.x==364.f&&!zell_panes_keys_to_pane());
+        read_controls(&scene,&controls);
+        assert(kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_RIGHT)&&kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_LEFT_ALT));
+        assert(controls.move_x==0&&scene.x==364.f);
+        n=snprintf(held,sizeof held,"\033[1;3:3C\033[%d;1:3u",KITTYKB_KEY_LEFT_ALT);
+        desktop_input_feed(&scene,held,(size_t)n);
+        read_controls(&scene,&controls);
+        /* Shift held: he runs. */
+        n=snprintf(held,sizeof held,"\033[%d;2:1u\033[1;2:1C",KITTYKB_KEY_LEFT_SHIFT);
+        desktop_input_feed(&scene,held,(size_t)n);
+        read_controls(&scene,&controls);
+        read_controls(&scene,&controls);
+        assert(controls.run&&controls.move_x==1);
+        n=snprintf(held,sizeof held,"\033[1;2:3C\033[%d;1:3u",KITTYKB_KEY_LEFT_SHIFT);
+        desktop_input_feed(&scene,held,(size_t)n);
+        read_controls(&scene,&controls);
+        read_controls(&scene,&controls);
+        assert(!controls.run&&controls.move_x==0);
+        assert(!kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_RIGHT)&&!kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_LEFT_SHIFT));
+        keyboard.input.support=support;keyboard.input.terminal_flags=flags;
+        desktop_input_feed(&scene,"\033[1;3B",6);
+        read_controls(&scene,&controls);
+        assert(zell_panes_keys_to_pane()&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==1);
+        assert(!strstr(zell_panes_pending()+before,"K"));
+        /* Ctrl with Alt and an arrow is the pane's, as a key. */
+        desktop_input_feed(&scene,"\033[1;7C",6);
+        read_controls(&scene,&controls);
+        assert(zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==1&&strchr(zell_panes_pending()+before,'K'));
+        /* Into pane 0, then Alt+Right with Alt let go first: the arrow's
+         * repeat and release do not reach pane 1. */
+        {
+            keyboard.input.support=(uint8_t)KITTYKB_SUPPORT_AVAILABLE;
+            keyboard.input.terminal_flags|=KITTYKB_FLAG_REPORT_EVENTS|KITTYKB_FLAG_REPORT_ALL_KEYS;
+            zell_rect r;zell_panes_pane_rect(&scene,0,&r);
+            scene.mouse_valid=true;scene.mouse_click=true;scene.mouse_x=r.x+4;scene.mouse_y=300;
+            assert(zell_desktop_click(&scene)&&zell_panes_keys_to_pane()&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==0);
+            size_t at=strlen(zell_panes_pending());
+            n=snprintf(held,sizeof held,"\033[%d;3:1u\033[1;3:1C\033[%d;3:3u\033[1;1:2C\033[1;1:3C",KITTYKB_KEY_LEFT_ALT,KITTYKB_KEY_LEFT_ALT);
+            desktop_input_feed(&scene,held,(size_t)n);
+            read_controls(&scene,&controls);
+            assert(zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==1&&!strcmp(zell_panes_pending()+at,"F 1\n"));
+            /* And the next Right is the pane's. */
+            desktop_input_feed(&scene,"\033[1;1:1C",8);
+            read_controls(&scene,&controls);
+            assert(strchr(zell_panes_pending()+at,'K'));
+            /* Alt held through the arrow's press and release: one move,
+             * not one for the release as well. */
+            at=strlen(zell_panes_pending());
+            n=snprintf(held,sizeof held,"\033[%d;3:1u\033[1;3:1D\033[1;3:3D\033[%d;3:3u",KITTYKB_KEY_LEFT_ALT,KITTYKB_KEY_LEFT_ALT);
+            desktop_input_feed(&scene,held,(size_t)n);
+            read_controls(&scene,&controls);
+            assert(zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==0&&zell_panes_keys_to_pane()&&!strcmp(zell_panes_pending()+at,"F 0\n"));
+            /* And back the same way, to pane 1. */
+            n=snprintf(held,sizeof held,"\033[%d;3:1u\033[1;3:1C\033[1;3:3C\033[%d;3:3u",KITTYKB_KEY_LEFT_ALT,KITTYKB_KEY_LEFT_ALT);
+            desktop_input_feed(&scene,held,(size_t)n);
+            read_controls(&scene,&controls);
+            assert(zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==1&&!strcmp(zell_panes_pending()+at,"F 0\nF 1\n"));
+            keyboard.input.support=support;keyboard.input.terminal_flags=flags;
+        }
+        /* F1 from a pane is the program's. */
+        before=strlen(zell_panes_pending());
+        desktop_input_feed(&scene,"\033[11~",5);
+        read_controls(&scene,&controls);
+        assert(!zell_panes_hotkeys_open()&&!strcmp(zell_panes_pending()+before,"K1b4f50\n"));
+        /* From the walkway F1 opens the Hotkeys window; while it is open no
+         * key goes to the pane or moves anything, the arrows scroll it when
+         * it does not all fit, and Esc closes it. */
+        desktop_input_feed(&scene,"\033[1;3A",6);
+        read_controls(&scene,&controls);
+        assert(!zell_panes_keys_to_pane());
+        before=strlen(zell_panes_pending());
+        desktop_input_feed(&scene,"\033[11~",5);
+        read_controls(&scene,&controls);
+        assert(zell_panes_hotkeys_open()&&zell_panes_hotkeys_top(480)==0);
+        desktop_input_feed(&scene,"ab\033[1;3C\033[9;5u",14);
+        read_controls(&scene,&controls);
+        assert(zell_panes_hotkeys_open()&&!strcmp(zell_panes_pending()+before,"")&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==1);
+        {
+            int height=scene.height,fit;
+            scene.height=480;fit=zell_panes_hotkeys_fit(480);
+            assert(fit<zell_panes_hotkeys_lines);
+            desktop_input_feed(&scene,"\033[B\033[B\033[A",9);
+            read_controls(&scene,&controls);
+            assert(zell_panes_hotkeys_top(480)==1);
+            desktop_input_feed(&scene,"\033[F",3);
+            read_controls(&scene,&controls);
+            assert(zell_panes_hotkeys_top(480)==zell_panes_hotkeys_lines-fit);
+            desktop_input_feed(&scene,"\033[5~",4);
+            read_controls(&scene,&controls);
+            assert(zell_panes_hotkeys_top(480)==zell_panes_hotkeys_lines-fit-(fit-1));
+            desktop_input_feed(&scene,"\033[6~",4);
+            read_controls(&scene,&controls);
+            assert(zell_panes_hotkeys_top(480)==zell_panes_hotkeys_lines-fit);
+            desktop_input_feed(&scene,"\033[H",3);
+            read_controls(&scene,&controls);
+            assert(zell_panes_hotkeys_top(480)==0&&zell_panes_hotkeys_open());
+            scene.height=height;
+        }
+        desktop_input_feed(&scene,"\033[27u",5);
+        read_controls(&scene,&controls);
+        assert(!zell_panes_hotkeys_open()&&!strcmp(zell_panes_pending()+before,""));
+        /* Back down into pane 1. */
+        desktop_input_feed(&scene,"\033[1;3B",6);
+        read_controls(&scene,&controls);
+        assert(zell_panes_keys_to_pane()&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==1);
+        before=strlen(zell_panes_pending());
+        /* Ctrl+Tab, Ctrl+Shift+Tab and Ctrl+Alt+Z are the room's, never the
+         * pane's. */
+        desktop_input_feed(&scene,"\033[9;5u",6);
+        read_controls(&scene,&controls);
+        assert(zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==2&&!strcmp(zell_panes_pending()+before,"F 2\n"));
+        desktop_input_feed(&scene,"\033[9;6u\033[122;7u",15);
+        read_controls(&scene,&controls);
+        assert(zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==1&&!strcmp(zell_panes_pending()+before,"F 2\nF 1\nZ 1\n"));
+        desktop_input_feed(&scene,"\033[122;7u",9);
+        read_controls(&scene,&controls);
+        assert(zell_panes_zoom(ZELL_ROOM_PANES_RIGHT)==-1&&!strcmp(zell_panes_pending()+before,"F 2\nF 1\nZ 1\nZ -1\n"));
+        /* Back to pane 0, as the paste tests that follow expect. */
+        scene.mouse_valid=true;scene.mouse_click=true;scene.mouse_x=10;scene.mouse_y=300;
+        assert(zell_desktop_click(&scene)&&zell_panes_focus(ZELL_ROOM_PANES_RIGHT)==0);
+    }
+    /* Leaving the room drops it, unsaid. */
+    desktop_input_feed(&scene,"\033[200~e\nf\033[201~",15);
+    assert(ask_n==3);
+    scene.room=1;
+    assert(!paste_answer(&scene)&&ask_n==0);
+    zell_panes_test_reset();
+    kittykb_input_init(&keyboard.input);zell_input_free(&pointer_input);
+}
+int main(int argc,char **argv)
+{
+    if(argc==2&&!strcmp(argv[1],"--test-runtime-upgrade")){
+        char path[PATH_MAX];
+        assert(zell_runtime_directory());
+        puts("ready");fflush(stdout);
+        assert(getchar()=='\n');
+        assert(zell_runtime_tool_path(path,sizeof path,"desktop.py"));
+        return access(path,R_OK)==0?0:1;
+    }
+#ifdef ZELL_RENDER_NEURONTE
+    test_source_renderer_paths();
+#endif
     zell_proc proc = {.out_fd = -1, .err_fd = -1};
     zell_turn turn = {0};
     zell_scene scene;
@@ -682,7 +1286,7 @@ int main(void)
         assert(now_ms()<deadline);service_pump(&service,&scene);
         if(scene.service_phase==1){
             assert(strcmp(scene.service_title,"Name?")==0);
-            zell_controls control={.character='a'};zell_scene_tick(&scene,&control);
+            zell_controls control={.edits="a"};zell_scene_tick(&scene,&control);
             control=(zell_controls){.confirm=true};zell_scene_tick(&scene,&control);
         }
         struct timespec pause={.tv_nsec=1000000};nanosleep(&pause,NULL);
@@ -729,7 +1333,7 @@ int main(void)
         read_controls(&scene,&control);assert(!control.run);
     }
     /* Pixel mouse reports never become typed text, including split reports. */
-    kittykb_input_init(&keyboard.input);pointer_input=(desktop_input){0};
+    kittykb_input_init(&keyboard.input);zell_input_free(&pointer_input);
     const char mouse[]="\033[<35;20;50M";
     desktop_input_feed(&scene,mouse,sizeof mouse-1);
     assert(scene.mouse_valid&&scene.mouse_x==19&&scene.mouse_y==49);
@@ -762,6 +1366,13 @@ int main(void)
     kittykb_event typed;assert(kittykb_input_next(&keyboard.input,&typed)&&typed.key=='a');
     desktop_input_feed(&scene,"\033[A",3);
     assert(kittykb_input_next(&keyboard.input,&typed)&&typed.key==KITTYKB_KEY_UP);
+    test_service_surfaces();
+    test_app_keys();
+    test_command_wall();
+    test_stamina_messages();
+    test_text_fields_receive_queued_keys();
+    test_paste_question();
+    test_drive_refresh();
     test_terminal_transport(&scene);
     test_menu_and_mana(&scene);
     test_contract_frames(&scene);

@@ -1,17 +1,28 @@
 # Zell Neuronte 0.1.1
 
 A walkable Kilix desktop inside a terminal pane. Kilix is an orange firekitten
-in a green adventurer outfit. Six staff members help with questions, logs,
-settings, system health, media, and documents.
+in a green adventurer outfit. Six staff members in the cave help with
+questions, logs, settings, system health, media, and documents. More staff
+work in the rooms below it.
 
-The cave and the original downstairs rooms use a fixed **1536×1024 world**.
-Characters and furniture keep their size. The camera follows Kilix in those
-rooms, so a smaller pane shows less of the room. A hatch row in the cave opens
-four more rooms: the game room, the movie theater, the meditation room, and
-the library. Those rooms fit between the top bar and the status line, including
-in a large window. Walk onto a hatch to enter, and walk south through the
-doorway to return to the cave. Work areas sit along the walls, leaving the
-central floor open.
+The cave and eight downstairs rooms use a fixed **1536×1024 world**. Each
+view stays in place as Kilix walks and scales down to fit a smaller pane.
+The upper row of hatches leads to the Game Room, Movie Theater, Meditation
+Room, and Library. The lower row leads to the Command Center, Vault,
+Workshop, and Laundry. The nearest hatch lifts its lid as Kilix approaches
+and closes as he walks away. Press Enter beside a hatch or click it to go
+downstairs. Walk south to return to the cave.
+Work areas sit along the walls, leaving the central floor open.
+
+In the Workshop, the dice-marked trapdoor to the right of the entrance stairs
+opens PuzzLLM in a separate Kilix tab. Walk near it and press Enter, or click
+the lid. Zell keeps your place in the Workshop.
+
+The hatch checks the `work/puzzllm` branch of `kilix-games` on each visit to
+PuzzLLM. It builds the active development checkout when it contains the
+published revision. Otherwise it downloads and builds that revision in the
+user cache. An existing build can be used offline. Set `PUZZLLM_ROOT` to the
+game's source directory to play a specific local checkout. [PuzzLLM source](https://github.com/itsmygithubacct/kilix-games/tree/work/puzzllm/puzzllm)
 
 ## Start
 
@@ -24,20 +35,35 @@ zell --version
 ```
 
 Requires Kitty graphics, C11, zlib, libm and Python 3. The default Neuronte
-dependency is `~/projects/neuronte`, with its library already built and
-`weights/neuronte-split-v4.nrt` present. `NEURONTE` and `NEURONTE_WEIGHTS`
+dependency is a neuronte-v2 checkout (2.5.1 or later) at
+`~/projects/neuronte-v2`, with its library already built and
+`weights/neuronte-split-v9.nrt` present. Text the split-v9 net was not
+trained on is drawn from the listed `neuronte-term-*` and `neuronte-kilix-*`
+bundles beside it (each with its `NAME.list.txt`), else as the untrained
+mark, in Zell's own drawing and in its terminals alike; the install copies
+those bundles and their lists. `NEURONTE` and `NEURONTE_WEIGHTS`
 override build paths. `ZELL_NEURONTE_WEIGHTS` overrides the runtime weight file.
-The build does not modify that dependency.
+Source builds also pass the selected weights, shared library and
+`DISPLAY_DIR` renderer to Zell's terminals. Installed games use the copies
+in their runtime. `ZELL_NEURONTE_LIBRARY` and `KILIX_ZELL_NEURONTE_DISPLAY`
+override those two files. The build records the checkout, weights and
+display paths in `build/neuronte.ident` and recompiles when any changes.
+
+The frozen 0.1.1 archive for Plebian-OS 0.2.3 used the earlier Neuronte
+commit `4134bf909594cf5c774f49677405fd1e22c4e2e4`. The current source
+build uses neuronte-v2 as described above.
 
 `make` also builds the original `zell` scene. The new desktop is in
-`zell-neuronte`. This is a local RC9 candidate, not a Plebian-OS release pin.
+`zell-neuronte`. Plebian-OS 0.2.3 carries Zell 0.1.1 as an offline runtime
+archive pinned by its digest; see `make runtime` below. Changes made after
+that archive was built are listed under Unreleased in `CHANGELOG.md`.
 
 ## Controls
 
 | Key | Action |
 | --- | --- |
 | Arrow keys / WASD | Walk; Up/Down select menu rows |
-| Hold Shift | Charge briefly, then dash straight ahead; release to stop |
+| Hold Shift while moving | Run immediately and steer with the movement keys |
 | Enter | Interact with a nearby character or object; open an action |
 | Tab | Open/close the quick launcher |
 | Esc | Back from menus; cancel questions; open launcher while walking |
@@ -50,7 +76,9 @@ stations without walking. Menus scroll on smaller panes.
 
 ## Movie theater
 
-The remote in the theater opens the picture controls.
+Click the remote to open the picture controls. Escape leaves a text field
+first, then closes the remote. Click the theater floor to return keyboard
+control to Kilix after interacting with a web page.
 
 - Open a video file, a folder of videos, or an http or https URL.
 - Choose Chrome, Chromium, or Firefox ESR for a URL. The page stays in the
@@ -141,9 +169,29 @@ sessions or copy, move and back up active files there. Nothing is reserved by de
 
 ## Tests and artwork
 
-Sibling libraries: `kitty-framebuffer`, `kitty-input`, `soft-raster`. Neuronte
+Sibling libraries: `kitty-framebuffer`, `kitty-input`, `soft-raster`, and
+`neuronte-sdk` for the Neuronte build and for `make test`, which runs that
+build's tests too. Neuronte
 provides text, shape and sprite rendering. The background is cached after its
-first Neuronte render.
+first Neuronte render. The Command Center embeds the same Kilix NeuroTerm
+core used by PuzzLLM. Set `NEUROTERM_DIR` to a NeuroTerm checkout containing
+`embed.mk` and `include/neuroterm_terminal.h`. It defaults to the
+`kilix-apps/neuroterm` sibling of the modules directory.
+
+The Neuronte programs do not link soft-raster. Their pixel buffer, frame
+clear, flat fill, RGBA packing and PPM writer are the canvas of
+`neuronte-sdk` (`neuronte_sdk_canvas.h`), which is adapted from soft-raster
+and draws no other shape. `src/canvas.c` only carries Zell's canvas struct
+across to it. The build compiles the SDK's one canvas source and nothing
+else of the SDK. `NSDK_DIR` names the checkout, by default
+`neuronte-sdk` under `MODULES`; it must be one that has
+`src/neuronte_sdk_canvas.c`, and the build stops and says so if it has
+not. A build that names another checkout, or the same one after a change
+to the canvas, compiles the canvas again. The programs read soft-raster's
+header for the canvas struct, so the build still needs that checkout too.
+`make test` runs the canvas beside soft-raster and compares the bytes;
+`make test-neuronte` checks that no Neuronte program holds a soft-raster
+symbol, and that each holds the SDK's canvas and no other part of the SDK.
 
 ```sh
 make all neuronte
@@ -214,25 +262,23 @@ needed after installation. Run `systemctl --user daemon-reload` after installing
 updated units. Key Master starts the vault socket when opened; initialization
 remains an explicit user action.
 
-`ZELL_NEURONTE_HOME` overrides the application path. `DESTDIR`,
-`ZELL_INSTALL_DIR` and `ZELL_BIN_DIR` support packaging/staging. `make runtime`
+`ZELL_NEURONTE_HOME` overrides the application path. `ZELL_INSTALL_DIR`
+selects the game directory and `ZELL_BIN_DIR` selects the command directory.
+The installed launcher links back to its game, including when a `DESTDIR`
+staging tree moves. Install into a new or empty directory, or upgrade an
+existing Zell runtime in place. `make runtime`
 creates a relocatable archive under `build/`, with an exact file manifest and
-dependency notices. The RC9 OS carrier pins its archive digest, verifies all
+dependency notices. Plebian-OS 0.2.3 pins that archive's digest, verifies all
 files before installation, and carries it through the offline installer.
 
 ### Running
 
-Hold either Shift key to charge a dash in place (24 simulation ticks, about
-0.4 seconds at 60 fps), then run at 9 world pixels per tick versus 3.5 walking.
-Choose a direction when charging, or use the direction Kilix is facing. The dash
-commits to that cardinal direction; release Shift to stop or turn. Walls and
-staff stop the dash with a brief bump; release Shift before charging again.
-A small bar shows the charge, and faster steps plus dust indicate running.
-Opening a station/menu cancels the dash. Shift still types normally in text fields.
+Hold Shift while moving to run in any room. Change direction while running.
+Movement still responds to health and stamina and stops at walls and furniture.
 
 ### Vitals and health hover
 
-The HUD shows Health, Mana and Fatigue. Hover the health bar for the OS-age and
+The HUD shows Health, Mana and Stamina. Hover the health bar for the OS-age and
 watched-project reasons behind the current value. A completed OS upgrade keeps
 OS health at 100% for 24 hours, then costs 10 percentage points per elapsed day,
 with a 10% floor. Successful upgrade history/stamps and Zell's completed-update
@@ -246,8 +292,8 @@ Staged-plus-unstaged changes to one path count once; a rename counts once. Local
 Git scans refresh at most once per minute; missing repositories show errors.
 Nothing is automatically staged, committed, reset, cleaned or pushed.
 
-Fatigue represents remaining resource headroom: the smaller of CPU idle percent
-and available-memory percent, smoothed over samples. Lower health or headroom
+Stamina shows how much CPU and memory the system has to spare. Zell uses the
+lower of the two percentages and smooths it over successive readings. Lower health or headroom
 reduces walking and running speed, with a 35% speed floor. Mana averages the
 known Codex/Claude/Grok remaining percentages, using each provider's most
 restrictive unexpired window. Unknown providers remain unknown; stale values
@@ -264,7 +310,21 @@ an `@handle`, or a full address. Like the floating terminal it can be
 minimized to a button on the bottom row and maximized; minimized, the page
 stays open. Zell holds one floating window at a time.
 
-The **Mana console** in the Command Center is a small computer whose screen
+**Messages** at the bottom right collects Kilix's speech, Zell notices,
+desktop notification history and recent system journal messages. When CPU or memory
+headroom is low, Kilix occasionally names the busiest processes in a speech
+bubble. The bubble fades automatically. Choose **Stamina** in Messages to read
+Kilix's last 80 remarks, including their process names, across game restarts.
+Choose **All** for the combined history. Older and Newer scroll either list.
+
+**Updates** shows health, the elapsed days and hours since the last successful
+OS upgrade, the restart cap and the watched Git penalty. Expand **OS upgrade**
+to start `sudo apt update && sudo apt -y upgrade` in a NeuroTerm terminal.
+Other rows open separate terminals for APT clean, APT autoclean, rotating due
+logs, and browsing the user cache. Collapsing a row keeps its job running.
+Each terminal accepts normal shell input, including sudo prompts.
+
+The **Mana console** sits above the center shell. Its screen
 shows what Codex, Claude and Grok each have left. Its tasks zoom into the
 screen and open the usage dashboard or a provider's own usage page in a
 browser drawn inside a Kilix tab; that browser keeps its own profile, so a
@@ -273,7 +333,40 @@ me* lists any provider that is waiting on the person, with the command to
 run. A provider shown as `ASK` is waiting on a sign-in or a folder-trust
 answer. While Zell runs, readings older than 30 minutes are read again
 automatically; this reads balances only and spends no tokens. *Automatic
-readings on / off* turns that off. The console needs Claudex.
+readings on / off* turns that off. The console needs Claudex, which is
+installed on first use: when *Read mana now*, a usage page or the wall clock's
+*Check coding-token mana* finds no copy, Zell asks Kilix for the catalog's
+pinned one (`kilix app install kilix-claudex`) and carries on. Looking at
+readings and the automatic reading never install anything, and
+`KILIX_APP_AUTO_INSTALL=0` refuses the install.
+
+The **Shell** under Mana starts in the folder `tools/mana`. Click its black
+screen to type there, or its **New window** header for a floating shell.
+The three scripts there tell Zell by hand how much a
+provider has left, for when no automatic reading can be taken:
+
+```
+set-mana codex 62           Codex has 62% left
+set-mana grok 40 codex 100  several at once
+set-mana all 50             all three
+set-mana                    be asked for each one
+show-mana                   what is set by hand now
+clear-mana [provider ...]   forget the values, or only the ones named
+```
+
+The number is the percentage left, from 0 to 100. A value set by hand is kept
+in Zell's state folder (`mana-manual.json`). It stands until it is cleared,
+set again, or a good automatic reading is taken after it (which retires it
+for good; the reading that was there when the value was set never does), and the Mana console
+and the MANA bar show it within a few seconds. The scripts do not need
+Claudex. Type `exit` to leave the shell.
+
+The MANA bar is the mean of the percentages known. For each provider, a value
+set by hand comes first. Once a provider snapshot publishes any percentage,
+published percentages take the place of Claudex's readings for every provider;
+until then Claudex's readings are used. The Mana console shows its three
+providers by the same rule, and the bar also counts published providers the
+console has no place for.
 
 Administrator > Update OS in floating terminal runs exactly
 `sudo apt update && sudo apt -y upgrade` after an in-game confirmation. A real
@@ -286,17 +379,44 @@ library; `KILIX_ZELL_NEURONTE_DISPLAY` and `ZELL_NEURONTE_LIBRARY` can select th
 
 ### Downstairs rooms
 
-Four floor hatches lead to the **Command Center**, **Laundry**, **Vault**, and
-**Workshop**. Enter interacts;
-the downstairs stair hatch returns to the cave. Tab lists the current room's
-stations. Five command-center screens bind to real Kilix coding tabs, with exact
-broker identities saved after successful creation. Interacting opens/focuses the
-session. The larger screens show bounded text previews of their assigned Codex
-sessions, refreshed about every five seconds. Exact pane, tab and broker
-identities are checked before and after capture; changed sessions lose their
-preview. Preview text stays in memory. Click a screen from anywhere in the room
-to open its menu. The controller can explicitly dispatch tasks to verified
-workers and open the task board.
+The lower row of floor hatches leads to the **Command Center**, **Vault**,
+**Workshop**, and **Laundry**, from left to right. Walk off the bottom of
+the Laundry or Command Center to return to its hatch in the cave. In the
+Command Center, Git Wizard, Pilot and Key Master stand along the south edge.
+Above them, four solid black-glass floor panels show YOLO, Spare, agent
+updates and saved fleets. Walk around either end to get behind them.
+From the landing, walk straight left into the amber-lit tunnel for two panes,
+or straight right into the turquoise-lit tunnel for four. Both entrances are
+in the lower corners.
+A pane room is one Kilix tab as wide and high as the Zell pane, past the
+1600x1000 cap the other rooms keep. Kilix can walk along the top. Above each
+pane is a button for every coding agent found on PATH. When the shell is at
+its prompt, pressing a button types that agent's command and gives the pane
+keyboard focus. Under the walkway each pane has a title bar: what it runs,
+Zoom (the pane over the whole room, and back), and Restart (click twice for a
+new shell). Click a pane or its title bar to type. Use Shift+Page Up or
+Shift+Page Down for scrollback and Ctrl+Shift+V to paste. Mouse input works
+in terminal apps that request it. Click the walkway to move Kilix with the
+arrows. Enter or Space presses the button he stands on. Walk into the thin
+green line at the end where he arrived to return. The shells are started by
+`tools/zell_panes.py` the first
+time he enters and keep running, unpainted, while he is elsewhere, until Zell
+closes. They start in your home folder. They are Zell's own shells, not
+Kilix windows: Kilix does not list them, and they cannot be sent text as Zell's
+window. Tab lists the current room's
+stations.
+
+A bronze frame spans the full width of the Command Center above the tunnels.
+It holds six independent NeuroTerm shells. Worker 1, Controller and Worker 2
+fill the upper row. Worker 3 and Worker 4 flank Mana and Shell in the lower
+row. The first visit opens real interactive shells.
+The five coding screens start in your home folder. Their prompts and running
+programs stay on the wall when you visit another room. Click a screen to type,
+press **F6** or **Shift+F6** to cycle screens, and press **Alt+Esc** or click
+the floor to walk again. Select an exited shell to start a new one.
+
+The **Sessions** headers open the existing Kilix coding-session menus. The
+controller can dispatch tasks to verified workers and open the task board.
 
 The large **YOLO** switch reads Kilix's shared `KILIX_CODING_YOLO` setting on
 room entry and follows changes made elsewhere. Clicking it, or walking up and
@@ -322,8 +442,6 @@ Laundry bins represent mounted disk filesystems with source/mount labels and
 fill levels. Enter shows capacity and a read-only file browser. The eighth bin
 opens overflow disks if needed. Disconnected or inaccessible disks are reported;
 no cleanup or deletion is performed by digging through a bin.
-
-New work is on RC9 branches. Frozen RC8 release refs are unchanged.
 
 ### Key Master
 
@@ -367,7 +485,8 @@ mark them done, reopen or remove them. The Noticeboard also enables, reads and
 clears conversation history. Saving full station reports and Wizard replies
 is off by default and requires a separate opt-in; Key Master and terminal
 contents are always excluded. Tasks and history use owner-only files in Zell's
-state directory. Reports can include personal information.
+state directory. Changing the conversation setting also affects stations
+already open in other tabs. Reports can include personal information.
 
 The Neuronte shell follows later pane resizes and preserves its running PTYs.
 Generated room backgrounds, hatches, stairs, monitor frames, drive bins and
@@ -420,7 +539,7 @@ Timekeeper uses persistent [systemd user timers](https://www.freedesktop.org/sof
 They run while the user service manager is available and catch up missed times
 at login. Scheduled command arguments are explicit; shell expansion is disabled.
 Herald retains 200 notices and verifies process identity before cancelling a job.
-The RC9 image includes the station tools; additional direct dependencies are
+The Plebian-OS 0.2.3 image includes the station tools; additional direct dependencies are
 `upower`, `bluez`, `scrot`, `brightnessctl`, `power-profiles-daemon`, `nftables`
 and `wtmpdb`. Existing audio uses PulseAudio-compatible device controls.
 

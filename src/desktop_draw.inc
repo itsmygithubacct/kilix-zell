@@ -1,9 +1,16 @@
 /* Included after the Neuronte drawing adapters, so artwork and text use them. */
 #include "desktop.h"
 #include "desktop_assets.h"
+#include "command_term.h"
 #include <time.h>
 #include <stdlib.h>
 #include <math.h>
+#ifndef desktop_cross
+static void desktop_cross(sr_canvas *c,int cx,int cy,int reach,uint32_t rgb){
+ sr_line(c,(float)(cx-reach),(float)(cy-reach),(float)(cx+reach),(float)(cy+reach),2,rgb,1,0,0);
+ sr_line(c,(float)(cx-reach),(float)(cy+reach),(float)(cx+reach),(float)(cy-reach),2,rgb,1,0,0);
+}
+#endif
 static void desktop_art(sr_canvas *c,int id,int x,int foot,int height){
  const zell_art *a=zell_art_get(id);if(!a)return;sr_canvas src;sr_canvas_wrap(&src,a->pixels,a->width,a->height);
  int width=height*a->width/a->height;sr_blit_scaled(c,&src,x-width/2,foot-height,width,height,1.0f);
@@ -70,127 +77,147 @@ static void desktop_label(sr_canvas *c,int x,int y,const char *text,uint32_t col
  sr_text(c,(float)(x-w/2),(float)y,text,color,1,1);
 }
 static void desktop_text(sr_canvas *c,int x,int y,const char *text,uint32_t color,int width);
-static void desktop_hatch(sr_canvas *c,int art,int x,int y,bool selected,const char *label){
+static void desktop_hatch(sr_canvas *c,const zell_cave_hatch *hatch,int x,int y,bool selected){
  /* Each cutout is compiled at the height it is drawn at. */
+ int art=selected?hatch->open_art:zell_stations[hatch->station].art;
  const zell_art *cut=zell_art_get(art);int height=cut?cut->height:76;
  if(selected)sr_fill_ellipse(c,(float)x,(float)(y+2),54,12,0x80e5c4u,.55f);
- desktop_art(c,art,x,y+14,height);
- if(selected)desktop_label(c,x,y+28,label,0xa8f3d5u);
+ desktop_art(c,art,x,y+ZELL_HATCH_FOOT_OFFSET,height);
+ if(selected)desktop_label(c,x,y+28,hatch->label,0xa8f3d5u);
 }
-static void desktop_monitor(const zell_scene *s,sr_canvas *c,int index,int cx,int cy,bool selected){
- zell_rect frame,display;zell_monitor_layout(index,&frame,&display);
- frame.x-=cx;frame.y-=cy;display.x-=cx;display.y-=cy;
- const zell_art *a=zell_art_get(index==0?ZELL_ART_CONTROLLER:ZELL_ART_WORKER);
- if(a){sr_canvas src;sr_canvas_wrap(&src,a->pixels,a->width,a->height);sr_blit_scaled(c,&src,frame.x,frame.y,frame.w,frame.h,1);}
- sr_fill_rect(c,(float)display.x,(float)display.y,(float)display.w,(float)display.h,0x091820u,1);
- if(selected)sr_stroke_rect(c,(float)display.x,(float)display.y,(float)display.w,(float)display.h,2,0x96ead0u,1);
- char title[32];snprintf(title,sizeof title,index==0?"CONTROLLER":"WORKER %d",index);
- desktop_text(c,display.x+8,display.y+7,title,0xe9d49fu,display.w-16);
- desktop_text(c,display.x+8,display.y+27,s->screens_ready?s->screen_status[index]:"Reading sessions...",0x8fd5c6u,display.w-16);
- const char *body=s->screen_preview[index];
- if(!*body)body=s->screens_ready?"Click to open this screen":"Session previews refresh here";
- int lines=(display.h-59)/17;
- for(int row=0;row<lines&&*body;row++){
-  const char *end=strchr(body,'\n');size_t n=end?(size_t)(end-body):strlen(body);
-  char line[200];if(n>=sizeof line)n=sizeof line-1;memcpy(line,body,n);line[n]=0;
-  desktop_text(c,display.x+8,display.y+49+row*17,line,0xc9dcd8u,display.w-16);
-  if(!end)break;
-  body=end+1;
+/* NeuroTerm owns VT state, colors and cell attributes. Cache the pixels at
+ * the fitted terminal's resolution so even a small room has 8x16 text. */
+static void cell_fill(void *canvas,int x,int y,int w,int h,uint32_t rgb){
+ sr_fill_rect((sr_canvas *)canvas,(float)x,(float)y,(float)w,(float)h,rgb,1);
+}
+static void cell_glyph(void *canvas,uint32_t scalar,unsigned flags,int x,int y,int w,int h,uint32_t rgb){
+ sr_canvas *c=canvas;
+#ifdef ZELL_RENDER_NEURONTE
+ if(!zell_neuronte_open())return;
+ neuronte_draw_scalar(zn_text_font(scalar),c->px,c->w,c->w,c->h,x,y,w,h,scalar,zn_color(rgb,1));
+ if(flags&NEUROTERM_BOLD)neuronte_draw_scalar(zn_text_font(scalar),c->px,c->w,c->w,c->h,x+1,y,w-1,h,scalar,zn_color(rgb,.66f));
+#else
+ (void)w;(void)h;
+ char text[2]={(char)(scalar<128?scalar:'?'),0};
+ sr_text(c,(float)x,(float)y,text,rgb,1,1);
+ if(flags&NEUROTERM_BOLD)sr_text(c,(float)(x+1),(float)y,text,rgb,.66f,1);
+#endif
+}
+enum { COMMAND_GLASS=0x090d12, FLOOR_GLASS=0x050809 };
+static void desktop_cells(sr_canvas *c,int index,zell_rect body,bool focused){
+ static struct {sr_canvas cells;unsigned long revision;bool focused;} cache[ZELL_ALL_TERMS];
+ const zell_command_screen *screen=zell_command_term_screen(index);
+ const neuroterm *t=&screen->terminal;
+ if(!t->term||screen->message){
+  desktop_text(c,body.x+4,body.y+4,screen->message?screen->message:"Opening shell...",0x97aab0u,body.w-8);
+  return;
  }
- if(selected)desktop_label(c,frame.x+frame.w/2,frame.y+frame.h+8,"Enter / click: session & tasks",0xa8f3d5u);
-}
-/* Copy one rectangle out of a cell, then scale that copy. The cell stays put. */
-static void floor_blit(sr_canvas *c,const zell_art *art,int sx,int sy,int sw,int sh,int dx,int dy,int dw,int dh){
- static uint32_t *pixels;
- static size_t capacity;
- if(!art||sw<1||sh<1||dw<1||dh<1)return;
- if(sx<0||sy<0||sw>art->width-sx||sh>art->height-sy)return;
- size_t count=(size_t)sw*(size_t)sh;
- if(capacity<count){
-  uint32_t *grown=realloc(pixels,count*sizeof *grown);
-  if(!grown)return;
-  pixels=grown;
-  capacity=count;
+ sr_canvas *cells=&cache[index].cells;
+ int w=t->cols*ZELL_TERM_CELL_W,h=t->rows*ZELL_TERM_CELL_H;
+ bool redraw=cache[index].revision!=screen->revision||cache[index].focused!=focused;
+ if(cells->w!=w||cells->h!=h||!cells->px){
+  sr_canvas_free(cells);
+  if(!sr_canvas_init(cells,w,h))return;
+  redraw=true;
  }
- for(int row=0;row<sh;row++)
-  memcpy(pixels+(size_t)row*(size_t)sw,art->pixels+(size_t)(sy+row)*(size_t)art->width+(size_t)sx,(size_t)sw*sizeof *pixels);
- sr_canvas src;sr_canvas_wrap(&src,pixels,sw,sh);
- sr_blit_scaled(c,&src,dx,dy,dw,dh,1.0f);
+ if(redraw){
+  sr_clear(cells,COMMAND_GLASS);
+  VTermPos cursor=neuroterm_cursor(t);
+  neuroterm_cell_style style={.foreground=NEUROTERM_FG,.background=COMMAND_GLASS,
+      .focused=focused,.cursor_shape=t->cursor_shape};
+  const neuroterm_painter painter={cells,cell_fill,cell_glyph};
+  for(int row=0;row<t->rows;row++)for(int col=0;col<t->cols;){
+   VTermScreenCell cell;
+   if(!neuroterm_cell(t,col,row,&cell)){col++;continue;}
+   int span=cell.width==2&&col+1<t->cols?2:1;
+   style.cursor=t->cursor_visible&&row==cursor.row&&cursor.col>=col&&cursor.col<col+span;
+   neuroterm_paint_cell(t->screen,&cell,col*ZELL_TERM_CELL_W,row*ZELL_TERM_CELL_H,
+                        ZELL_TERM_CELL_W,ZELL_TERM_CELL_H,span,&style,&painter);
+   col+=span;
+  }
+  cache[index].revision=screen->revision;cache[index].focused=focused;
+ }
+ sr_blit_scaled(c,cells,body.x,body.y,body.w,body.h,1);
 }
-/* World placement. desktop_present_room applies the one screen transform. */
-static void panel_view(const zell_scene *s,const zell_rect *world,int cx,int cy,zell_rect *view){
- (void)s;
- *view=(zell_rect){world->x-cx,world->y-cy,world->w,world->h};
+static void screen_bezel(sr_canvas *c,zell_rect frame,const char *title,const char *action,bool focused){
+ int x=frame.x,y=frame.y,w=frame.w;
+ uint32_t accent=focused?0x9de6c9u:0x749c9fu;
+ cell_fill(c,x,y,w,frame.h,0x44585cu);
+ cell_fill(c,x+1,y+1,w-2,frame.h-2,COMMAND_GLASS);
+ cell_fill(c,x+1,y+1,w-2,26,focused?0x20382fu:0x17252cu);
+ cell_fill(c,x+1,y+27,w-2,1,0x32474bu);
+ cell_fill(c,x+9,y+9,4,11,accent);
+ desktop_text(c,x+21,y+6,title,0xe3eae7u,w/2);
+ int label=(int)strlen(action)*8;
+ desktop_text(c,x+w-label-12,y+6,action,accent,label);
 }
-/* Three plates in the flagstones. The off cell supplies the bronze rim for
- * every state, so a confirmed read only recolors the glass. */
+static void desktop_monitor(const zell_scene *s,sr_canvas *c,int index,int cx,int cy){
+ static const char *const titles[ZELL_COMMAND_TERMS]={"CONTROLLER","WORKER 1","WORKER 2","WORKER 3","WORKER 4","SHELL"};
+ zell_rect frame,body;zell_command_term_layout(index,&frame,&body);
+ frame.x-=cx;frame.y-=cy;body.x-=cx;body.y-=cy;
+ bool focused=s->command_focus==index+1;
+ screen_bezel(c,frame,titles[index],index==ZELL_COMMAND_SHELL?"New window":"Sessions",focused);
+ desktop_cells(c,index,body,focused);
+}
+/* Four inset black-glass panels. Small chamfered corners and a light front
+ * lip keep the metal frame legible against the stone floor. */
+static void floor_bezel(sr_canvas *c,zell_rect f,zell_rect g,uint32_t edge){
+ int x=f.x,y=f.y,w=f.w,h=f.h;
+ cell_fill(c,x+5,y+6,w-5,h,0x171815u);
+ cell_fill(c,x+3,y,w-6,h,0x514b3du);
+ cell_fill(c,x,y+3,w,h-7,0x514b3du);
+ cell_fill(c,x+6,y,w-12,2,0xab9977u);
+ cell_fill(c,x+3,y+h-4,w-6,3,0x756750u);
+ cell_fill(c,g.x-1,g.y-1,g.w+2,g.h+2,0x293333u);
+ cell_fill(c,g.x,g.y,g.w,g.h,FLOOR_GLASS);
+ cell_fill(c,g.x+12,g.y+10,4,13,edge);
+ cell_fill(c,g.x+12,g.y+29,g.w-24,1,0x293333u);
+}
 static void desktop_floor_panels(const zell_scene *s,sr_canvas *c,int cx,int cy){
  if(s->room!=1)return;
- const zell_art *plate=zell_art_get(ZELL_ART_FLOOR_OFF);
- for(int index=0;index<3;index++){
-  zell_rect frame,glass,view,pane;
-  zell_floor_panel_layout(index,&frame,&glass);
-  panel_view(s,&frame,cx,cy,&view);
-  panel_view(s,&glass,cx,cy,&pane);
-  if(view.w<1||view.h<1||pane.w<1||pane.h<1)continue;
-  floor_blit(c,plate,42,217,332,153,view.x,view.y,view.w,view.h);
-  uint32_t fill=0x121816u;
-  const char *title="SPARE",*detail="INACTIVE";
-  char count[32];
-  int icon=ZELL_ART_FLOOR_SPARE;
-  zell_rect crop=(zell_rect){50,102,251,272};
-  bool bar=false;
-  uint32_t detail_ink=0xf4f1e8u;
-  if(index==0){
-   title="YOLO";
-   icon=ZELL_ART_FLOOR_YOLO_ICON;
-   crop=(zell_rect){78,87,244,299};
-   /* A stale coding_yolo value stays a reading until Y confirms it. */
-   if(!s->coding_yolo_ready){detail="READING";fill=0x2c3834u;}
-   else if(s->coding_yolo){detail="ENABLED";fill=0xd06a22u;}
-   else {detail="DISABLED";fill=0x1a8f86u;}
-  }else if(index==1){
-   title="AGENTS";
-   fill=0x163430u;
-   icon=ZELL_ART_FLOOR_AGENTS;
-   crop=(zell_rect){48,99,322,273};
-   /* Progress comes from the U frame. A client's age is not an update offer. */
-   if(s->update_job_active&&strcmp(s->update_state,"running")==0){
-    snprintf(count,sizeof count,"%d/%d",s->update_done,s->update_total);
-    detail=count;detail_ink=0xff4ad2u;bar=s->update_total>0;
-   }else if(s->update_job_active&&strcmp(s->update_state,"done")==0)detail="DONE";
-   else if(s->update_job_active&&strcmp(s->update_state,"failed")==0)detail="FAILED";
-   else if(s->update_job_active&&strcmp(s->update_state,"cancelled")==0)detail="CANCELLED";
-   else detail="IDLE";
-  }
-  sr_canvas_set_clip(c,pane.x,pane.y,pane.w,pane.h);
-  sr_fill_rect(c,(float)pane.x,(float)pane.y,(float)pane.w,(float)pane.h,fill,1.0f);
-  int ih=pane.h-16;if(ih>34)ih=34;if(ih<8)ih=8;
-  int iw=crop.h>0?crop.w*ih/crop.h:ih;
-  if(iw>26){iw=26;ih=crop.w>0?crop.h*iw/crop.w:ih;}
-  if(iw>pane.w-8)iw=pane.w-8;
-  if(ih>pane.h-8)ih=pane.h-8;
-  if(iw>4&&ih>4)floor_blit(c,zell_art_get(icon),crop.x,crop.y,crop.w,crop.h,pane.x+4,pane.y+(pane.h-ih)/2,iw,ih);
-  int text_x=pane.x+34,text_w=pane.x+pane.w-6-text_x;
-  if(text_w>8){
-   desktop_text(c,text_x,pane.y+2,title,0xe9d49fu,text_w);
-   desktop_text(c,text_x,pane.y+20,detail,detail_ink,text_w);
-  }
-  if(bar){
-   int bw=pane.w-8,bx=pane.x+4,by=pane.y+pane.h-8;
-   if(bw>8&&by>=pane.y){
-    sr_fill_rect(c,(float)bx,(float)by,(float)bw,5.0f,0x10241fu,1.0f);
+ static const char *const titles[]={"YOLO","AGENTS","SPARE","FLEET BOARD"};
+ for(int i=0;i<ZELL_FLOOR_PANELS;i++){
+  zell_rect frame,g;zell_floor_panel_layout(i,&frame,&g);
+  frame.x-=cx;frame.y-=cy;g.x-=cx;g.y-=cy;
+  uint32_t ink=0x9ba6a6u;
+  const char *detail="Inactive";
+  char count[48];
+  bool progress=false;
+  if(i==0){
+   detail=!s->coding_yolo_ready?"Reading":s->coding_yolo?"Enabled":"Disabled";
+   ink=!s->coding_yolo_ready?0xa8ada5u:s->coding_yolo?0xf3ac65u:0x8cccb5u;
+  }else if(i==1){
+   detail="Idle";ink=0x94c9cfu;
+   if(s->update_job_active){
+    if(!strcmp(s->update_state,"running")){
+     snprintf(count,sizeof count,"%d/%d",s->update_done,s->update_total);
+     detail=count;progress=s->update_total>0;ink=0xdca6d5u;
+    }else if(!strcmp(s->update_state,"done"))detail="Done";
+    else if(!strcmp(s->update_state,"failed")){detail="Failed";ink=0xea9879u;}
+    else if(!strcmp(s->update_state,"cancelled"))detail="Cancelled";
+   }
+  }else if(i==3){detail="No saved fleets";ink=0xd7be8eu;}
+  floor_bezel(c,frame,g,ink);
+  desktop_text(c,g.x+23,g.y+8,titles[i],0xe5e8dfu,g.w-34);
+  if(i==3&&s->fleet_count){
+   for(int row=0;row<s->fleet_count&&row<4;row++){
+    const zell_fleet_row *fleet=&s->fleet_rows[row];
+    char state[48];snprintf(state,sizeof state,"%d/%d live",fleet->live_count,fleet->worker_count);
+    int right=(int)strlen(state)*8,yy=g.y+32+16*row;
+    desktop_text(c,g.x+12,yy,fleet->display_name,0xd0d7d4u,g.w-right-32);
+    desktop_text(c,g.x+g.w-12-right,yy,state,ink,right);
+   }
+  }else{
+   desktop_text(c,g.x+13,g.y+41,detail,ink,g.w-26);
+   if(progress){
+    int bw=g.w-26;
+    cell_fill(c,g.x+13,g.y+72,bw,4,0x2e3334u);
     int filled=bw*s->update_done/s->update_total;
-    if(filled>bw)filled=bw;
-    if(filled>0)sr_fill_rect(c,(float)bx,(float)by,(float)filled,5.0f,0x7dcea0u,1.0f);
+    if(filled>0)cell_fill(c,g.x+13,g.y+72,filled>bw?bw:filled,4,ink);
    }
   }
-  sr_canvas_reset_clip(c);
  }
 }
-/* Drawn twice: once for what stands behind Kilix, once for what stands in front. */
-/* L3 calls zell_command_layout. */
-/* One row per provider: name, a bar of what is left, and the number. */
 static void desktop_mana_rows(const zell_scene *s,sr_canvas *c,int x,int y,int w,int row,int scale){
  static const char *const names[3]={"CODEX","CLAUDE","GROK"};
  for(int i=0;i<3;i++){
@@ -206,16 +233,11 @@ static void desktop_mana_rows(const zell_scene *s,sr_canvas *c,int x,int y,int w
   sr_text(c,(float)(x+w-value_w+4),(float)yy,text,ink,(float)scale,1);
  }
 }
-static void desktop_mana_console(const zell_scene *s,sr_canvas *c,int cx,int cy,bool selected){
- zell_rect frame,display;zell_mana_console_layout(&frame,&display);
- frame.x-=cx;frame.y-=cy;display.x-=cx;display.y-=cy;
- const zell_art *a=zell_art_get(ZELL_ART_WORKER);
- if(a){sr_canvas src;sr_canvas_wrap(&src,a->pixels,a->width,a->height);sr_blit_scaled(c,&src,frame.x,frame.y,frame.w,frame.h,1);}
- sr_fill_rect(c,(float)display.x,(float)display.y,(float)display.w,(float)display.h,0x07141au,1);
- if(selected)sr_stroke_rect(c,(float)display.x,(float)display.y,(float)display.w,(float)display.h,2,0x96ead0u,1);
- desktop_text(c,display.x+6,display.y+4,"MANA",0xe9d49fu,display.w-12);
- desktop_mana_rows(s,c,display.x+6,display.y+24,display.w-12,17,1);
- if(selected)desktop_label(c,frame.x+frame.w/2,frame.y+frame.h+8,"Enter: balances & usage pages",0xa8f3d5u);
+static void desktop_mana_console(const zell_scene *s,sr_canvas *c,int cx,int cy){
+ zell_rect frame,body;zell_mana_console_layout(&frame,&body);
+ frame.x-=cx;frame.y-=cy;body.x-=cx;body.y-=cy;
+ screen_bezel(c,frame,"MANA","Usage",false);
+ desktop_mana_rows(s,c,body.x+5,body.y+1,body.w-10,19,1);
 }
 /* The console screen grows to fill the view before its browser tab opens. */
 static void desktop_zoom(const zell_scene *s,sr_canvas *c){
@@ -238,42 +260,49 @@ static void desktop_zoom(const zell_scene *s,sr_canvas *c){
   sr_text(c,x+18,y+h-30*(float)scale,line,0x85f7b2u,(float)scale,1);
  }
 }
-static void desktop_fleet_board(const zell_scene *s,sr_canvas *c,int cx,int cy){
- zell_rect board;zell_fleet_board_layout(&board);
- board.x-=cx;board.y-=cy;
- if(board.x+board.w<0||board.y+board.h<0||board.x>=c->w||board.y>=c->h)return;
- sr_fill_rect(c,(float)board.x,(float)board.y,(float)board.w,(float)board.h,0x101f26u,1);
- sr_stroke_rect(c,(float)board.x,(float)board.y,(float)board.w,(float)board.h,1,0xd6ba87u,1);
- desktop_text(c,board.x+8,board.y+6,"FLEET BOARD",0xe9d49fu,board.w-16);
- if(s->fleet_count<=0){desktop_text(c,board.x+8,board.y+28,"No saved fleets",0x8fd5c6u,board.w-16);return;}
- int rows=s->fleet_count;if(rows>4)rows=4;
- for(int i=0;i<rows;i++){
-  char line[160];
-  if(!zell_fleet_board_line(s,i,line,sizeof line))continue;
-  desktop_text(c,board.x+8,board.y+28+i*18,line,0xc9dcd8u,board.w-16);
- }
-}
 static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy,bool front){
  int near=zell_desktop_near(s);
  /* Floor pass, before Kilix and before anything that stands over him. */
  if(!front)desktop_floor_panels(s,c,cx,cy);
  for(int i=15;i<ZELL_STATIONS;i++){
   if(!zell_desktop_station_visible(s,i)||zell_desktop_station_in_front(s,i)!=front)continue;
-  if(i>=ZELL_WORKSHOP_COMPUTER)continue;
+  if(i==ZELL_COMMAND_COMPUTER){if(!front)desktop_monitor(s,c,ZELL_COMMAND_SHELL,cx,cy);continue;}
   int x=(int)(zell_stations[i].x*ZELL_WORLD_W)-cx,y=(int)(zell_stations[i].y*ZELL_WORLD_H)-cy;
-  if(i==ZELL_MANA_CONSOLE){desktop_mana_console(s,c,cx,cy,i==near);continue;}
+  const zell_cave_hatch *hatch=zell_station_hatch(i);
+  if(hatch){desktop_hatch(c,hatch,x,y,i==near);continue;}
+  if(i>=ZELL_WORKSHOP_COMPUTER)continue;
+  if(i==ZELL_MANA_CONSOLE){desktop_mana_console(s,c,cx,cy);continue;}
   if(i>=46)continue;
-  /* Floor panels replace the old lever boxes. Rooms 1 and 2 also paint stairs. */
-  if(i==28){if(s->room<3)desktop_hatch(c,s->room==1?ZELL_ART_COMMAND_STAIRS:ZELL_ART_LAUNDRY_STAIRS,x,y,false,"");continue;}
+  if(i==28)continue;
   if(i>=29){
    zell_actor_pose staff=i<32?zell_desktop_pose(s,i-23):(zell_actor_pose){zell_stations[i].art+(s->flame_tick/20+i)%4,0,0};
+   /* Staff are shown as the cave's first six are: a glow and a name only
+    * while Kilix stands by them. */
+   if(i==near)sr_fill_ellipse(c,(float)x,(float)y,128*.42f,6,0x80e5c4u,.65f);
    sr_fill_ellipse(c,(float)x,(float)y,24,7,0x071719u,.45f);
    desktop_art(c,staff.art,x+staff.offset_x,y+staff.offset_y,128);
-   desktop_label(c,x,y+15,zell_stations[i].name,0xe9d49fu);
-   if(i==near)desktop_label(c,x,y+40,i==29?"Enter: projects and Git":i==30?"Enter: coding fleets":i==31?"Enter: encrypted secret vault":"Enter: tasks",0xa8f3d5u);
+   /* The Key Master's lines go in the strip under the AGENTS panel, right
+    * aligned (see ZELL_KEY_MASTER_LABEL_RIGHT): above his head they would
+    * cover that panel, and under his feet the status bar. */
+   if(i==31){
+    if(i==near){
+     int right=ZELL_KEY_MASTER_LABEL_RIGHT-cx,top=ZELL_KEY_MASTER_LABEL_TOP-cy;
+     int name_w=sr_text_width_in(SR_FONT_FIXED_8X16,zell_stations[i].name,1),hint_w=sr_text_width_in(SR_FONT_FIXED_8X16,ZELL_KEY_MASTER_HINT,1);
+     desktop_label(c,right-6-name_w/2,top+3,zell_stations[i].name,0xb9f8dbu);
+     desktop_label(c,right-6-hint_w/2,top+28,ZELL_KEY_MASTER_HINT,0xa8f3d5u);
+    }
+    continue;
+   }
+   if(i==near&&(i==29||i==30)){
+    desktop_label(c,x,y-161,zell_stations[i].name,0xb9f8dbu);
+    desktop_label(c,x,y-138,i==29?"Enter: projects and Git":"Enter: coding fleets",0xa8f3d5u);
+    continue;
+   }
+   if(i==near)desktop_label(c,x,y+15,zell_stations[i].name,0xb9f8dbu);
+   if(i==near)desktop_label(c,x,y+40,i==29?"Enter: projects and Git":i==30?"Enter: coding fleets":"Enter: tasks",0xa8f3d5u);
    continue;
   }
-  if(s->room==1){desktop_monitor(s,c,i-15,cx,cy,i==near);continue;}
+  if(s->room==1){desktop_monitor(s,c,i-15,cx,cy);continue;}
   int bin=i-20,percent=s->disk_used[bin];
   uint32_t color=percent<0?0x7b8990u:percent>=90?0xe18c70u:percent>=75?0xd6b867u:0x6cc9b7u;
   desktop_art(c,ZELL_ART_BIN,x,y,164);
@@ -288,19 +317,11 @@ static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
   if(i==near)desktop_label(c,x,y+40,"Enter: dig through drive",0xa8f3d5u);
  }
  if(!front&&s->room==2&&s->disk_count==0)desktop_label(c,ZELL_WORLD_W/2-cx,ZELL_WORLD_H/2-cy,s->disks_ready?"No eligible mounted disks found":"Reading mounted drives...",0xc9d8d2u);
- if(!front&&(s->room==1||s->room==2)){
-  float x0=ZELL_STAIRS_LEFT*(float)ZELL_WORLD_W-(float)cx;
-  float x1=ZELL_STAIRS_RIGHT*(float)ZELL_WORLD_W-(float)cx;
-  float y=0.93f*(float)ZELL_WORLD_H-(float)cy,mid=(x0+x1)*0.5f;
-  sr_fill_rect(c,x0,y,x1-x0,16,0x14201cu,.88f);
-  sr_fill_triangle(c,mid-14.f,y+2.f,mid+14.f,y+2.f,mid,y+22.f,0xd7b56au,.95f);
- }
- if(front&&s->room==1)desktop_fleet_board(s,c,cx,cy);
 }
 static void desktop_vitals(const zell_scene *s,sr_canvas *c){
  int span=c->w-24;if(span>420)span=420;int width=(span-16)/3;
  if(width<32)return;
- int values[3]={s->hp,s->mana,s->fatigue};const char *names[3]={"HEALTH","MANA","FATIGUE"};
+ int values[3]={s->hp,s->mana,s->stamina};const char *names[3]={"HEALTH","MANA","STAMINA"};
  uint32_t colors[3]={0xde8a79u,0x8ea6efu,0x87c5a4u};
  for(int i=0;i<3;i++){
   int x=12+i*(width+8);char label[40];
@@ -342,20 +363,17 @@ static void desktop_cave(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
  for(int i=0;i<ZELL_STATIONS&&s->room==0;i++){
   if(!zell_desktop_station_visible(s,i)||zell_desktop_station_in_front(s,i)!=front)continue;
   const zell_station *p=&zell_stations[i];int x=(int)(p->x*(float)ZELL_WORLD_W)-cx,y=(int)(p->y*(float)ZELL_WORLD_H)-cy;
-  if(i>=ZELL_GAME_HATCH&&i<=ZELL_LIBRARY_HATCH){
-   int art=p->art+(i==near?(ZELL_ART_GAME_HATCH_OPEN-ZELL_ART_GAME_HATCH):0);
-   const char *label=i==ZELL_GAME_HATCH?"Game room":i==ZELL_THEATER_HATCH?"Movie theater":i==ZELL_MEDITATION_HATCH?"Meditation":"Library";
-   desktop_hatch(c,art,x,y,i==near,label);
-   continue;
-  }
+  const zell_cave_hatch *hatch=zell_station_hatch(i);
+  if(hatch){desktop_hatch(c,hatch,x,y,i==near);continue;}
   if(i>=ZELL_WORKSHOP_COMPUTER)continue;
   int h=(i<6||(i>=32&&i<42))?height:height*3/4;
   if(i==12){x+=ZELL_SWITCH_WALL_DX;y+=ZELL_SWITCH_WALL_DY;}
   /* A floor glow under a wall fitting would hang in the air; its label marks it. */
   if(i==near&&i!=12){sr_fill_ellipse(c,(float)x,(float)y, (float)h*.42f,6,0x80e5c4u,.65f);}
   if(i<6){zell_actor_pose pose=zell_desktop_pose(s,i);sr_fill_ellipse(c,(float)x,(float)y,23,7,0x071719u,.45f);desktop_art(c,pose.art,x+pose.offset_x,y+pose.offset_y,h);}
-  if(i>=32&&i<42){desktop_art(c,p->art+(s->flame_tick/20+i)%4,x,y,h);desktop_label(c,x,y+10,p->name,0xe9d49fu);continue;}
-  if(i==13||i==14||i==42||i==43){desktop_hatch(c,p->art,x,y,i==near,i==13?"Command center":i==14?"Laundry room":i==42?"Vault":"Workshop");continue;}
+  /* The later staff stand as the first six do: a shadow, and no name until
+   * Kilix is beside them, when the last line here gives it. */
+  if(i>=32&&i<42){sr_fill_ellipse(c,(float)x,(float)y,23,7,0x071719u,.45f);desktop_art(c,p->art+(s->flame_tick/20+i)%4,x,y,h);}
   /* The lever hangs on the east wall beside the shell desk, mirrored to face
    * the room. Its interaction point stays on the reachable floor edge. */
   if(i==12){desktop_art_mirrored(c,ZELL_ART_SWITCH,x,y+22,62);if(i!=near)desktop_label(c,x,y+28,"N-SHELL",0x91e9d8u);}
@@ -411,12 +429,38 @@ static void zell_notice_show(const zell_scene *s,sr_canvas *c,const char *hint){
  if(width<1||width>room)return;
  sr_text(c,(float)(right-width),(float)(c->h-22),line,0xe9d49fu,1,1);
 }
+/* Stretch only the straight rails of the original controller bezel. The
+ * corner plates and the turquoise crest keep their shape at wall scale. */
+static void desktop_command_surround(sr_canvas *background){
+ const zell_art *art=zell_art_get(ZELL_ART_MONITOR_CONTROLLER);
+ if(!art)return;
+ zell_rect wall=zell_command_wall_bounds(),upper,lower,body;
+ zell_command_term_layout(1,&upper,&body);
+ zell_command_term_layout(3,&lower,&body);
+ int mid=wall.x+wall.w/2,right=wall.x+wall.w,bottom=wall.y+wall.h;
+ const int sx[]={46,128,302,466,640,723},sy[]={260,325,692,737};
+ const int dx[]={wall.x,wall.x+36,mid-36,mid+36,right-36,right};
+ const int dy[]={wall.y,upper.y,lower.y+lower.h,bottom};
+ for(int row=0;row<3;row++)for(int col=0;col<5;col++){
+  if(row==1&&col>0&&col<4)continue;
+  sr_canvas strip;
+  if(!sr_canvas_init(&strip,sx[col+1]-sx[col],sy[row+1]-sy[row]))return;
+  for(int y=0;y<strip.h;y++)
+   memcpy(strip.px+(size_t)y*(size_t)strip.w,art->pixels+(size_t)(sy[row]+y)*(size_t)art->width+(size_t)sx[col],(size_t)strip.w*sizeof *strip.px);
+  sr_blit_scaled(background,&strip,dx[col],dy[row],dx[col+1]-dx[col],dy[row+1]-dy[row],1);
+  sr_canvas_free(&strip);
+ }
+}
 static void desktop_world_layer(const zell_scene *s,sr_canvas *c,int cx,int cy){
  static sr_canvas backgrounds[9];
  int room=s->room>=0&&s->room<9?s->room:0;
  sr_canvas *background=&backgrounds[room];
  const zell_art *a=zell_art_get(desktop_room_background(room));
- if(!background->px&&a){if(sr_canvas_init(background,ZELL_WORLD_W,ZELL_WORLD_H)){sr_canvas src;sr_canvas_wrap(&src,a->pixels,a->width,a->height);sr_blit_scaled(background,&src,0,0,ZELL_WORLD_W,ZELL_WORLD_H,1);}}
+ if(!background->px&&a&&sr_canvas_init(background,ZELL_WORLD_W,ZELL_WORLD_H)){
+  sr_canvas src;sr_canvas_wrap(&src,a->pixels,a->width,a->height);
+  sr_blit_scaled(background,&src,0,0,ZELL_WORLD_W,ZELL_WORLD_H,1);
+  if(room==1)desktop_command_surround(background);
+ }
  sr_clear(c,0x081319u);
  if(background->px){for(int y=0;y<c->h&&y+cy<ZELL_WORLD_H;y++){int w=c->w;if(w+cx>ZELL_WORLD_W)w=ZELL_WORLD_W-cx;memcpy(c->px+(size_t)y*(size_t)c->w,background->px+(size_t)(y+cy)*ZELL_WORLD_W+(size_t)cx,(size_t)w*4);}}
  if(s->room)desktop_room(s,c,cx,cy,false);
@@ -436,19 +480,14 @@ static void desktop_world_layer(const zell_scene *s,sr_canvas *c,int cx,int cy){
    }
   }
  }
- if(s->mode==ZELL_MODE_WALK&&(s->running||s->run_charge>0)){
+ if(s->mode==ZELL_MODE_WALK&&s->running){
   float px=s->x-(float)cx,py=s->y-(float)cy;
-  if(s->running){
    float dx=s->direction==2?-1.0f:s->direction==3?1.0f:0;
    float dy=s->direction==1?-1.0f:s->direction==0?1.0f:0;
    for(int dust=0;dust<3;dust++){
     float age=(float)((s->flame_tick+4*dust)%12),back=8+age*2;
     sr_fill_ellipse(c,px-dx*back+(dy!=0?(float)(dust-1)*5:0),py-dy*back-2,2+age*.3f,1+age*.15f,0xd6c5a2u,(12-age)/24);
    }
-  }else{
-   sr_fill_rect(c,px-19,py+8,38,4,0x11282cu,.9f);
-   sr_fill_rect(c,px-18,py+9,36*(float)s->run_charge/ZELL_RUN_CHARGE_TICKS,2,0xa2e7c3u,1);
-  }
  }
  zell_actor_pose pose=zell_desktop_pose(s,-1);
  int seat_dy=zell_seat_draw_dy(s);
@@ -458,7 +497,7 @@ static void desktop_world_layer(const zell_scene *s,sr_canvas *c,int cx,int cy){
   if(lift>0)shadow=1.f-0.55f*(float)lift/(float)ZELL_SEAT_LIFT_PEAK;
  }
  /* The shadow stays on the floor line and shrinks as the hop lifts him. */
- sr_fill_ellipse(c,s->x-(float)cx,s->y-(float)cy,17.f*shadow,5.f*shadow,0x071719u,.45f);
+ sr_fill_ellipse(c,s->x-(float)cx,s->y-(float)cy,ZELL_FOOT_RADIUS_X*shadow,ZELL_FOOT_RADIUS_Y*shadow,0x071719u,.45f);
  desktop_art(c,pose.art,(int)s->x-cx+pose.offset_x,(int)s->y-cy+pose.offset_y+seat_dy,height*3/4);
  if(s->room==4&&s->seated&&s->seat_ticks==ZELL_SEAT_HOP_TICKS)desktop_stool_front(c,cx,cy);
  if(desktop_room_foreground(s->room)>=0)desktop_registered_front(c,desktop_room_foreground(s->room),cx,cy);
@@ -475,11 +514,15 @@ static void desktop_world_layer(const zell_scene *s,sr_canvas *c,int cx,int cy){
 static void desktop_chrome(const zell_scene *s,sr_canvas *c,int cx,int cy){
  int near=zell_desktop_near(s);
  (void)cx;(void)cy;
- /* The theater picture reaches this corner at 640. Other rooms keep the map. */
- if(c->w>=500&&s->mode==ZELL_MODE_WALK&&s->room!=6){
+ /* The wall screens and theater use the full space below the vitals. */
+ if(c->w>=500&&s->mode==ZELL_MODE_WALK&&s->room!=6&&s->room!=1){
   int mx=c->w-140,my=42;sr_fill_rect(c,(float)mx,(float)my,128,88,0x0c1921u,.9f);
   sr_stroke_rect(c,(float)mx,(float)my,128,88,1,0x4b7777u,1);
-  for(int i=0;i<ZELL_STATIONS;i++)if((i<ZELL_WORKSHOP_COMPUTER||(i>=ZELL_GAME_HATCH&&i<=ZELL_LIBRARY_HATCH))&&zell_desktop_station_visible(s,i))sr_fill_circle(c,(float)(mx+4)+zell_stations[i].x*120,(float)(my+4)+zell_stations[i].y*80,2,0xd9ba79u,1);
+  for(int i=0;i<ZELL_STATIONS;i++){
+   if(!zell_desktop_station_visible(s,i))continue;
+   if(i>=ZELL_WORKSHOP_COMPUTER&&i!=ZELL_COMMAND_COMPUTER&&!zell_station_hatch(i))continue;
+   sr_fill_circle(c,(float)(mx+4)+zell_stations[i].x*120,(float)(my+4)+zell_stations[i].y*80,2,0xd9ba79u,1);
+  }
   {
    float x0,y0,x1,y1;
    zell_screen_to_world(s,0.f,0.f,&x0,&y0);
@@ -495,13 +538,149 @@ static void desktop_chrome(const zell_scene *s,sr_canvas *c,int cx,int cy){
  snprintf(status,sizeof status,"%02d:%02d  %d fps",local.tm_hour,local.tm_min,s->frame_rate);
  int sw=sr_text_width_in(SR_FONT_FIXED_8X16,status,1);sr_text(c,(float)(c->w-sw-12),7,status,0xa6d9ccu,1,1);
  sr_fill_rect(c,0,(float)(c->h-ZELL_ROOM_STATUS_STRIP),(float)c->w,ZELL_ROOM_STATUS_STRIP,0x0c1921u,.97f);
- const char *hint=s->mode==ZELL_MODE_WALK&&s->running?"Dashing | Release Shift to stop":s->mode==ZELL_MODE_WALK&&s->run_charge>0?"Charging dash... | Release Shift to cancel":s->mode==ZELL_MODE_SERVICE?"Station window | Esc back":near>=0?"Enter interact | Tab stations":c->w<500?"WASD | Shift run | Tab":"WASD walk | Hold Shift run | Tab stations";
+ const char *hint=s->mode==ZELL_MODE_WALK&&s->running?"Running | Release Shift to walk":s->mode==ZELL_MODE_SERVICE?"Station window | Esc back":near>=0?"Enter interact | Tab stations":c->w<500?"WASD | Shift run | Tab":"WASD walk | Hold Shift run | Tab stations";
+ if(s->room==1&&s->mode==ZELL_MODE_WALK){
+  if(s->command_focus)hint="F6 next shell | Alt+Esc walk";
+  else if(near<0)hint="Click a shell or F6 | WASD walk | Tab stations";
+ }
  sr_text(c,12,(float)(c->h-22),hint,0xc7d8dau,1,1);
  /* L8 calls zell_notice_show. */
  zell_notice_show(s,c,hint);
  desktop_vitals(s,c);
 }
+static void desktop_panes_button(sr_canvas *c,zell_rect r,const char *label,uint32_t fill,uint32_t edge,uint32_t ink){
+ sr_fill_rect(c,(float)r.x,(float)r.y,(float)r.w,(float)r.h,fill,1);
+ sr_stroke_rect(c,(float)r.x,(float)r.y,(float)r.w,(float)r.h,1,edge,1);
+ int tw=sr_text_width_in(SR_FONT_FIXED_8X16,label,1);
+ sr_text(c,(float)(r.x+(r.w-tw)/2),(float)(r.y+(r.h-16)/2),label,ink,1,1);
+}
+/* The Hotkeys window, over the panes below the walkway: the keys in a
+ * column, what they do beside them, each cut to fit; on a Zell too short
+ * for them all, the lines from its top and a line saying there are more. */
+static void desktop_panes_hotkeys(sr_canvas *c){
+ int line_h=ZELL_PANES_HOTKEYS_LINE_H,keys_w=27*8,w=c->w-32<820?c->w-32:820;
+ int fit=zell_panes_hotkeys_fit(c->h),top=zell_panes_hotkeys_top(c->h),more=fit<zell_panes_hotkeys_lines;
+ int h=(fit+more)*line_h+ZELL_PANES_HOTKEYS_EDGES;
+ if(w<120||h>c->h-ZELL_PANES_WALK_H-8)return;
+ int x=(c->w-w)/2,y=ZELL_PANES_WALK_H+8;
+ sr_fill_rect(c,0,(float)ZELL_PANES_WALK_H,(float)c->w,(float)(c->h-ZELL_PANES_WALK_H),0x05090cu,.55f);
+ sr_fill_rect(c,(float)x,(float)y,(float)w,(float)h,0x101b24u,.97f);
+ sr_stroke_rect(c,(float)x,(float)y,(float)w,(float)h,2,0xd9ba79u,1);
+ desktop_text(c,x+14,y+8,"Hotkeys",0xd9ba79u,w-28);
+ desktop_text(c,x+w-14-15*8,y+8,"Esc closes",0x9fb4c0u,15*8);
+ int row=y+34;
+ if(more){
+  char note[96];
+  snprintf(note,sizeof note,"Up / Down or the wheel for more: lines %d-%d of %d",top+1,top+fit,zell_panes_hotkeys_lines);
+  desktop_text(c,x+14,y+34+fit*line_h,note,0xd9ba79u,w-28);
+ }
+ for(int i=top;i<top+fit&&i<zell_panes_hotkeys_lines;i++,row+=line_h){
+  const char *text=zell_panes_hotkeys_text[i],*bar=strchr(text,'|');
+  if(text[0]=='#'){desktop_text(c,x+14,row,text+1,0x9ff0c8u,w-28);continue;}
+  if(!bar){desktop_text(c,x+14,row,text,0x9fb4c0u,w-28);continue;}
+  char keys[64];size_t n=(size_t)(bar-text)<sizeof keys-1?(size_t)(bar-text):sizeof keys-1;
+  memcpy(keys,text,n);keys[n]=0;
+  if(w>keys_w+120){
+   desktop_text(c,x+22,row,keys,0xffffffu,keys_w-12);
+   desktop_text(c,x+22+keys_w,row,bar+1,0xd6e4ecu,w-36-keys_w);
+  }else desktop_text(c,x+14,row,n?keys:bar+1,n?0xffffffu:0xd6e4ecu,w-28);
+ }
+}
+/* A pane room is the walkway, the panes' title bars and their cells, edge
+ * to edge: no HUD, no status strip, no border. The thin green line at the
+ * walkway's end is the way back. */
+static void desktop_panes_room(const zell_scene *s,sr_canvas *c){
+ int w=0,h=0,count=zell_panes_count(s->room),focus=zell_panes_focus(s->room),zoom=zell_panes_zoom(s->room);
+ bool typing=zell_panes_keys_to_pane();
+ const uint32_t *pixels=zell_panes_frame(s->room,&w,&h);
+ sr_clear(c,0x0b1218u);
+ /* The walkway: a stone back wall with the buttons on it, then planks. Its
+  * edge is lit while Kilix has the keys. */
+ sr_fill_rect(c,0,0,(float)c->w,34,0x16222bu,1);
+ for(int x=0;x<c->w;x+=48)sr_fill_rect(c,(float)x,(float)((x/48)%2?0:17),1,17,0x0f181eu,1);
+ sr_fill_rect(c,0,17,(float)c->w,1,0x0f181eu,1);
+ sr_fill_rect(c,0,34,(float)c->w,(float)(ZELL_PANES_WALK_H-36),0x26343cu,1);
+ for(int x=0;x<c->w;x+=32)sr_fill_rect(c,(float)x,34,1,(float)(ZELL_PANES_WALK_H-36),0x1b272eu,1);
+ sr_fill_rect(c,0,(float)(ZELL_PANES_WALK_H-2),(float)c->w,2,typing?0x2a3a44u:0xd9ba79u,1);
+ /* What Enter would press where Kilix stands is lit, and only that. */
+ int aim_index,aim_which,aim=zell_panes_aim(s,&aim_index,&aim_which);
+ for(int index=0;index<count;index++){
+  zell_rect bar;zell_panes_chrome_rect(s,index,&bar);
+  if(!bar.w)continue;
+  for(int agent=0;agent<zell_panes_agent_count();agent++){
+   zell_rect b;zell_panes_button_rect(s,index,agent,&b);
+   if(!b.w)break;
+   bool under=aim==ZELL_PANES_AIM_AGENT&&aim_index==index&&aim_which==agent;
+   desktop_panes_button(c,b,zell_panes_agent_label(agent),under?0x2f5a4cu:0x1f3444u,under?0x9ff0c8u:0x5f8faeu,0xe8f2f6u);
+  }
+  zell_rect pad;zell_panes_pad_rect(s,index,&pad);
+  if(pad.w){
+   bool under=aim==ZELL_PANES_AIM_PAD&&aim_index==index;
+   desktop_panes_button(c,pad,"Type",under?0x5a4a24u:0x1b2a33u,under?0xd9ba79u:0x4f6a7au,under?0xffffffu:0xb9c8d0u);
+  }
+  /* The title bar: brightest on the pane that has the keys; edged in gold
+   * on the pane Enter would give them to. */
+  bool focused=index==focus,keys=focused&&typing;
+  sr_fill_rect(c,(float)bar.x,(float)bar.y,(float)bar.w,(float)bar.h,keys?0x2f5878u:focused?0x23394bu:0x18242eu,1);
+  if(keys)sr_fill_rect(c,(float)bar.x,(float)bar.y,3,(float)bar.h,0xd9ba79u,1);
+  if((aim==ZELL_PANES_AIM_PANE||aim==ZELL_PANES_AIM_PAD)&&aim_index==index)
+   sr_fill_rect(c,(float)bar.x,(float)bar.y,(float)bar.w,2,0xd9ba79u,1);
+  zell_rect zoom_b,restart_b,end_b;
+  zell_panes_chrome_button(s,index,ZELL_PANES_ZOOM,&zoom_b);zell_panes_chrome_button(s,index,ZELL_PANES_RESTART,&restart_b);
+  zell_panes_chrome_button(s,index,ZELL_PANES_END,&end_b);
+  char text[160];const char *notice=zell_panes_notice(s->room,index),*title=zell_panes_title(s->room,index);
+  unsigned long long back=(unsigned long long)zell_panes_lines_back(s->room,index);
+  if(notice)snprintf(text,sizeof text,"%d %s",index+1,notice);
+  else if(back)snprintf(text,sizeof text,"%d %s  %llu %s back",index+1,title[0]?title:"shell",back,back==1?"line":"lines");
+  else snprintf(text,sizeof text,"%d %s",index+1,title[0]?title:"shell");
+  int room_for=(end_b.w?end_b.x:zoom_b.w?zoom_b.x:bar.x+bar.w)-bar.x-16;
+  desktop_text(c,bar.x+8,bar.y+2,text,notice?0xe5ad87u:keys?0xffffffu:0x9fb4c0u,room_for);
+  bool aimed=aim==ZELL_PANES_AIM_CHROME&&aim_index==index;
+  if(end_b.w){
+   bool under=aimed&&aim_which==ZELL_PANES_END;
+   desktop_panes_button(c,end_b,"End",under?0x3f7a64u:0x2f5a4cu,under?0xffffffu:0x9ff0c8u,0xe8f2f6u);
+  }
+  if(zoom_b.w){
+   bool under=aimed&&aim_which==ZELL_PANES_ZOOM;
+   desktop_panes_button(c,zoom_b,zoom==index?"Unzoom":"Zoom",under?0x2f5a4cu:0x1f3444u,under?0x9ff0c8u:0x5f8faeu,0xd6e4ec);
+  }
+  if(restart_b.w){
+   bool sure=zell_panes_confirming(s->room,index),under=aimed&&aim_which==ZELL_PANES_RESTART;
+   desktop_panes_button(c,restart_b,sure?"Sure?":"Restart",sure?0x6a2c2cu:under?0x2f5a4cu:0x1f3444u,sure?0xe5ad87u:under?0x9ff0c8u:0x5f8faeu,0xd6e4ec);
+  }
+ }
+ if(pixels){
+  sr_canvas frame;sr_canvas_wrap(&frame,(uint32_t *)pixels,w,h);
+  sr_blit_scaled(c,&frame,0,ZELL_PANES_CELLS_Y,w,h,1);
+  /* Over the cells, a pane's scrollbar while it is scrolled back or the
+   * pointer is on it. */
+  for(int index=0;index<count;index++){
+   zell_rect track,thumb;zell_panes_scrollbar_rect(s,index,&track,&thumb);
+   bool hover=zell_panes_bar_hover()==index;
+   if(!track.w||(!hover&&!zell_panes_lines_back(s->room,index)))continue;
+   sr_fill_rect(c,(float)track.x,(float)track.y,(float)track.w,(float)track.h,0x0b1218u,.75f);
+   sr_fill_rect(c,(float)thumb.x,(float)thumb.y,(float)thumb.w,(float)thumb.h,hover?0x9ff0c8u:0x5f8faeu,1);
+  }
+ }else{
+  char text[200];const char *error=zell_panes_error();
+  if(error[0])snprintf(text,sizeof text,"%s",error);
+  else snprintf(text,sizeof text,"Opening %d panes...",count);
+  desktop_label(c,c->w/2,ZELL_PANES_CELLS_Y+(c->h-ZELL_PANES_CELLS_Y)/2,text,error[0]?0xe5ad87u:0xb9f8dbu);
+ }
+ zell_rect hotkeys;zell_panes_hotkeys_rect(s,&hotkeys);
+ if(hotkeys.w){
+  bool under=aim==ZELL_PANES_AIM_HOTKEYS||zell_panes_hotkeys_open();
+  desktop_panes_button(c,hotkeys,ZELL_PANES_HOTKEYS_LABEL,under?0x5a4a24u:0x2a2f45u,under?0xd9ba79u:0x8f8fd0u,0xffffffu);
+ }
+ zell_rect exit;zell_panes_exit_rect(s,&exit);
+ sr_fill_rect(c,(float)exit.x,(float)exit.y,(float)exit.w,(float)exit.h,ZELL_PANES_EXIT_RGB,1);
+ zell_actor_pose pose=zell_desktop_pose(s,-1);
+ sr_fill_ellipse(c,s->x,s->y,12.f,4.f,0x071719u,.45f);
+ desktop_art(c,pose.art,(int)s->x+pose.offset_x,(int)s->y+pose.offset_y,ZELL_PANES_KILIX_H);
+ if(zell_panes_hotkeys_open())desktop_panes_hotkeys(c);
+}
 static void desktop_base(const zell_scene *s,sr_canvas *c){
+ if(ZELL_ROOM_IS_PANES(s->room)){desktop_panes_room(s,c);return;}
  int cx,cy;zell_desktop_camera(s,&cx,&cy);
  static sr_canvas world;
  if(!world.px&&!sr_canvas_init(&world,ZELL_WORLD_W,ZELL_WORLD_H)){
@@ -577,7 +756,7 @@ static void desktop_dialogue(const zell_scene *s,sr_canvas *c) {
 }
 
 /* Window buttons: 0 minimize (bar at the foot), 1 maximize (one frame),
- * 2 restore (two overlapped frames). Drawn shapes, so no font glyph is needed. */
+ * 2 restore (two overlapped frames), 3 close (a cross). */
 static void desktop_button(const zell_scene *s,sr_canvas *c,const zell_rect *r,int kind){
  bool hover=s->mouse_valid&&s->mouse_x>=r->x&&s->mouse_x<r->x+r->w&&s->mouse_y>=r->y&&s->mouse_y<r->y+r->h;
  uint32_t ink=hover?0xf4ffe9u:0xabc8c0u;
@@ -586,7 +765,7 @@ static void desktop_button(const zell_scene *s,sr_canvas *c,const zell_rect *r,i
  int cx=r->x+r->w/2,cy=r->y+r->h/2;
  if(kind==0)sr_fill_rect(c,(float)(cx-6),(float)(cy+4),12,2,ink,1);
  else if(kind==1)sr_stroke_rect(c,(float)(cx-6),(float)(cy-5),12,10,2,ink,1);
- else if(kind==3){sr_line(c,(float)(cx-5),(float)(cy-5),(float)(cx+5),(float)(cy+5),2,ink,1,0,0);sr_line(c,(float)(cx-5),(float)(cy+5),(float)(cx+5),(float)(cy-5),2,ink,1,0,0);}
+ else if(kind==3)desktop_cross(c,cx,cy,5,ink);
  else {sr_stroke_rect(c,(float)(cx-3),(float)(cy-6),10,8,1,ink,1);sr_fill_rect(c,(float)(cx-7),(float)(cy-2),10,8,hover?0x2f5f63u:0x1b3a42u,1);sr_stroke_rect(c,(float)(cx-7),(float)(cy-2),10,8,1,ink,1);}
 }
 /* The minimized terminal: a button on the bottom bar, in every mode. */
@@ -611,12 +790,16 @@ static void desktop_service(const zell_scene *s,sr_canvas *c){
    sr_fill_rect(c,(float)l.frame.x,(float)l.frame.y,(float)l.frame.w,(float)l.frame.h,0x10232cu,1);
    sr_stroke_rect(c,(float)l.frame.x,(float)l.frame.y,(float)l.frame.w,(float)l.frame.h,2,0x74b8a9u,1);
    sr_canvas frame;sr_canvas_wrap(&frame,s->terminal_pixels,w,h);sr_blit_scaled(c,&frame,x,y,w,h,1);
-   char title[160];snprintf(title,sizeof title,"%s / %s",s->terminal_title[0]?s->terminal_title:"ZELL",s->terminal_private?"PRIVATE TERMINAL":"INTERACTIVE TERMINAL");
+   /* The Command computer's shell is known by the terminal's own title,
+    * which stays with it: Kilix may stand at another station by the time a
+    * minimised terminal is brought back. */
+   bool shell=!strcmp(s->terminal_title,zell_stations[ZELL_COMMAND_COMPUTER].name);
+   char title[160];snprintf(title,sizeof title,"%s / %s",s->terminal_title[0]?s->terminal_title:"ZELL",shell?"SHELL":s->terminal_private?"PRIVATE TERMINAL":"INTERACTIVE TERMINAL");
    desktop_text(c,x,y-23,title,0xe5cf98u,w-104);
    desktop_button(s,c,&l.minimize,0);
    desktop_button(s,c,&l.maximize,s->terminal_maximized?2:1);
    desktop_button(s,c,&l.close,3);
-   desktop_text(c,x,y+h+7,s->terminal_private?"Hidden secret input | Ctrl-C cancels":"Type here for sudo | Ctrl-C interrupts command",0xabc8c0u,w);
+   desktop_text(c,x,y+h+7,shell?"Keyboard goes to the shell | type exit to leave":s->terminal_private?"Hidden secret input | Ctrl-C cancels":"Type here for sudo | Ctrl-C interrupts command",0xabc8c0u,w);
   }else desktop_label(c,c->w/2,c->h/2,"Opening Neuronte terminal...",0xc9e4d5u);
   return;
  }
@@ -710,3 +893,5 @@ void zell_ui_blit(struct sr_canvas *canvas,int dx,int dy,int dw,int dh,const uin
  sr_canvas_wrap(&src,(uint32_t *)pixels,src_w,src_h);
  sr_blit_scaled(canvas,&src,dx+x,dy+y,w,h,1.f);
 }
+
+#include "desktop_hud.inc"

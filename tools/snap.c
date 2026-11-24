@@ -167,7 +167,7 @@ int main(int argc, char **argv)
         scene.weather_state=1;scene.weather_icon=3;
         strcpy(scene.weather_temperature,"47 F");strcpy(scene.weather_place,"Example location");strcpy(scene.weather_condition,"Rain showers");
         failed+=shot(&scene,&canvas,argv[1],"weather-map");scene.weather_state=0;
-        scene.mode=ZELL_MODE_WALK;scene.room=1;scene.x=ZELL_WORLD_W*.50f;scene.y=ZELL_WORLD_H*.55f;
+        scene.mode=ZELL_MODE_WALK;scene.room=1;scene.x=ZELL_WORLD_W*.50f;scene.y=ZELL_WORLD_H*ZELL_ROOM_ENTRY_Y;
         scene.coding_yolo_ready=true;scene.coding_yolo=false;
         failed+=shot(&scene,&canvas,argv[1],"command-center");
         /* The Mana console with a reading, then partway through its zoom. */
@@ -205,8 +205,38 @@ int main(int argc, char **argv)
             }
         }
         scene.debug_blocks[0].enabled=false;
-        /* Kilix behind a worker screen with only his head showing. */
-        scene.room=1;scene.x=ZELL_WORLD_W*.25f;scene.y=ZELL_WORLD_H*.50f;failed+=shot(&scene,&canvas,argv[1],"command-behind");
+        /* Kilix at the floor edge of the worker screens. */
+        zell_rect wall=zell_command_wall_bounds();
+        scene.room=1;scene.x=ZELL_WORLD_W*.25f;scene.y=(float)(wall.y+wall.h+2);failed+=shot(&scene,&canvas,argv[1],"command-behind");
+        /* Kilix beside the Key Master, then at the central shell. */
+        scene.x=ZELL_WORLD_W*.865f;scene.y=ZELL_WORLD_H*.94f;failed+=shot(&scene,&canvas,argv[1],"command-key-master");
+        scene.x=ZELL_WORLD_W*.50f;scene.y=(float)(zell_stations[ZELL_COMMAND_COMPUTER].y*ZELL_WORLD_H)+20.f;failed+=shot(&scene,&canvas,argv[1],"command-computer");
+        /* The west tunnel from the landing, then at its lit threshold. */
+        scene.y=ZELL_COMMAND_LANDING_Y;scene.direction=ZELL_DIR_LEFT;
+        scene.x=ZELL_WORLD_W*.25f;failed+=shot(&scene,&canvas,argv[1],"command-strip");
+        scene.x=ZELL_COMMAND_RETURN_X;failed+=shot(&scene,&canvas,argv[1],"command-opening");
+        /* The two pane rooms before their helper has painted anything, with
+         * two agents' buttons: Kilix has the keys on the way in. */
+        zell_panes_test_line("G codex Codex");zell_panes_test_line("G grok Grok");
+        zell_panes_enter(&scene,ZELL_ROOM_PANES_LEFT);failed+=shot(&scene,&canvas,argv[1],"panes-left");
+        zell_panes_enter(&scene,ZELL_ROOM_PANES_RIGHT);failed+=shot(&scene,&canvas,argv[1],"panes-right");
+        /* Pane 2 clicked, so it has the keys and says what it runs; then
+         * pane 3 zoomed over the room. */
+        {
+            zell_rect pane,zoom;
+            zell_panes_test_line("T 10 1 vim");
+            zell_panes_pane_rect(&scene,1,&pane);
+            scene.mouse_valid=true;scene.mouse_click=true;scene.mouse_x=pane.x+4;scene.mouse_y=pane.y+40;
+            zell_panes_click(&scene);failed+=shot(&scene,&canvas,argv[1],"panes-typing");
+            zell_panes_chrome_button(&scene,2,0,&zoom);
+            zell_panes_pane_rect(&scene,2,&pane);
+            scene.mouse_click=true;scene.mouse_x=zoom.w?zoom.x+2:pane.x+4;scene.mouse_y=zoom.w?zoom.y+2:pane.y+40;
+            zell_panes_click(&scene);
+            if(zoom.w)failed+=shot(&scene,&canvas,argv[1],"panes-zoom");
+            scene.mouse_valid=false;
+            zell_panes_test_reset();
+        }
+        scene.room=1;scene.direction=ZELL_DIR_RIGHT;
         scene.x=ZELL_WORLD_W*.50f;scene.y=ZELL_WORLD_H*.55f;
         scene.room=0;scene.hp=57;scene.os_health=70;scene.dirty_files=13;scene.update_age_days=3;
         scene.mouse_valid=true;scene.mouse_x=32;scene.mouse_y=50;

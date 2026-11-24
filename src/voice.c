@@ -1,4 +1,5 @@
 #include "voice.h"
+#include "runtime.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -273,21 +274,7 @@ static int find_on_path(char *destination, size_t capacity, const char *name)
 
 static int synth_beside_exe(char *destination, size_t capacity)
 {
-    char exe[PATH_MAX];
-    ssize_t count;
-    char *slash;
-
-    count = readlink("/proc/self/exe", exe, sizeof exe - 1);
-    if (count <= 0 || (size_t)count >= sizeof exe) {
-        return 0;
-    }
-    exe[count] = '\0';
-    slash = strrchr(exe, '/');
-    if (slash == NULL) {
-        return 0;
-    }
-    *slash = '\0';
-    return join_path(destination, capacity, exe, "tools/paradee_speak.py") &&
+    return zell_runtime_tool_path(destination, capacity, "paradee_speak.py") &&
            regular_file(destination);
 }
 

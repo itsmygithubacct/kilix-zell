@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
@@ -132,21 +133,16 @@ static void conversation_string(FILE *stream,const char *text)
     fputc('"',stream);
 }
 
-int zell_conversation_save(const char *question,const char *answer)
+static int append_conversation(int directory,const char *question,const char *answer)
 {
-    char path[512],settings[128];
-    snprintf(path,sizeof path,"%s",zell_history_state_path());
-    char *name=strrchr(path,'/');name=name?name+1:path;
-    size_t left=sizeof path-(size_t)(name-path);
-    snprintf(name,left,"conversation-settings.json");
-    int fd=open(path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC);
+    char settings[128];
+    int fd=openat(directory,"conversation-settings.json",O_RDONLY|O_NOFOLLOW|O_CLOEXEC);
     if(fd<0)return 0;
     ssize_t n=read(fd,settings,sizeof settings-1);close(fd);
     if(n<=0)return 0;
     settings[n]=0;const char *enabled=after_key(settings,"enabled");
     if(!enabled||strncmp(enabled,"true",4))return 0;
-    snprintf(name,left,"wizard-conversations.jsonl");
-    fd=open(path,O_WRONLY|O_CREAT|O_APPEND|O_NOFOLLOW|O_CLOEXEC,0600);
+    fd=openat(directory,"wizard-conversations.jsonl",O_WRONLY|O_CREAT|O_APPEND|O_NOFOLLOW|O_CLOEXEC,0600);
     if(fd<0)return -1;
     struct stat st;
     if(fstat(fd,&st)||!S_ISREG(st.st_mode)||st.st_uid!=getuid()||fchmod(fd,0600)){
@@ -160,6 +156,21 @@ int zell_conversation_save(const char *question,const char *answer)
     fputs(",\"text\":",stream);conversation_string(stream,answer?answer:"");
     fputs("}\n",stream);
     return fclose(stream)==0?1:-1;
+}
+
+int zell_conversation_save(const char *question,const char *answer)
+{
+    char path[512];
+    snprintf(path,sizeof path,"%s",zell_history_state_path());
+    char *slash=strrchr(path,'/');
+    if(slash)slash[1]='\0';
+    int directory=open(slash?path:".",O_RDONLY|O_DIRECTORY|O_CLOEXEC);
+    if(directory<0)return 0;
+    /* The Noticeboard holds this lock while disabling or clearing history. */
+    int result=-1;
+    if(flock(directory,LOCK_EX)==0)result=append_conversation(directory,question,answer);
+    close(directory);
+    return result;
 }
 
 int zell_history_parse(const char *text, int *enabled,

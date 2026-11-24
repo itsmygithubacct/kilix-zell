@@ -111,7 +111,7 @@ def run_to_completion(command):
         signal.signal(signal.SIGINT, previous)
 
 
-def main():
+def main(pause=True):
     from zell_schedule import job_start,job_finish
     job=job_start('admin.update','Operating-system update')
     print('$ ' + COMMAND, flush=True)
@@ -129,10 +129,11 @@ def main():
             print('\nOS update completed, but its completion time could not be saved.', flush=True)
     else:
         print(f'\nOS update did not complete (exit {result}).', flush=True)
-    try:
-        input('Press Enter to return to the room. ')
-    except (EOFError, KeyboardInterrupt):
-        pass
+    if pause:
+        try:
+            input('Press Enter to return to the room. ')
+        except (EOFError, KeyboardInterrupt):
+            pass
     zell_debug.log('update.finished', status=result)
     return result if result >= 0 else 128 - result
 

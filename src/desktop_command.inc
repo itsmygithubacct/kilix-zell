@@ -19,7 +19,12 @@ static void zell_room_logical(const zell_scene *s,int *left,int *top,int *right,
   *left=0;*top=0;*right=ZELL_WORLD_W;*bottom=ZELL_WORLD_H;
   return;
  }
- /* Command Center and the older downstairs rooms: floor corridor x=.135W..865W,
+ /* Fit the full screen wall and both side doorways under the vitals. */
+ if(s->room==1){
+  *left=0;*right=ZELL_WORLD_W;*top=ZELL_ROOM_HUD_BOTTOM;*bottom=ZELL_WORLD_H-ZELL_ROOM_STATUS_STRIP;
+  return;
+ }
+ /* The older downstairs rooms: floor corridor x=.135W..865W,
   * y=64 through the exit. The Workshop stool (opaque from y=291) and the
   * stair corridors are inside this rectangle. */
  *left=(int)(0.135f*(float)ZELL_WORLD_W);
@@ -32,7 +37,7 @@ static void zell_room_view_fit(zell_scene *s){
  logical_w=logical_right-logical_x;logical_h=logical_bottom-logical_y;
  int width=s->width>0?s->width:1,height=s->height>0?s->height:1;
  int hud=ZELL_ROOM_HUD_BOTTOM,status=ZELL_ROOM_STATUS_STRIP,avail_h=height-hud-status;
- int full=s->room>=5&&s->room<=8;
+ int full=s->room==1||(s->room>=5&&s->room<=8);
  float bare_w,bare_h,bare,fit_h,scale,scaled_w,left,top;
  if(logical_w<1)logical_w=1;
  if(logical_h<1)logical_h=1;

@@ -2,6 +2,13 @@
 
 `kilix-zell` is MIT licensed. See [LICENSE](LICENSE).
 
+The bronze shield on the desktop character uses the flame-cat silhouette from the Kilix notification icon. The equipment sprite is registered to the original cast and walk poses by the desktop art compiler.
+
+## NeuroTerm
+
+The Command Center uses Kilix NeuroTerm and its bundled libvterm under the
+MIT license. Runtime packages include both notices in the licenses directory.
+
 ## Shellda sprites
 
 `SPR_EN_WIZARD` in `src/sprites.c` is copied from Shellda's
@@ -67,7 +74,17 @@ repository. `MODULES` overrides the default `../../kilix-modules`.
 
 Each library keeps its own MIT notice.
 
-`zell-neuronte`, the optional build, also links Neuronte (`libneuronte.a`)
+`zell-neuronte`, the optional build, links the canvas of `neuronte-sdk` in
+place of soft-raster: one source file of that module,
+`src/neuronte_sdk_canvas.c`, compiled into the program. It is MIT licensed
+and is not copied into this repository. That file is adapted from
+soft-raster (its pixel buffer, clear, flat fill, RGBA packing and PPM
+writer, kept to the same arithmetic) and carries soft-raster's copyright
+lines and MIT notice in full. The runtime archive carries both licences, as
+`licenses/neuronte-sdk` and `licenses/soft-raster`. `src/canvas.c` here is
+Zell's own code and holds none of either.
+
+The build also links Neuronte (`libneuronte.a`)
 and loads its weight file at run time. Neuronte is MIT licensed, and its
 weights and shapes were made for that project. Neither is copied into
 this repository.

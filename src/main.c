@@ -6,6 +6,7 @@
 #include "history.h"
 #include "model.h"
 #include "router.h"
+#include "runtime.h"
 #include "scene.h"
 #include "voice.h"
 
@@ -14,6 +15,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
@@ -36,6 +38,20 @@ static void on_signal(int signal_number)
     stop_requested = 1;
 }
 
+/* Zell stops as it does on SIGTERM when its window closes (SIGHUP) or a
+ * quit is asked (SIGQUIT) too, so it gives Kilix back the keys a pane room
+ * took. */
+static void catch_stop_signals(void)
+{
+    struct sigaction action;
+    memset(&action, 0, sizeof action);
+    action.sa_handler = on_signal;
+    sigaction(SIGINT, &action, NULL);
+    sigaction(SIGTERM, &action, NULL);
+    sigaction(SIGHUP, &action, NULL);
+    sigaction(SIGQUIT, &action, NULL);
+}
+
 static int64_t now_ms(void)
 {
     struct timespec ts;
@@ -43,6 +59,7 @@ static int64_t now_ms(void)
     return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
+#include "command_term.h"
 #include "desktop_input.inc"
 
 /* Samples the present loop twice a second. The first half second stays 0. */
@@ -775,17 +792,24 @@ static void pump(zell_proc *proc, zell_turn *turn, zell_scene *scene)
     finish_output(turn, scene, status);
 }
 
-static unsigned typed_character(const kittykb_event *event)
+static size_t typed_text(const kittykb_event *event, char *out)
 {
-    if (event->text_length > 0 && event->text[0] >= 32 && event->text[0] <= 126) {
-        return event->text[0];
+    size_t count = 0;
+    if (event->text_length > 0) {
+        for (size_t i = 0; i < event->text_length; i++) {
+            if (event->text[i] >= 32 && event->text[i] <= 126)
+                out[count++] = (char)event->text[i];
+        }
+        return count;
     }
     if ((event->modifiers & KITTYKB_MOD_SHIFT) != 0 &&
         event->shifted_key >= 32 && event->shifted_key <= 126) {
-        return event->shifted_key;
+        out[0] = (char)event->shifted_key;
+        return 1;
     }
     if (event->key >= 32 && event->key <= 126) {
-        return event->key;
+        out[0] = (char)event->key;
+        return 1;
     }
     return 0;
 }
@@ -837,11 +861,94 @@ static size_t terminal_key_bytes(const kittykb_event *event,unsigned char *out){
     return n;
 }
 
+/* Let the VT encode cursor and function keys in its current application mode. */
+static void command_key(int index,const kittykb_event *event){
+    static const struct {uint32_t input;VTermKey vt;} keys[]={
+        {KITTYKB_KEY_ENTER,VTERM_KEY_ENTER},{KITTYKB_KEY_KP_ENTER,VTERM_KEY_ENTER},
+        {KITTYKB_KEY_BACKSPACE,VTERM_KEY_BACKSPACE},{KITTYKB_KEY_TAB,VTERM_KEY_TAB},
+        {KITTYKB_KEY_ESCAPE,VTERM_KEY_ESCAPE},{KITTYKB_KEY_UP,VTERM_KEY_UP},
+        {KITTYKB_KEY_DOWN,VTERM_KEY_DOWN},{KITTYKB_KEY_LEFT,VTERM_KEY_LEFT},
+        {KITTYKB_KEY_RIGHT,VTERM_KEY_RIGHT},{KITTYKB_KEY_INSERT,VTERM_KEY_INS},
+        {KITTYKB_KEY_DELETE,VTERM_KEY_DEL},{KITTYKB_KEY_HOME,VTERM_KEY_HOME},
+        {KITTYKB_KEY_END,VTERM_KEY_END},{KITTYKB_KEY_PAGE_UP,VTERM_KEY_PAGEUP},
+        {KITTYKB_KEY_PAGE_DOWN,VTERM_KEY_PAGEDOWN}
+    };
+    VTermModifier mods=(VTermModifier)((event->modifiers&KITTYKB_MOD_SHIFT?VTERM_MOD_SHIFT:0)|
+        (event->modifiers&KITTYKB_MOD_CTRL?VTERM_MOD_CTRL:0)|(event->modifiers&KITTYKB_MOD_ALT?VTERM_MOD_ALT:0));
+    for(size_t i=0;i<sizeof keys/sizeof keys[0];i++){
+        if(event->key==keys[i].input){zell_command_term_key(index,keys[i].vt,mods);return;}
+    }
+    if(event->key>=KITTYKB_KEY_F1&&event->key<=KITTYKB_KEY_F12){
+        zell_command_term_key(index,(VTermKey)VTERM_KEY_FUNCTION(event->key-KITTYKB_KEY_F1+1),mods);
+        return;
+    }
+    unsigned char bytes[TERMINAL_KEY_BYTES];size_t length=terminal_key_bytes(event,bytes);
+    if(length)zell_command_term_write(index,bytes,length);
+}
+
+static bool command_cycle(zell_scene *s,const kittykb_event *event){
+    if(event->key!=KITTYKB_KEY_F6||(event->modifiers&(KITTYKB_MOD_CTRL|KITTYKB_MOD_ALT|KITTYKB_MOD_SUPER)))return false;
+    if(event->action==KITTYKB_ACTION_PRESS){
+        /* Reading order across both rows. */
+        static const int order[]={1,0,2,3,ZELL_COMMAND_SHELL,4};
+        int step=(event->modifiers&KITTYKB_MOD_SHIFT)?-1:1;
+        int pos=step>0?-1:0;
+        for(int i=0;i<ZELL_COMMAND_TERMS;i++)if(s->command_focus==order[i]+1){pos=i;break;}
+        zell_command_focus(s,order[(pos+step+ZELL_COMMAND_TERMS)%ZELL_COMMAND_TERMS]);
+    }
+    return true;
+}
+
+typedef struct { bool left,right,up,down,shifted_tap; } walk_keys;
+
+/* A press and its release can both arrive between frames. */
+static void walk_press(walk_keys *move,const kittykb_event *event,bool wasd)
+{
+    if(event->action!=KITTYKB_ACTION_PRESS||
+       (event->modifiers&(KITTYKB_MOD_CTRL|KITTYKB_MOD_ALT|KITTYKB_MOD_SUPER)))return;
+    uint32_t key=event->key;
+    if(key==KITTYKB_KEY_LEFT||(wasd&&(key=='a'||key=='A')))move->left=true;
+    else if(key==KITTYKB_KEY_RIGHT||(wasd&&(key=='d'||key=='D')))move->right=true;
+    else if(key==KITTYKB_KEY_UP||(wasd&&(key=='w'||key=='W')))move->up=true;
+    else if(key==KITTYKB_KEY_DOWN||(wasd&&(key=='s'||key=='S')))move->down=true;
+    else return;
+    if(event->modifiers&KITTYKB_MOD_SHIFT)move->shifted_tap=true;
+}
+
 static void read_controls(zell_scene *scene, zell_controls *controls)
 {
     kittykb_event event;
 
     memset(controls, 0, sizeof *controls);
+    /* A paste of more than one line waits for its answer: nothing else
+     * moves meanwhile. */
+    if(paste_answer(scene))return;
+    if(scene->desktop&&scene->utility_panel){
+        int term=zell_input_terminal(scene);
+        while(next_key(&event)){
+            if(event.action==KITTYKB_ACTION_RELEASE)continue;
+            if(event.key==KITTYKB_KEY_ESCAPE&&(term<0||(event.modifiers&KITTYKB_MOD_ALT))){
+                scene->utility_term=scene->utility_panel=0;return;
+            }
+            if(term>=0){command_key(term,&event);continue;}
+            if(scene->utility_panel==ZELL_MESSAGES_PANEL){
+                int step=event.key==KITTYKB_KEY_DOWN?1:event.key==KITTYKB_KEY_UP?-1:
+                    event.key==KITTYKB_KEY_PAGE_DOWN?5:event.key==KITTYKB_KEY_PAGE_UP?-5:0;
+                zell_messages_scroll(scene,step);
+            }
+        }
+        return;
+    }
+    if(scene->desktop&&scene->room==1&&scene->mode==ZELL_MODE_WALK&&scene->command_focus){
+        while(next_key(&event)){
+            if(event.action==KITTYKB_ACTION_RELEASE||command_cycle(scene,&event))continue;
+            if(event.key==KITTYKB_KEY_ESCAPE&&(event.modifiers&KITTYKB_MOD_ALT)){
+                zell_command_focus(scene,-1);return;
+            }
+            command_key(scene->command_focus-1,&event);
+        }
+        return;
+    }
     bool page_keys = zell_theater_wants_keys(scene);
     bool typing = scene->mode == ZELL_MODE_QUESTION || scene->mode == ZELL_MODE_TYPE || scene->mode==ZELL_MODE_LAUNCHER ||
                   (scene->mode == ZELL_MODE_SERVICE && scene->service_phase == 1) ||
@@ -850,7 +957,98 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
     controls->run = !typing &&
         (kittykb_input_key_down(&keyboard.input, KITTYKB_KEY_LEFT_SHIFT) ||
          kittykb_input_key_down(&keyboard.input, KITTYKB_KEY_RIGHT_SHIFT));
+    bool pane_room=scene->desktop&&ZELL_ROOM_IS_PANES(scene->room);
+    bool wasd=!typing&&!pane_room;
+    walk_keys move={
+        .left=kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_LEFT) ||
+            (wasd && (kittykb_input_key_down(&keyboard.input,'a') || kittykb_input_key_down(&keyboard.input,'A'))),
+        .right=kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_RIGHT) ||
+            (wasd && (kittykb_input_key_down(&keyboard.input,'d') || kittykb_input_key_down(&keyboard.input,'D'))),
+        .up=kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_UP) ||
+            (wasd && (kittykb_input_key_down(&keyboard.input,'w') || kittykb_input_key_down(&keyboard.input,'W'))),
+        .down=kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_DOWN) ||
+            (wasd && (kittykb_input_key_down(&keyboard.input,'s') || kittykb_input_key_down(&keyboard.input,'S')))
+    };
 
+    /* In a pane room the keys are a pane's after a click on it, every key
+     * of them; after a click on the walkway they are Kilix's: the arrows
+     * walk him, with Shift run him, and Enter or Space presses the button
+     * he stands on. */
+    if(pane_room){
+        controls->run=controls->run&&!zell_panes_keys_to_pane();
+        /* Alt with the arrows moves between the panes and the walkway: he
+         * does not walk then. */
+        bool alt_held=kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_LEFT_ALT)||kittykb_input_key_down(&keyboard.input,KITTYKB_KEY_RIGHT_ALT);
+        if(zell_panes_hotkeys_open()||zell_panes_keys_to_pane()||alt_held)move=(walk_keys){0};
+        /* The key that pressed a button is not the pane's until it is let go:
+         * its repeats would follow the agent's command in. */
+        static uint32_t pressed_with;
+        while(next_key(&event)){
+            if(pressed_with&&event.key==pressed_with&&event.action!=KITTYKB_ACTION_PRESS){
+                if(event.action==KITTYKB_ACTION_RELEASE)pressed_with=0;
+                continue;
+            }
+            uint32_t mods=event.modifiers&(KITTYKB_MOD_ALT|KITTYKB_MOD_CTRL|KITTYKB_MOD_SHIFT|KITTYKB_MOD_SUPER);
+            bool pressed=event.action==KITTYKB_ACTION_PRESS;
+            /* The Hotkeys window: F1 opens it; while it is open, Esc, Enter,
+             * Space, q or F1 closes it and no key goes anywhere else. */
+            if(zell_panes_hotkeys_open()){
+                int fit=zell_panes_hotkeys_fit(scene->height);
+                int by=event.key==KITTYKB_KEY_UP||event.key=='k'?-1:event.key==KITTYKB_KEY_DOWN||event.key=='j'?1:
+                       event.key==KITTYKB_KEY_PAGE_UP?1-fit:event.key==KITTYKB_KEY_PAGE_DOWN?fit-1:
+                       event.key==KITTYKB_KEY_HOME?-zell_panes_hotkeys_lines:event.key==KITTYKB_KEY_END?zell_panes_hotkeys_lines:0;
+                if(by&&!mods&&event.action!=KITTYKB_ACTION_RELEASE)zell_panes_hotkeys_scroll(scene,by);
+                else if(pressed&&!mods&&(event.key==KITTYKB_KEY_ESCAPE||event.key==KITTYKB_KEY_ENTER||event.key==KITTYKB_KEY_KP_ENTER||
+                                    event.key==' '||event.key=='q'||event.key==KITTYKB_KEY_F1)){
+                    zell_panes_hotkeys_show(false);
+                    pressed_with=event.key;
+                }
+                continue;
+            }
+            /* From a pane, F1 is the program's (help, in many). */
+            if(event.key==KITTYKB_KEY_F1&&!mods&&!zell_panes_keys_to_pane()){
+                if(pressed){zell_panes_hotkeys_show(true);pressed_with=event.key;}
+                continue;
+            }
+            /* Kilix's window keys, which it hands to Zell here: Ctrl+Tab and
+             * Ctrl+Shift+Tab go round the panes, Ctrl+Alt+Z zooms. */
+            if(event.key==KITTYKB_KEY_TAB&&(mods==KITTYKB_MOD_CTRL||mods==(KITTYKB_MOD_CTRL|KITTYKB_MOD_SHIFT))){
+                if(pressed){(void)zell_panes_cycle(scene,mods&KITTYKB_MOD_SHIFT?-1:1);pressed_with=event.key;}
+                continue;
+            }
+            if((event.key=='z'||event.key=='Z')&&mods==(KITTYKB_MOD_CTRL|KITTYKB_MOD_ALT)){
+                if(pressed){(void)zell_panes_zoom_key(scene);pressed_with=event.key;}
+                continue;
+            }
+            /* Alt and an arrow, nothing else held: never the pane's. */
+            if((event.modifiers&(KITTYKB_MOD_ALT|KITTYKB_MOD_CTRL|KITTYKB_MOD_SHIFT|KITTYKB_MOD_SUPER))==KITTYKB_MOD_ALT&&
+               (event.key==KITTYKB_KEY_LEFT||event.key==KITTYKB_KEY_RIGHT||event.key==KITTYKB_KEY_UP||event.key==KITTYKB_KEY_DOWN)){
+                /* Its repeats and release are not the pane's, Alt let go
+                 * first or not. */
+                if(event.action==KITTYKB_ACTION_PRESS){
+                    (void)zell_panes_move(scene,event.key==KITTYKB_KEY_LEFT?-1:event.key==KITTYKB_KEY_RIGHT?1:0,
+                                          event.key==KITTYKB_KEY_UP?-1:event.key==KITTYKB_KEY_DOWN?1:0);
+                    pressed_with=event.key;
+                }
+                continue;
+            }
+            bool press=event.action==KITTYKB_ACTION_PRESS&&(event.key==KITTYKB_KEY_ENTER||event.key==KITTYKB_KEY_KP_ENTER||event.key==' ');
+            int route=zell_panes_route(press);
+            if(route==ZELL_PANES_KEY_PRESS){pressed_with=zell_panes_press(scene)?event.key:0;continue;}
+            if(route==ZELL_PANES_KEY_NONE)walk_press(&move,&event,false);
+            if(route!=ZELL_PANES_KEY_PANE)continue;
+            /* Shift with Page Up, Page Down, Home or End scrolls the pane. */
+            if(event.action!=KITTYKB_ACTION_RELEASE&&zell_panes_scroll_key(scene,event.key,event.modifiers))continue;
+            unsigned char bytes[TERMINAL_KEY_BYTES];size_t length=terminal_key_bytes(&event,bytes);
+            if(length)zell_panes_key(bytes,length);
+        }
+        if(!zell_panes_hotkeys_open()&&!zell_panes_keys_to_pane()&&!alt_held){
+            controls->move_x=(int)move.right-(int)move.left;
+            controls->move_y=(int)move.down-(int)move.up;
+            controls->run=controls->run||move.shifted_tap;
+        }else controls->run=false;
+        return;
+    }
     if(scene->mode==ZELL_MODE_SERVICE&&scene->service_phase==5){
         size_t at=scene->service_send?strlen(scene->service_reply):0;
         if(at&&scene->service_reply[at-1]=='\n')at--;
@@ -858,7 +1056,7 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
         controls->run=false;
         /* Leave queued events untouched until the previous pipe batch can drain. */
         while(at+2u*TERMINAL_KEY_BYTES+2u<=sizeof scene->service_reply&&
-              kittykb_input_next(&keyboard.input,&event)){
+              next_key(&event)){
             unsigned char bytes[TERMINAL_KEY_BYTES];size_t length=terminal_key_bytes(&event,bytes);
             for(size_t i=0;i<length;i++){
                 unsigned ch=bytes[i];static const char hex[]="0123456789abcdef";
@@ -868,30 +1066,17 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
         if(at>1){scene->service_reply[at++]='\n';scene->service_reply[at]=0;scene->service_send=true;}
         return;
     }
-    if (kittykb_input_key_down(&keyboard.input, KITTYKB_KEY_LEFT) ||
-        (!typing && (kittykb_input_key_down(&keyboard.input, (uint32_t)'a') ||
-                     kittykb_input_key_down(&keyboard.input, (uint32_t)'A')))) {
-        controls->move_x -= 1;
-    }
-    if (kittykb_input_key_down(&keyboard.input, KITTYKB_KEY_RIGHT) ||
-        (!typing && (kittykb_input_key_down(&keyboard.input, (uint32_t)'d') ||
-                     kittykb_input_key_down(&keyboard.input, (uint32_t)'D')))) {
-        controls->move_x += 1;
-    }
-    if (kittykb_input_key_down(&keyboard.input, KITTYKB_KEY_UP) ||
-        (!typing && (kittykb_input_key_down(&keyboard.input, (uint32_t)'w') ||
-                     kittykb_input_key_down(&keyboard.input, (uint32_t)'W')))) {
-        controls->move_y -= 1;
-    }
-    if (kittykb_input_key_down(&keyboard.input, KITTYKB_KEY_DOWN) ||
-        (!typing && (kittykb_input_key_down(&keyboard.input, (uint32_t)'s') ||
-                     kittykb_input_key_down(&keyboard.input, (uint32_t)'S')))) {
-        controls->move_y += 1;
-    }
-    while (kittykb_input_next(&keyboard.input, &event)) {
+    /* A text field may take many edits per frame. Stop at a command so
+     * later keys are interpreted in the screen that the command opens. */
+    size_t edits = 0;
+    while (sizeof controls->edits - edits > KITTYKB_MAX_TEXT_CODEPOINTS && next_key(&event)) {
         if (event.action == KITTYKB_ACTION_RELEASE) {
             continue;
         }
+        if(scene->desktop&&scene->room==1&&scene->mode==ZELL_MODE_WALK&&command_cycle(scene,&event)){
+            memset(controls,0,sizeof *controls);return;
+        }
+        if(scene->desktop&&scene->mode==ZELL_MODE_WALK&&!typing)walk_press(&move,&event,true);
         if (page_keys) {
             controls->key_press = true;
             controls->key_code = event.key;
@@ -913,16 +1098,16 @@ static void read_controls(zell_scene *scene, zell_controls *controls)
         } else if (event.key == KITTYKB_KEY_F11 &&
                    event.action == KITTYKB_ACTION_PRESS) {
             controls->fullscreen_key = true;
-        } else if (event.key == KITTYKB_KEY_BACKSPACE &&
-                   typing) {
-            controls->backspace = true;
-        } else if (typing) {
-            unsigned character = typed_character(&event);
-            if (character != 0) {
-                controls->character = character;
-            }
+        } else if (typing && !page_keys) {
+            if (event.key == KITTYKB_KEY_BACKSPACE) controls->edits[edits++] = '\b';
+            else edits += typed_text(&event, controls->edits + edits);
         }
+        if (page_keys || controls->launcher || controls->cancel || controls->confirm || controls->fullscreen_key)
+            break;
     }
+    controls->move_x=(int)move.right-(int)move.left;
+    controls->move_y=(int)move.down-(int)move.up;
+    controls->run=controls->run||move.shifted_tap;
 }
 
 static bool present_scene(zell_scene *scene, sr_canvas *canvas, uint8_t **rgba,
@@ -934,6 +1119,11 @@ static bool present_scene(zell_scene *scene, sr_canvas *canvas, uint8_t **rgba,
     int resized_w = 0;
     int resized_h = 0;
 
+    /* A pane room is as big as the pane; elsewhere the picture keeps its
+     * cap. The session measures against these on every check. */
+    if (scene->desktop)
+        zell_panes_frame_limits(scene->room, &framebuffer.options.max_width,
+                                &framebuffer.options.max_height);
     if (kittyfb_check_resize(&framebuffer, &resized_w, &resized_h)) {
         width = resized_w;
         height = resized_h;
@@ -986,7 +1176,6 @@ static int run_scene(void)
     sr_canvas canvas;
     uint8_t *rgba = NULL;
     size_t rgba_bytes = 0;
-    struct sigaction action;
 
     memset(&canvas, 0, sizeof canvas);
     memset(&proc, 0, sizeof proc);
@@ -1016,15 +1205,12 @@ static int run_scene(void)
         fprintf(stderr, "zell: keyboard setup failed (%s)\n", strerror(errno));
         return 1;
     }
-    memset(&action, 0, sizeof action);
-    action.sa_handler = on_signal;
-    sigaction(SIGINT, &action, NULL);
-    sigaction(SIGTERM, &action, NULL);
+    catch_stop_signals();
     signal(SIGPIPE,SIG_IGN);
     zell_scene_init(&scene, kittyfb_width(&framebuffer),
                     kittyfb_height(&framebuffer));
 #ifdef ZELL_RENDER_NEURONTE
-    zell_desktop_init(&scene);
+    zell_desktop_start(&scene);
 #endif
     if(scene.desktop)service_start_mode(&vitals,&scene,true);
     if(scene.desktop)desktop_mouse_mode(true);
@@ -1071,6 +1257,7 @@ static int run_scene(void)
                 scene.theater_install_code=-1;
             }
         }
+        if(scene.desktop){zell_command_term_pump(&scene);zell_panes_pump(&scene);desktop_copy();desktop_app_keys(&scene,false);}
         /* service_frame ignores a job frame whose window generation does not match. */
         service_pump(&vitals,&scene);
         service_pump(&service,&scene);
@@ -1111,10 +1298,12 @@ static int run_scene(void)
 
     dictation_stop(&dictation);
     zell_theater_shutdown();
+    zell_command_term_shutdown();
+    zell_panes_shutdown();
     service_stop(&vitals);
     service_stop(&service);
     free(scene.terminal_pixels);
-    if(scene.desktop)desktop_mouse_mode(false);
+    if(scene.desktop){desktop_app_keys(&scene,true);desktop_mouse_mode(false);}
     speech_stop(&speech);
     proc_stop(&proc);
     free(rgba);
@@ -1123,6 +1312,40 @@ static int run_scene(void)
     kittyfb_stop(&framebuffer);
     return stop_requested ? 130 : 0;
 }
+
+#ifdef ZELL_RENDER_NEURONTE
+/* Pass the same files to the helpers, which can run from another directory.
+ * A packaged runtime carries its own files beside the executable. */
+static bool renderer_file(const char *variable, const char *directory,
+                          const char *packaged, const char *source)
+{
+    const char *value = getenv(variable);
+    char path[PATH_MAX];
+    if (value && *value) return true;
+    if (directory) {
+        int n = snprintf(path, sizeof path, "%s/%s", directory, packaged);
+        if (n > 0 && (size_t)n < sizeof path && access(path, R_OK) == 0)
+            return setenv(variable, path, 1) == 0;
+    }
+    if (source && access(source, R_OK) == 0) return setenv(variable, source, 1) == 0;
+    return true;
+}
+
+static bool configure_renderer(void)
+{
+    const char *directory = zell_runtime_directory();
+    /* Keep the helpers' explicit checkout override for a source run. */
+    const char *home = getenv("NEURONTE_HOME");
+    bool use_build = !home || !*home;
+    bool ok = renderer_file("ZELL_NEURONTE_WEIGHTS", directory, "weights/neuronte-split-v9.nrt",
+                            use_build ? ZELL_NEURONTE_WEIGHTS : NULL) &&
+              renderer_file("ZELL_NEURONTE_LIBRARY", directory, "lib/libneuronte.so",
+                            use_build ? ZELL_NEURONTE_LIBRARY : NULL) &&
+              renderer_file("KILIX_ZELL_NEURONTE_DISPLAY", directory,
+                            "libexec/neuronte-display/neuronte_display.py", ZELL_NEURONTE_DISPLAY);
+    return ok;
+}
+#endif
 
 int main(int argc, char **argv)
 {
@@ -1138,7 +1361,15 @@ int main(int argc, char **argv)
         fputs("zell: run it inside a Kilix pane\n", stderr);
         return 1;
     }
+    if (!zell_runtime_directory()) {
+        fputs("zell: could not locate the runtime directory\n", stderr);
+        return 1;
+    }
 #ifdef ZELL_RENDER_NEURONTE
+    if (!configure_renderer()) {
+        perror("zell: could not set renderer paths");
+        return 1;
+    }
     if (!zell_neuronte_open()) {
         fprintf(stderr, "zell: cannot load the Neuronte weights at %s\n"
                         "set ZELL_NEURONTE_WEIGHTS to a neuronte-split file\n",

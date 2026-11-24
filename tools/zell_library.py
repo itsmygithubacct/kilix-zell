@@ -1,6 +1,7 @@
 """Reference-only local libraries. Indexing never moves or deletes source files."""
 import os
 from pathlib import Path
+from zell_paths import state_lock
 
 KINDS={
     'music':{'.mp3','.flac','.ogg','.opus','.m4a','.aac','.wav','.wma','.aiff'},
@@ -24,7 +25,10 @@ def guide(ui,kind):
 class Library:
     def __init__(self,ui,kind):
         self.ui=ui;self.kind=kind;self.name='library-'+kind+'.json'
-        data=ui.state_read(self.name,{})
+        self.reload()
+
+    def reload(self):
+        data=self.ui.state_read(self.name,{})
         self.data={'schema':'kilix.zell.local-library/v1','files':[],'folders':[]}
         if isinstance(data,dict):
             for key in ('files','folders'):
@@ -46,36 +50,50 @@ class Library:
                 errors.append('Scan limit reached; add a smaller folder to include more files.');break
         return found,errors
 
-    def add(self,value,folder=False):
+    def add(self,value,folder=False,*,refreshing=False):
         raw=Path(value).expanduser()
         if raw.is_symlink():raise ValueError('Choose the original file or folder, not a symbolic link.')
         path=raw.resolve()
         if folder:
             if not path.is_dir():raise ValueError('That folder is unavailable.')
             found,errors=self.scan(path)
-            self.data['folders']=list(dict.fromkeys(self.data['folders']+[str(path)]))
         else:
             if not path.is_file() or path.suffix.lower() not in KINDS[self.kind]:raise ValueError('Choose a supported '+self.kind+' file.')
             found=[str(path)];errors=[]
-        before=len(self.data['files'])
-        self.data['files']=list(dict.fromkeys(self.data['files']+found));self.save()
-        return len(self.data['files'])-before,errors
+        with state_lock(self.ui.BASE):
+            self.reload()
+            if folder and str(path) not in self.data['folders']:
+                if refreshing:return 0,errors
+                self.data['folders'].append(str(path))
+            before=len(self.data['files'])
+            self.data['files']=list(dict.fromkeys(self.data['files']+found))
+            self.save()
+            return len(self.data['files'])-before,errors
 
     def refresh(self):
+        self.reload()
         added=0;errors=[]
         for folder in self.data['folders'][:]:
             try:
-                n,issues=self.add(folder,folder=True);added+=n;errors+=issues
+                n,issues=self.add(folder,folder=True,refreshing=True);added+=n;errors+=issues
             except (OSError,ValueError) as error:errors.append(str(error)+' '+folder)
         return added,errors
 
+    def remove(self,key,path):
+        with state_lock(self.ui.BASE):
+            self.reload()
+            if path in self.data[key]:
+                self.data[key].remove(path)
+                self.save()
+
     def remove_file(self,path):
-        self.data['files']=[p for p in self.data['files'] if p!=path];self.save()
+        self.remove('files',path)
 
 
 def hub(ui,kind):
     library=Library(ui,kind)
     while True:
+        library.reload()
         action=ui.choose(('Music' if kind=='music' else 'Books and documents')+' on disk',[
             ('How to find files and add them','help'),
             (f'Browse and search ({len(library.data["files"])})','browse'),
@@ -101,7 +119,7 @@ def hub(ui,kind):
         elif action=='folders':
             folder=ui.choose('Saved folders',[(p,p) for p in library.data['folders']])
             if folder and ui.choose(folder,[('Stop scanning this folder (keep indexed files)','remove')])=='remove':
-                library.data['folders'].remove(folder);library.save()
+                library.remove('folders',folder)
         elif action=='browse':
             value=ui.choose('Library: filter by filename or path',[(Path(p).name+' | '+p,p) for p in sorted(library.data['files'],key=str.casefold)])
             if not value:continue

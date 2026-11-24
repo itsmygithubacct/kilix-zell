@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Print and draw the furniture rectangles in src/desktop_collide.inc.
 
-Command Center screens are not copied. Collision reads them from
-zell_monitor_layout and zell_mana_console_layout.
+The Command Center screen bank supplies its footprint through zell_command_wall_bounds.
 """
 import argparse
 import re
@@ -72,7 +71,7 @@ def main(argv):
         return 1
     if args.do_print or args.out is None:
         print("# rectangles from src/desktop_collide.inc zell_blocks")
-        print("# room 1 screens come from zell_monitor_layout and zell_mana_console_layout")
+        print("# room 1 uses zell_command_wall_bounds and zell_floor_panel_layout at runtime")
         for room, x0, y0, x1, y1 in blocks:
             print(f"{room} {x0:.0f} {y0:.0f} {x1:.0f} {y1:.0f}")
     if args.out is not None:

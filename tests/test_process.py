@@ -3,12 +3,27 @@ import os
 import pathlib
 import pty
 import select
+import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 import time
 
 with tempfile.TemporaryDirectory(prefix="zell-process-") as directory:
+    app = pathlib.Path(directory)/"install"
+    app.mkdir()
+    binary = app/"zell"
+    shutil.copy2(sys.argv[1], binary)
+    with subprocess.Popen([binary, "--test-runtime-upgrade"], stdin=subprocess.PIPE, stdout=subprocess.PIPE) as probe:
+        assert select.select([probe.stdout], [], [], 5)[0] and probe.stdout.readline() == b"ready\n"
+        previous = app.with_name("previous")
+        app.rename(previous)
+        (app/"tools").mkdir(parents=True)
+        (app/"tools/desktop.py").touch()
+        shutil.rmtree(previous)
+        probe.communicate(b"\n", timeout=5)
+        assert probe.returncode == 0, "the running game lost its station helpers after an upgrade"
     fake = pathlib.Path(directory) / "kilix-llm"
     fake.write_text("""#!/usr/bin/env python3
 import os, sys, time
@@ -26,9 +41,16 @@ else:
     print('Loading model...\\n> Hello\\n\\nHello from the model.\\n\\n[ Prompt: 1 token ]\\nExiting...')
 """)
     fake.chmod(0o700)
+    # Only this stub can receive a privilege request in the maintenance test.
+    sudo = pathlib.Path(directory)/'sudo'
+    sudo.write_text("""#!/bin/sh
+echo "simulated-$* command"
+""")
+    sudo.chmod(0o700)
     pid, fd = pty.fork()
     if pid == 0:
         os.environ["PATH"] = directory + os.pathsep + os.environ["PATH"]
+        os.environ["ZELL_TEST_MAINTENANCE"] = directory
         os.execv(sys.argv[1], [sys.argv[1]])
     output = bytearray()
     deadline = time.monotonic() + 15

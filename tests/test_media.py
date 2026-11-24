@@ -19,6 +19,23 @@ class MediaTests(unittest.TestCase):
         self.base_patch=patch.object(desktop,'BASE',self.base);self.base_patch.start()
         self.ui=desktop.media_ui()
     def tearDown(self):self.base_patch.stop();self.temp.cleanup()
+    def test_open_djs_keep_each_others_follows_and_unfollows(self):
+        left=media.Library(self.ui);right=media.Library(self.ui)
+        first=left.follow('@First','First')
+        second=right.follow('@Second','Second')
+        self.assertCountEqual(right.data['sources'],[first,second])
+        item={'id':'abcdefghijk'}
+        def fetch(url):
+            right.unfollow(first)
+            right.mark_seen(item)
+            return {'entries':[item]}
+        with patch.object(media,'extract',side_effect=fetch):
+            self.assertEqual(left.refresh([first]),[])
+        saved=media.Library(self.ui)
+        self.assertEqual(saved.data['sources'],[second])
+        self.assertEqual(saved.data['seen'],[item['id']])
+        self.assertEqual(saved.feed(),[])
+
     def test_creator_and_playlist_normalization(self):
         self.assertEqual(media.source_url('@Example'),('creator','https://www.youtube.com/@Example'))
         self.assertEqual(media.source_url('https://youtube.com/@Example/videos?view=0')[1],'https://www.youtube.com/@Example')

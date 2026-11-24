@@ -8,6 +8,7 @@
  *   outlines        eighth blocks, placed so their ink is the outline
  *   thin bars       a full block stretched to the bar (cursor, lever)
  *   disc, ellipse   the black circle, fitted to the shape's box
+ *   close button    the multiplication sign, fitted the same way
  *   sprites, tiles  every pixel through 2 x 4 octant cells: the cell's
  *                   eight source pixels are its eight colours, and three
  *                   masks from the pixel net say which colour each pixel
@@ -15,13 +16,23 @@
  *
  * What stays plain code: clearing the frame, filling a rectangle with one
  * colour, choosing which source pixel a sub-cell shows, and mixing colours
- * by coverage.
+ * by coverage. The clear and the fill are neuronte-sdk's canvas, reached
+ * through canvas.c; soft-raster is not linked, and only its header is read,
+ * for the canvas struct and the font names draw.c passes.
  *
  * Built by `make RENDER=neuronte`. The weight file is the one named at
  * build time by ZELL_NEURONTE_WEIGHTS, or by the environment variable of
- * the same name. */
+ * the same name.
+ *
+ * Text is also drawn from the first 16 listed term and kilix bundles in
+ * filename order beside that file: a character goes to the first bundle trained on it,
+ * and one that no bundle was trained on shows the library's untrained
+ * mark. A library without neuronte_untrained() cannot be linked here. */
 #include "draw_neuronte.h"
 
+#include <dirent.h>
+#include <limits.h>
+#include <sys/stat.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,13 +42,28 @@
 #include "soft_raster.h"
 
 #ifndef ZELL_NEURONTE_WEIGHTS
-#define ZELL_NEURONTE_WEIGHTS "neuronte-split-v4.nrt"
+#define ZELL_NEURONTE_WEIGHTS "neuronte-split-v9.nrt"
 #endif
 
 enum { ZN_CELL_W = 8, ZN_CELL_H = 16 };
 
+enum { ZN_EXTRA_MAX = 16, ZN_NAME_MAX = 256 };
+
 static neuronte *zn_font;
+static neuronte *zn_mark;                 /* the same file, drawing the untrained mark */
+static neuronte *zn_extra[ZN_EXTRA_MAX];  /* the term bundles beside it, by name */
+static char zn_extra_names[ZN_EXTRA_MAX][ZN_NAME_MAX];
+static int zn_extras;
 static int zn_state; /* 0 not tried, 1 open, -1 failed */
+
+/* The characters used as whole shapes: the black circle, the black
+ * down-pointing triangle and the multiplication sign. Where each one's ink
+ * sits in its cell is measured once from the open weights, and forgotten
+ * when they are closed, since another file may be opened next. */
+enum { ZN_DISC, ZN_CROSS, ZN_SHAPES };
+static const uint32_t zn_shape[ZN_SHAPES] = {0x25cfu, 0x00d7u};
+static float zn_boxes[ZN_SHAPES][4];
+static int zn_box_states[ZN_SHAPES]; /* 0 not tried, 1 measured, -1 failed */
 
 const char *zell_neuronte_weights(void)
 {
@@ -46,12 +72,90 @@ const char *zell_neuronte_weights(void)
     return path != NULL && path[0] != '\0' ? path : ZELL_NEURONTE_WEIGHTS;
 }
 
+static int zn_bundle_candidate(const struct dirent *entry)
+{
+    const char *name = entry->d_name;
+    size_t len = strlen(name);
+
+    return len > 18 && len < ZN_NAME_MAX && strcmp(name + len - 4, ".nrt") == 0 &&
+           (strncmp(name, "neuronte-term-", 14) == 0 || strncmp(name, "neuronte-kilix-", 15) == 0);
+}
+
+static int zn_name_order(const struct dirent **a, const struct dirent **b)
+{
+    return strcmp((*a)->d_name, (*b)->d_name);
+}
+
+/* A listed bundle has its NAME.list.txt beside it. neuronte-v2 lists the
+ * bundles that draw a character in one cell, and no two of them claim one
+ * character; a file left unlisted, such as neuronte-kilix-chrome-v2 (made
+ * for a box two cells wide), is not used for text. */
+static bool zn_listed(const char *dir, const char *name)
+{
+    char path[PATH_MAX];
+    struct stat st;
+    int need = snprintf(path, sizeof path, "%s/%.*s.list.txt", dir, (int)(strlen(name) - 4), name);
+
+    return need > 0 && (size_t)need < sizeof path && stat(path, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+/* Open the listed bundles in the weight file's directory, the first
+ * ZN_EXTRA_MAX of them in name order, and a second handle on the weight
+ * file for the untrained mark. A bundle that does not open is left out. */
+static void zn_open_extras(const char *weights)
+{
+    char dir[PATH_MAX];
+    char path[PATH_MAX];
+    const char *slash = strrchr(weights, '/');
+    size_t dir_len = slash != NULL && slash != weights ? (size_t)(slash - weights) : 1;
+    struct dirent **entries;
+    int count;
+    int i;
+
+    if (neuronte_open_file(weights, &zn_mark) != 0 || neuronte_set_untrained(zn_mark, 1) != 0) {
+        neuronte_close(zn_mark);
+        zn_mark = NULL;
+    }
+    if (dir_len >= sizeof dir) {
+        return;
+    }
+    memcpy(dir, slash != NULL ? weights : ".", dir_len);
+    dir[dir_len] = '\0';
+    count = scandir(dir, &entries, zn_bundle_candidate, zn_name_order);
+    if (count < 0) {
+        return;
+    }
+    for (i = 0; i < count && zn_extras < ZN_EXTRA_MAX; i++) {
+        const char *name = entries[i]->d_name;
+        if (!zn_listed(dir, name)) {
+            continue;
+        }
+        int need = snprintf(path, sizeof path, "%s/%s", dir, name);
+
+        if (need < 0 || (size_t)need >= sizeof path) {
+            continue;
+        }
+        if (neuronte_open_file(path, &zn_extra[zn_extras]) == 0) {
+            memcpy(zn_extra_names[zn_extras], name, strlen(name) + 1);
+            zn_extras++;
+        } else {
+            zn_extra[zn_extras] = NULL;
+        }
+    }
+    for (i = 0; i < count; i++) {
+        free(entries[i]);
+    }
+    free(entries);
+}
+
 bool zell_neuronte_open(void)
 {
     if (zn_state == 0) {
         zn_state = neuronte_open_file(zell_neuronte_weights(), &zn_font) == 0 ? 1 : -1;
         if (zn_state < 0) {
             zn_font = NULL;
+        } else {
+            zn_open_extras(zell_neuronte_weights());
         }
     }
     return zn_state > 0;
@@ -59,9 +163,60 @@ bool zell_neuronte_open(void)
 
 void zell_neuronte_close(void)
 {
+    int i;
+
     neuronte_close(zn_font);
+    neuronte_close(zn_mark);
+    for (i = 0; i < zn_extras; i++) {
+        neuronte_close(zn_extra[i]);
+        zn_extra[i] = NULL;
+    }
     zn_font = NULL;
+    zn_mark = NULL;
+    zn_extras = 0;
     zn_state = 0;
+    memset(zn_box_states, 0, sizeof zn_box_states);
+}
+
+/* The handle that draws this character as text: the weight file where it
+ * was trained on it, else the first term bundle that was, else the mark. */
+static neuronte *zn_text_font(uint32_t scalar)
+{
+    int i;
+
+    if (neuronte_untrained(zn_font, scalar) != 1) {
+        return zn_font;
+    }
+    for (i = 0; i < zn_extras; i++) {
+        if (neuronte_untrained(zn_extra[i], scalar) == 0) {
+            return zn_extra[i];
+        }
+    }
+    return zn_mark != NULL ? zn_mark : zn_font;
+}
+
+const char *zell_neuronte_text_net(uint32_t scalar)
+{
+    neuronte *net;
+    const char *weights;
+    const char *slash;
+    int i;
+
+    if (!zell_neuronte_open()) {
+        return NULL;
+    }
+    net = zn_text_font(scalar);
+    if (net == zn_font) {
+        weights = zell_neuronte_weights();
+        slash = strrchr(weights, '/');
+        return slash != NULL ? slash + 1 : weights;
+    }
+    for (i = 0; i < zn_extras; i++) {
+        if (net == zn_extra[i]) {
+            return zn_extra_names[i];
+        }
+    }
+    return "mark";
 }
 
 static int zn_scale(int scale)
@@ -97,14 +252,30 @@ static void zn_text(sr_canvas *c, float x, float y, const char *s,
                     uint32_t rgb, float alpha, int scale)
 {
     int k = zn_scale(scale);
+    size_t len;
+    size_t at = 0;
+    int pen;
 
     if (c == NULL || s == NULL || !zell_neuronte_open()) {
         return;
     }
-    neuronte_draw_utf8(zn_font, c->px, c->w, c->w, c->h,
-                       (int)(x + 0.5f), (int)(y + 0.5f),
-                       ZN_CELL_W * k, ZN_CELL_H * k, s, strlen(s),
-                       zn_color(rgb, alpha));
+    len = strlen(s);
+    pen = (int)(x + 0.5f);
+    while (at < len) {
+        uint32_t scalar;
+
+        at += neuronte_utf8_decode(s + at, len - at, &scalar);
+        neuronte_draw_scalar(zn_text_font(scalar), c->px, c->w, c->w, c->h,
+                             pen, (int)(y + 0.5f), ZN_CELL_W * k, ZN_CELL_H * k,
+                             scalar, zn_color(rgb, alpha));
+        pen += ZN_CELL_W * k;
+    }
+}
+
+void zell_neuronte_text(sr_canvas *canvas, float x, float y, const char *text,
+                        uint32_t rgb, float alpha, int scale)
+{
+    zn_text(canvas, x, y, text, rgb, alpha, scale);
 }
 
 /* A dark rim one scaled pixel wide, then the text. Eight more draws of
@@ -156,7 +327,7 @@ static void zn_fill_rect(sr_canvas *c, float x, float y, float w, float h,
         zn_glyph(c, 0x2588u, zn_round(x), zn_round(y), iw, ih, rgb, alpha);
         return;
     }
-    sr_fill_rect(c, x, y, w, h, rgb, alpha);
+    zell_canvas_fill_rect(c, x, y, w, h, rgb, alpha);
 }
 
 /* An eighth block's ink is one eighth of its cell. A side t pixels thick
@@ -184,13 +355,13 @@ static void zn_stroke_rect(sr_canvas *c, float x, float y, float w, float h,
     zn_glyph(c, 0x2595u, x0 + iw - 8 * t, y0 + t, 8 * t, ih - 2 * t, rgb, alpha);
 }
 
-/* Where the black circle's ink sits in its cell, as fractions of the
- * cell, measured once from the net's own coverage. */
-static bool zn_disc_box(float *fx0, float *fy0, float *fx1, float *fy1)
+/* Where a shape's ink sits in its cell, as fractions of the cell, measured
+ * from the net's own coverage. */
+static bool zn_ink_box(int shape, float *fx0, float *fy0, float *fx1, float *fy1)
 {
     enum { W = 48, H = 96 };
-    static float box[4];
-    static int state;
+    float *box = zn_boxes[shape];
+    int state = zn_box_states[shape];
 
     if (state == 0) {
         static float cov[W * H];
@@ -203,7 +374,7 @@ static bool zn_disc_box(float *fx0, float *fy0, float *fx1, float *fy1)
 
         state = -1;
         if (zell_neuronte_open() &&
-            neuronte_coverage(zn_font, 0x25cfu, W, H, 0, cov) == 0) {
+            neuronte_coverage(zn_font, zn_shape[shape], W, H, 0, cov) == 0) {
             for (y = 0; y < H; y++) {
                 for (x = 0; x < W; x++) {
                     if (cov[y * W + x] > 0.5f) {
@@ -222,6 +393,7 @@ static bool zn_disc_box(float *fx0, float *fy0, float *fx1, float *fy1)
                 state = 1;
             }
         }
+        zn_box_states[shape] = state;
     }
     if (state < 0) {
         return false;
@@ -233,9 +405,9 @@ static bool zn_disc_box(float *fx0, float *fy0, float *fx1, float *fy1)
     return true;
 }
 
-/* The circle character in a cell sized so its ink fills the ellipse's box. */
-static void zn_fill_ellipse(sr_canvas *c, float cx, float cy, float rx, float ry,
-                            uint32_t rgb, float alpha)
+/* A shape's character in a cell sized so its ink fills the box. */
+static void zn_fit(sr_canvas *c, int shape, float x, float y, float w, float h,
+                   uint32_t rgb, float alpha)
 {
     float fx0;
     float fy0;
@@ -244,22 +416,42 @@ static void zn_fill_ellipse(sr_canvas *c, float cx, float cy, float rx, float ry
     int cell_w;
     int cell_h;
 
-    if (rx <= 0.0f || ry <= 0.0f || !zn_disc_box(&fx0, &fy0, &fx1, &fy1)) {
+    if (w <= 0.0f || h <= 0.0f || !zn_ink_box(shape, &fx0, &fy0, &fx1, &fy1)) {
         return;
     }
-    cell_w = zn_round(2.0f * rx / (fx1 - fx0));
-    cell_h = zn_round(2.0f * ry / (fy1 - fy0));
+    cell_w = zn_round(w / (fx1 - fx0));
+    cell_h = zn_round(h / (fy1 - fy0));
     if (cell_w < 1 || cell_h < 1 || cell_w > 2048 || cell_h > 2048) {
         return;
     }
-    zn_glyph(c, 0x25cfu, zn_round(cx - rx - fx0 * (float)cell_w),
-             zn_round(cy - ry - fy0 * (float)cell_h), cell_w, cell_h, rgb, alpha);
+    zn_glyph(c, zn_shape[shape], zn_round(x - fx0 * (float)cell_w),
+             zn_round(y - fy0 * (float)cell_h), cell_w, cell_h, rgb, alpha);
+}
+
+static void zn_fill_ellipse(sr_canvas *c, float cx, float cy, float rx, float ry,
+                            uint32_t rgb, float alpha)
+{
+    zn_fit(c, ZN_DISC, cx - rx, cy - ry, 2.0f * rx, 2.0f * ry, rgb, alpha);
+}
+
+void zell_neuronte_ellipse(sr_canvas *canvas, float cx, float cy, float rx, float ry,
+                           uint32_t rgb, float alpha)
+{
+    zn_fill_ellipse(canvas, cx, cy, rx, ry, rgb, alpha);
 }
 
 static void zn_fill_circle(sr_canvas *c, float cx, float cy, float r,
                            uint32_t rgb, float alpha)
 {
     zn_fill_ellipse(c, cx, cy, r, r, rgb, alpha);
+}
+
+/* The close cross, in the square whose corners the raster build's two
+ * strokes join: cx - reach to cx + reach, and the same down. */
+static void zn_cross(sr_canvas *c, int cx, int cy, int reach, uint32_t rgb)
+{
+    zn_fit(c, ZN_CROSS, (float)(cx - reach), (float)(cy - reach),
+           (float)(2 * reach), (float)(2 * reach), rgb, 1.0f);
 }
 
 /* ---- pictures ---- */
@@ -414,5 +606,6 @@ static void zn_blit_scaled(sr_canvas *dst, const sr_canvas *src, int x, int y,
 #define sr_text_outlined zn_text_outlined
 #define sr_text_width_in(font, s, scale) zn_text_width((s), (scale))
 #define sr_font_height(font) ((void)(font), (int)ZN_CELL_H)
+#define desktop_cross zn_cross
 
 #include "draw.c"

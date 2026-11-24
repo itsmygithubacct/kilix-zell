@@ -33,6 +33,9 @@ enum {
     ZELL_QUESTION_CHOICES = ZELL_PRESET_COUNT + 1
 };
 
+enum { ZELL_SYSTEM_MESSAGES=112, ZELL_STAMINA_MESSAGES=80, ZELL_MESSAGES=ZELL_SYSTEM_MESSAGES+ZELL_STAMINA_MESSAGES };
+typedef struct { int64_t time; char source[32],text[320]; bool stamina; } zell_message;
+
 typedef struct zell_room_view {
     int logical_x, logical_y, logical_w, logical_h;
     int viewport_x, viewport_y, viewport_w, viewport_h;
@@ -86,8 +89,8 @@ typedef struct zell_controls {
     bool launcher;
     bool confirm;
     bool cancel;
-    bool backspace;
-    unsigned character;
+    /* Printable ASCII and backspaces in the order they were typed. */
+    char edits[256];
     /* F11. Letter f stays a typed character for theater fields. */
     bool fullscreen_key;
     /* One press for the focused theater browser. Releases are not forwarded. */
@@ -108,8 +111,7 @@ typedef struct zell_scene {
     int direction;
     int step;
     int step_ticks;
-    int run_charge, run_direction, run_bump;
-    bool running, run_blocked;
+    bool running;
     int flame_tick;
     int mode;
     int menu_index;
@@ -149,7 +151,7 @@ typedef struct zell_scene {
     bool dictation_on, dictation_changed;
     int notice_count;
     char notice_text[320];
-    int fatigue, mana, update_age_days, mana_age;
+    int stamina, mana, update_age_days, mana_age;
     /* Codex, Claude, Grok: percent left, -1 unknown, -2 waiting on the person. */
     int provider_mana[3];
     bool provider_mana_ready;
@@ -158,8 +160,6 @@ typedef struct zell_scene {
     bool disks_ready;
     int disk_count, disk_used[8];
     char disk_labels[8][96];
-    char screen_status[5][96], screen_preview[5][1200];
-    bool screens_ready;
     bool coding_yolo, coding_yolo_ready, coding_yolo_refresh;
     int weather_state, weather_icon;
     char weather_temperature[24], weather_place[96], weather_condition[64];
@@ -183,6 +183,12 @@ typedef struct zell_scene {
     int seat_ticks;
     bool seated;
     zell_room_view room_view;
+    int utility_panel,utility_term,message_count,message_scroll;
+    bool stamina_messages_only;
+    int64_t upgraded_at,bubble_until;
+    char bubble[240];
+    zell_message messages[ZELL_MESSAGES];
+    int command_focus; /* zero for walking, otherwise terminal index + 1 */
     zell_window windows[ZELL_WINDOWS];
     zell_provider_row provider_rows[ZELL_PROVIDER_ROWS];
     int provider_count;
@@ -224,6 +230,7 @@ void zell_switch_point(int width, int height, float *x, float *y);
 bool zell_near_switch(const zell_scene *scene);
 
 /* One simulation step. True when Kilix has walked off the bottom. */
+bool zell_edit_text(char *field, size_t capacity, const char *edits);
 bool zell_scene_tick(zell_scene *scene, const zell_controls *controls);
 
 bool zell_scene_take_request(zell_scene *scene, zell_request *request);

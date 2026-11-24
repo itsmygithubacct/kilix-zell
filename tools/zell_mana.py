@@ -15,6 +15,7 @@ import threading
 import time
 from pathlib import Path
 
+import zell_mana_manual
 import zell_providers
 import zell_vitals
 
@@ -34,25 +35,83 @@ def cache():
     return entries if isinstance(entries, dict) else {}
 
 
-def reading(entry, now):
-    """Percent left, -1 when unknown, -2 when only the person can unblock it."""
-    if isinstance(entry, dict) and entry.get('status') in ATTENTION:
-        return -2
-    value = zell_vitals.provider_value(entry, now)
-    return -1 if value is None else max(0, min(100, round(value)))
+def reading(entry, now, attempt=None):
+    """Percent left, -1 when unknown, -2 when only the person can unblock it.
+    The MANA bar takes Claudex's readings by the same rule."""
+    return zell_vitals.claudex_percent(entry, attempt, now)
 
 
-def readings(now=None):
+def by_hand(entries, now, directory):
+    """The values set by hand that stand now: {provider: percent left}."""
+    return {provider: percent for provider, (percent, _) in
+            zell_mana_manual.standing(directory, entries, now).items()}
+
+
+def readings(now=None, directory=None, rows=None):
+    """One number per provider. directory is Zell's state folder, where the
+    values set by hand at the Command computer are kept. rows are the
+    percentages a provider snapshot publishes, {provider: percent}.
+
+    What the person said comes first. Once a snapshot publishes any
+    percentage, published percentages replace Claudex's readings for every
+    provider, as on the MANA bar; until then Claudex's readings are used."""
     now = time.time() if now is None else now
     entries = cache()
-    return [reading(entries.get(provider), now) for provider in PROVIDERS]
+    attempts = zell_vitals.read_json(zell_vitals.config_path().parent / '.loop/zell-mana-attempts.json')
+    standing = by_hand(entries, now, directory)
+    rows = {provider: percent for provider, percent in (rows or {}).items()
+            if type(percent) is int and 0 <= percent <= 100}
+    return [standing[provider] if provider in standing
+            else rows.get(provider, -1) if rows
+            else reading(entries.get(provider), now, attempts.get(provider))
+            for provider in PROVIDERS]
 
 
-def needs(now=None):
+def published(frames):
+    """The percentages in provider snapshot frames: {provider: percent}."""
+    rows = {}
+    for kind, payload in frames:
+        if kind != 'G':
+            continue
+        for line in str(payload).splitlines()[1:]:
+            words = line.split()
+            try:
+                rows[words[0]] = int(words[1])
+            except (IndexError, ValueError):
+                continue
+    return rows
+
+
+def console_frames(directory, now=None):
+    """What the room's monitor sends for the Mana console, in order.
+
+    The provider snapshot goes first. The interface sets the console's three
+    numbers from a snapshot's rows alone, so a snapshot with no row for a
+    provider blanks that number; the mana line goes last and has the final
+    word. It carries the word "mana": a snapshot with no rows is three bare
+    integers too.
+    """
+    import zell_providers
+    frames = list(zell_providers.monitor_frames(directory, now))
+    numbers = readings(now, directory, published(frames))
+    return frames + [('G', 'mana ' + ' '.join(str(value) for value in numbers))]
+
+
+def send_console(dialogue, directory, now=None):
+    """Send the console's frames in one write. Between the snapshot and the
+    mana line the console's numbers are the snapshot's alone, and a read
+    that fell between two writes could draw them."""
+    dialogue.send_together(console_frames(directory, now))
+
+
+def needs(now=None, directory=None):
     """What the person must do, one line per blocked provider."""
     now = time.time() if now is None else now
     entries, lines = cache(), []
+    standing = by_hand(entries, now, directory)
     for provider in PROVIDERS:
+        if provider in standing:
+            continue
         entry = entries.get(provider)
         entry = entry if isinstance(entry, dict) else {}
         status = entry.get('status')
@@ -61,26 +120,31 @@ def needs(now=None):
             lines.append(f'{provider}: {entry.get("reason") or "needs you"}\n    Do this: {fix}')
         elif reading(entry, now) == -1:
             reason = str(entry.get('reason') or 'no reading yet').splitlines()[0][:160]
-            lines.append(f'{provider}: no current reading ({reason}).\n    Try: Read mana now')
+            lines.append(f'{provider}: no current reading ({reason}).\n    Try: Read mana now'
+                         f'\n    Or set it by hand at the Command computer: set-mana {provider} 50')
     return lines
 
 
-def claudex(*words, timeout=150):
-    script = zell_vitals.claudex_script()
+def claudex(*words, timeout=150, install=True):
+    """Run Claudex. When no copy is found, Kilix is asked to install it
+    first: Claudex is installed on first use. Only a task the person asked
+    for installs anything; the automatic reading passes install=False."""
+    script, reason = zell_vitals.claudex_ready(install=install)
     if script is None:
-        raise FileNotFoundError('Claudex is not installed')
+        raise FileNotFoundError(f'Claudex is not installed and Kilix could not install it ({reason})' if install
+                                else f'Claudex was not run: {reason}')
     # The home folder: a project folder makes a client stop at its trust question.
     return subprocess.run([sys.executable, str(script), '--config', str(zell_vitals.config_path()), *words],
                           capture_output=True, text=True, timeout=timeout, cwd=Path.home())
 
 
-def read(max_age):
+def read(max_age, install=True):
     """Read every provider whose last good reading is older than max_age seconds."""
     runtime = zell_vitals.config_path().parent / '.loop'
     runtime.mkdir(parents=True, exist_ok=True)
     with (runtime / 'zell-mana.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        return claudex('usage', 'read', *PROVIDERS, '--max-age', str(int(max_age)), '--json')
+        return claudex('usage', 'read', *PROVIDERS, '--max-age', str(int(max_age)), '--json', install=install)
 
 
 def automatic(ui):
@@ -88,9 +152,12 @@ def automatic(ui):
 
 
 def due(ui, now=None):
-    """Whether the automatic refresh should run now."""
+    """Whether the automatic refresh should run now. Never without Claudex:
+    looking for it installs nothing, so the automatic reading cannot be what
+    installs it."""
     now = time.time() if now is None else now
-    if not automatic(ui) or zell_vitals.claudex_script() is None:
+    # The room's monitor calls this: it does not wait for Kilix to answer.
+    if not automatic(ui) or zell_vitals.claudex_script(wait=False) is None:
         return False
     last = ui.state_read('mana-auto-last.json', {}).get('at')
     if isinstance(last, (int, float)) and 0 <= now - last < RETRY:
@@ -98,14 +165,16 @@ def due(ui, now=None):
     entries = cache()
     for provider in PROVIDERS:
         entry = entries.get(provider)
-        checked = entry.get('checked_at') if isinstance(entry, dict) else None
-        if reading(entry, now) < 0 or not isinstance(checked, (int, float)) or now - checked > MAX_AGE:
+        checked = zell_vitals.number(entry.get('checked_at')) if isinstance(entry, dict) else None
+        if reading(entry, now) < 0 or checked is None or now - checked > MAX_AGE:
             return True
     return False
 
 
 def refresh_in_background(ui, now=None):
-    """Start one automatic reading when one is due. Never blocks the caller."""
+    """Start one automatic reading when one is due. The reading itself never
+    blocks the caller. Looking for Claudex can: at most one short question to
+    Kilix every few minutes while no copy exists (zell_vitals.LOOK_TIMEOUT)."""
     if not due(ui, now) or not _refresh.acquire(blocking=False):
         return False
 
@@ -113,7 +182,9 @@ def refresh_in_background(ui, now=None):
         try:
             # Recorded first, so a failing reader is retried at RETRY, not every tick.
             ui.state_write('mana-auto-last.json', {'at': time.time()})
-            read(MAX_AGE)
+            # The copy seen a moment ago may be gone by the time the lock is
+            # had. The automatic reading still installs nothing.
+            read(MAX_AGE, install=False)
         except (OSError, subprocess.SubprocessError):
             pass
         finally:
@@ -127,7 +198,7 @@ def summary(ui):
     lines = [zell_providers.mode_line(directory), zell_vitals.snapshot(ui, directory)['details'], '',
              'Automatic readings: ' + ('on' if automatic(ui) else 'off') +
              f' (every {MAX_AGE // 60} minutes while Zell runs; no tokens are spent).']
-    blocked = needs()
+    blocked = needs(directory=directory)
     lines += ['', 'Needs you:' if blocked else 'Nothing needs you.', *blocked]
     return '\n'.join(lines)
 
@@ -157,7 +228,7 @@ def hub(ui, action=0):
             return ui.page_text(f'Mana could not be read: {error}\n\n' + summary(ui))
         return ui.page_text(summary(ui))
     if action == 5:
-        blocked = needs()
+        blocked = needs(directory=getattr(ui, 'BASE', None))
         return ui.page_text('\n'.join(blocked) if blocked else 'Nothing needs you. Every provider has a current reading.')
     if action == 6:
         enabled = not automatic(ui)

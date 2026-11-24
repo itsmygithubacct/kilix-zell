@@ -1,5 +1,6 @@
 """Local creator subscriptions, recent uploads, and finite transcription jobs."""
 from __future__ import annotations
+from contextlib import contextmanager
 import datetime as dt
 import json
 import hashlib
@@ -13,6 +14,7 @@ import sys
 import tempfile
 import time
 from urllib.parse import parse_qs, urlparse
+from zell_paths import state_lock
 
 HOSTS = {'youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be'}
 VIDEO_ID = re.compile(r'[A-Za-z0-9_-]{11}')
@@ -81,12 +83,15 @@ def entries(info, source, discovered):
 class Library:
     def __init__(self, ui):
         self.ui=ui
-        record=ui.state_read('media.json',{})
+        self.reload()
+
+    def reload(self):
+        record=self.ui.state_read('media.json',{})
         self.data=record if isinstance(record,dict) else {}
         for key,default in [('sources',[]),('items',[]),('seen',[]),('refreshed',{})]:
             if not isinstance(self.data.get(key),type(default)):self.data[key]=default
         sources=[]
-        legacy=ui.state_read('playlists.json',[])
+        legacy=self.ui.state_read('playlists.json',[])
         for row in self.data['sources']+(legacy if isinstance(legacy,list) else []):
             if not isinstance(row,dict):continue
             try:kind,url=source_url(row.get('url',''))
@@ -97,16 +102,23 @@ class Library:
         self.data['items']=[r for r in self.data['items'] if isinstance(r,dict) and VIDEO_ID.fullmatch(str(r.get('id',''))) and any(s['url']==r.get('source') for s in sources)]
         self.data['schema']='kilix.zell.media/v1'
 
-    def save(self):self.ui.state_write('media.json',self.data)
+    @contextmanager
+    def edit(self):
+        with state_lock(self.ui.BASE):
+            self.reload()
+            yield
+            self.ui.state_write('media.json',self.data)
 
     def follow(self, value, name):
         kind,url=source_url(value)
         record={'kind':kind,'url':url,'name':clean(name or url)}
-        self.data['sources']=[s for s in self.data['sources'] if s['url']!=url]+[record]
-        self.save();return record
+        with self.edit():
+            self.data['sources']=[s for s in self.data['sources'] if s['url']!=url]+[record]
+        return record
 
     def refresh(self, sources=None):
         errors=[]
+        self.reload()
         for source in sources if sources is not None else self.data['sources']:
             print('Checking '+source['name']+'...',flush=True)
             urls=[source['url']+'/'+tab for tab in ('videos','shorts','streams')] if source['kind']=='creator' else [source['url']]
@@ -117,14 +129,15 @@ class Library:
                 except (RuntimeError,ValueError,subprocess.TimeoutExpired,OSError) as error:
                     errors.append(source['name']+': '+str(error))
             if not success:continue
-            old={r['id']:r for r in self.data['items'] if r['source']==source['url']}
-            for row in found:
-                if row['id'] in old:row['discovered']=old[row['id']]['discovered']
-                old[row['id']]=row
-            retained=sorted(old.values(),key=lambda r:(r.get('published') or r['discovered'],-r.get('rank',0)),reverse=True)[:150]
-            self.data['items']=[r for r in self.data['items'] if r['source']!=source['url']]+retained
-            self.data['refreshed'][source['url']]=time.time()
-            self.save()
+            with self.edit():
+                if not any(s['url']==source['url'] for s in self.data['sources']):continue
+                old={r['id']:r for r in self.data['items'] if r['source']==source['url']}
+                for row in found:
+                    if row['id'] in old:row['discovered']=old[row['id']]['discovered']
+                    old[row['id']]=row
+                retained=sorted(old.values(),key=lambda r:(r.get('published') or r['discovered'],-r.get('rank',0)),reverse=True)[:150]
+                self.data['items']=[r for r in self.data['items'] if r['source']!=source['url']]+retained
+                self.data['refreshed'][source['url']]=time.time()
         return errors
 
     def feed(self, source=None, unseen=False):
@@ -136,21 +149,23 @@ class Library:
         return sorted(unique.values(),key=lambda r:(r.get('published') or r['discovered'],-r.get('rank',0)),reverse=True)
 
     def mark_seen(self, item):
-        self.data['seen']=list(dict.fromkeys(self.data['seen']+[item['id']]))[-10000:];self.save()
+        with self.edit():
+            self.data['seen']=list(dict.fromkeys(self.data['seen']+[item['id']]))[-10000:]
 
     def unfollow(self, source):
-        self.data['sources']=[s for s in self.data['sources'] if s['url']!=source['url']]
-        self.data['items']=[r for r in self.data['items'] if r['source']!=source['url']]
-        # Remove the migrated legacy entry too, so it cannot reappear next time.
-        old=self.ui.state_read('playlists.json',[])
-        if isinstance(old,list):
-            keep=[]
-            for row in old:
-                try:matches=isinstance(row,dict) and source_url(row.get('url',''))[1]==source['url']
-                except (ValueError,TypeError,AttributeError):matches=False
-                if not matches:keep.append(row)
-            self.ui.state_write('playlists.json',keep)
-        self.save()
+        with self.edit():
+            self.data['sources']=[s for s in self.data['sources'] if s['url']!=source['url']]
+            self.data['items']=[r for r in self.data['items'] if r['source']!=source['url']]
+            self.data['refreshed'].pop(source['url'],None)
+            # Remove the migrated legacy entry too, so it cannot reappear next time.
+            old=self.ui.state_read('playlists.json',[])
+            if isinstance(old,list):
+                keep=[]
+                for row in old:
+                    try:matches=isinstance(row,dict) and source_url(row.get('url',''))[1]==source['url']
+                    except (ValueError,TypeError,AttributeError):matches=False
+                    if not matches:keep.append(row)
+                self.ui.state_write('playlists.json',keep)
 
 
 def popup(ui, argv, name, env=None):
@@ -375,6 +390,7 @@ def hub(ui, add=False):
     library=Library(ui)
     if add:follow(ui,library)
     while True:
+        library.reload()
         count=len(library.feed(unseen=True))
         action=ui.choose('YouTube / playlists and creators',[(f'New content ({count})','new'),
             ('Refresh followed sources','refresh'),('All recent content','all'),('Follow creator or playlist','follow'),

@@ -1,9 +1,13 @@
-/* Checks of the Neuronte renderer that need the weight file. They are
- * skipped, with a message and a zero exit, when it cannot be loaded. */
+/* Checks of the Neuronte renderer that need the weight file. A weight file
+ * that cannot be loaded fails them, with a message and a nonzero exit. */
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
+#include "desktop.h"
+#include "desktop_assets.h"
 #include "draw_neuronte.h"
 #include "room.h"
 #include "scene.h"
@@ -81,6 +85,162 @@ static void test_untrained_and_utf8(void)
     expect(zell_answer_scroll_limit(320, 240, accents) == 0, "eight accented letters fit one box");
     sr_canvas_free(&blank);
     sr_canvas_free(&text);
+}
+
+/* Each character goes to the net that was trained on it: split-v9, else
+ * the listed bundle that was (no two claim one), else the untrained mark.
+ * The sun is term-dingbat's: kilix-chrome-v2 draws it too, for a box two
+ * cells wide, and is not listed, so it is not used for text. */
+static void test_each_character_goes_to_its_net(void)
+{
+    static const struct { uint32_t scalar; const char *net; } want[] = {
+        {0x41u, NULL}, {0x4dc0u, "neuronte-term-blocks-v1.nrt"},
+        {0x2600u, "neuronte-term-dingbat-v1.nrt"}, {0x2601u, "neuronte-term-dingbat-v1.nrt"},
+        {0xf0731u, "neuronte-kilix-chrome-v1.nrt"}, {0x4e2du, "mark"}, {0x4e00u, "mark"},
+    };
+    const char *weights = strrchr(zell_neuronte_weights(), '/');
+    size_t i;
+
+    weights = weights != NULL ? weights + 1 : zell_neuronte_weights();
+    for (i = 0; i < sizeof want / sizeof want[0]; i++) {
+        const char *net = zell_neuronte_text_net(want[i].scalar);
+        const char *expected = want[i].net != NULL ? want[i].net : weights;
+
+        if (net == NULL || strcmp(net, expected) != 0) {
+            fprintf(stderr, "U+%04X: %s, not %s\n", (unsigned)want[i].scalar, net ? net : "(none)", expected);
+        }
+        expect(net != NULL && strcmp(net, expected) == 0, "a character goes to the net trained on it");
+    }
+}
+
+/* Link a weight file's NAME (and its list, LIST) into DIR as AS. */
+static void link_as(const char *from_dir, const char *name, const char *dir, const char *as)
+{
+    char from[1024];
+    char to[1024];
+
+    snprintf(from, sizeof from, "%s/%s", from_dir, name);
+    snprintf(to, sizeof to, "%s/%s", dir, as);
+    expect(symlink(from, to) == 0, "a weight file is linked for the cap");
+}
+
+/* Only the first 16 sorted names carry the icon. All later names carry
+ * the hexagram, so loading any of them changes the visible result. */
+static void test_the_bundle_cap_keeps_the_first_names(void)
+{
+    enum { BUNDLES = 320 };
+    const char *weights = zell_neuronte_weights();
+    const char *slash = strrchr(weights, '/');
+    const char *tmp = getenv("TMPDIR");
+    const char *before = getenv("ZELL_NEURONTE_WEIGHTS");
+    char saved[1024];
+    char real[1024];
+    char dir[1024];
+    char split[1100];
+    char name[64];
+    char path[1100];
+    int i;
+
+    snprintf(saved, sizeof saved, "%s", before != NULL ? before : "");
+    snprintf(real, sizeof real, "%.*s", slash != NULL ? (int)(slash - weights) : 1, slash != NULL ? weights : ".");
+    snprintf(dir, sizeof dir, "%s/zell-capXXXXXX", tmp != NULL && tmp[0] != '\0' ? tmp : "/tmp");
+    expect(mkdtemp(dir) != NULL, "a folder for the cap is made");
+    snprintf(split, sizeof split, "%s/neuronte-split-v9.nrt", dir);
+    expect(symlink(weights, split) == 0, "the weights are linked for the cap");
+    for (i = BUNDLES - 1; i >= 0; i--) {
+        snprintf(name, sizeof name, "neuronte-kilix-a%03d-v1.nrt", i);
+        link_as(real, i < 16 ? "neuronte-kilix-chrome-v1.nrt" : "neuronte-term-blocks-v1.nrt", dir, name);
+        snprintf(name, sizeof name, "neuronte-kilix-a%03d-v1.list.txt", i);
+        link_as(real, i < 16 ? "neuronte-kilix-chrome-v1.list.txt" : "neuronte-term-blocks-v1.list.txt", dir, name);
+    }
+    zell_neuronte_close();
+    setenv("ZELL_NEURONTE_WEIGHTS", split, 1);
+    expect(zell_neuronte_open(), "the weights open beside hundreds of listed bundles");
+    {
+        const char *icon = zell_neuronte_text_net(0xf0731u);
+        const char *hexagram = zell_neuronte_text_net(0x4dc0u);
+
+        if (icon == NULL || hexagram == NULL || strcmp(icon, "neuronte-kilix-a000-v1.nrt") != 0 ||
+            strcmp(hexagram, "mark") != 0) {
+            fprintf(stderr, "cap: icon %s, hexagram %s\n", icon ? icon : "(none)", hexagram ? hexagram : "(none)");
+        }
+        expect(icon != NULL && strcmp(icon, "neuronte-kilix-a000-v1.nrt") == 0, "the first name by order draws the icon");
+        expect(hexagram != NULL && strcmp(hexagram, "mark") == 0, "a bundle past the cap is not loaded");
+    }
+    zell_neuronte_close();
+    if (saved[0] != '\0') {
+        setenv("ZELL_NEURONTE_WEIGHTS", saved, 1);
+    } else {
+        unsetenv("ZELL_NEURONTE_WEIGHTS");
+    }
+    for (i = 0; i < BUNDLES; i++) {
+        snprintf(path, sizeof path, "%s/neuronte-kilix-a%03d-v1.nrt", dir, i);
+        unlink(path);
+        snprintf(path, sizeof path, "%s/neuronte-kilix-a%03d-v1.list.txt", dir, i);
+        unlink(path);
+    }
+    unlink(split);
+    expect(rmdir(dir) == 0, "the cap's folder is removed");
+    expect(zell_neuronte_open(), "the weights open again after the cap");
+}
+
+/* The untrained mark is one shape whatever the character: two letters no
+ * net was trained on draw the same pixels, and a bundle's character, such
+ * as the hexagram, draws something else. */
+static void test_the_untrained_mark_is_one_shape(void)
+{
+    sr_canvas a;
+    sr_canvas b;
+    sr_canvas hexagram;
+
+    expect(sr_canvas_init(&a, 64, 48) && sr_canvas_init(&b, 64, 48) && sr_canvas_init(&hexagram, 64, 48),
+           "mark canvases allocate");
+    sr_clear(&a, 0x000000u);
+    sr_clear(&b, 0x000000u);
+    sr_clear(&hexagram, 0x000000u);
+    zell_neuronte_text(&a, 8.0f, 8.0f, "\xe4\xb8\xad", 0xffffffu, 1.0f, 2);
+    zell_neuronte_text(&b, 8.0f, 8.0f, "\xe4\xb8\x80", 0xffffffu, 1.0f, 2);
+    zell_neuronte_text(&hexagram, 8.0f, 8.0f, "\xe4\xb7\x80", 0xffffffu, 1.0f, 2);
+    expect(differs(&a, &hexagram, 0, 0, 64, 48) > 0, "the hexagram is not the mark");
+    expect(differs(&a, &b, 0, 0, 64, 48) == 0, "two untrained letters draw the one mark");
+    expect(differs(&a, &hexagram, 0, 0, 64, 48) > 0 && differs(&b, &hexagram, 0, 0, 64, 48) > 0,
+           "the mark has its own shape");
+    sr_canvas_free(&a);
+    sr_canvas_free(&b);
+    sr_canvas_free(&hexagram);
+}
+
+/* At scale 2 each character has a cell of 16 by 32: "AA" is "A" drawn at
+ * 0 and "A" drawn at 16, pixel for pixel. */
+static void test_scaled_text_steps_a_scaled_cell(void)
+{
+    sr_canvas one;
+    sr_canvas two;
+    sr_canvas both;
+    int x;
+    int y;
+    int wrong = 0;
+
+    expect(sr_canvas_init(&one, 48, 40) && sr_canvas_init(&two, 48, 40) && sr_canvas_init(&both, 48, 40),
+           "pen canvases allocate");
+    sr_clear(&one, 0x000000u);
+    sr_clear(&two, 0x000000u);
+    sr_clear(&both, 0x000000u);
+    zell_neuronte_text(&one, 0.0f, 4.0f, "A", 0xffffffu, 1.0f, 2);
+    zell_neuronte_text(&two, 16.0f, 4.0f, "A", 0xffffffu, 1.0f, 2);
+    zell_neuronte_text(&both, 0.0f, 4.0f, "AA", 0xffffffu, 1.0f, 2);
+    for (y = 0; y < 40; y++) {
+        for (x = 0; x < 48; x++) {
+            uint32_t want = x < 16 ? one.px[y * 48 + x] : two.px[y * 48 + x];
+
+            wrong += both.px[y * 48 + x] != want;
+        }
+    }
+    expect(differs(&one, &two, 0, 0, 48, 40) > 0, "the two A's are apart");
+    expect(wrong == 0, "the second letter starts one scaled cell on");
+    sr_canvas_free(&one);
+    sr_canvas_free(&two);
+    sr_canvas_free(&both);
 }
 
 /* The sign's word is ink on the board: pixels between the board's
@@ -208,17 +368,269 @@ static void test_screens_repeat(void)
     sr_canvas_free(&b);
 }
 
+static int like(uint32_t p, uint32_t rgb)
+{
+    int dr = (int)((p >> 16) & 255u) - (int)((rgb >> 16) & 255u);
+    int dg = (int)((p >> 8) & 255u) - (int)((rgb >> 8) & 255u);
+    int db = (int)(p & 255u) - (int)(rgb & 255u);
+
+    return abs(dr) + abs(dg) + abs(db);
+}
+
+/* At the native room size the former exit marker should show the floor
+ * painting, including any brass inlay that happens to be gold. */
+static void test_open_exits_show_the_floor(void)
+{
+    sr_canvas canvas;
+    expect(sr_canvas_init(&canvas, ZELL_WORLD_W, ZELL_WORLD_H), "exit canvas allocates");
+    for (int room = 1; room <= 2; room++) {
+        zell_scene scene;
+        zell_scene_init(&scene, canvas.w, canvas.h);
+        zell_desktop_init(&scene);
+        scene.room = room;
+        zell_draw(&scene, &canvas);
+        const zell_art *art = zell_art_get(room == 1 ? ZELL_ART_COMMAND_ROOM : ZELL_ART_LAUNDRY_ROOM);
+        int changed = 0;
+        for (int y = 948; y < 980; y++) {
+            for (int x = 744; x < 792; x++) {
+                if (canvas.px[y * canvas.w + x] != art->pixels[y * art->width + x]) changed++;
+            }
+        }
+        expect(changed == 0, "the open south exit shows the room painting");
+    }
+    sr_canvas_free(&canvas);
+}
+
+/* The floating window's close button is the net's multiplication sign in
+ * the square whose corners the raster build's two strokes join, five
+ * pixels out from the button's middle: ink along both diagonals and
+ * through the middle, none at the middle of a side, nothing past the
+ * square but a soft edge. */
+static void test_close_button_is_a_cross(void)
+{
+    enum { REACH = 5 };
+    const uint32_t ink = 0xabc8c0u;
+    const uint32_t ground = 0x1b3a42u;
+    zell_scene scene;
+    zell_terminal_layout layout;
+    sr_canvas c;
+    int cols;
+    int rows;
+    int cx;
+    int cy;
+    int dx;
+    int dy;
+    int i;
+    int inked = 0;
+    int on_diagonals = 0;
+    int at_sides = 0;
+    int outside = 0;
+    int quarter[4] = {0, 0, 0, 0};
+
+    expect(sr_canvas_init(&c, 1000, 700), "button canvas allocates");
+    zell_scene_init(&scene, 1000, 700);
+    zell_desktop_init(&scene);
+    zell_terminal_cells(&scene, &cols, &rows);
+    scene.terminal_width = cols * 8;
+    scene.terminal_height = rows * 16;
+    scene.terminal_pixels = calloc((size_t)scene.terminal_width * (size_t)scene.terminal_height,
+                                   sizeof(uint32_t));
+    expect(scene.terminal_pixels != NULL, "window pixels allocate");
+    if (scene.terminal_pixels == NULL) {
+        sr_canvas_free(&c);
+        return;
+    }
+    for (i = 0; i < scene.terminal_width * scene.terminal_height; i++) {
+        scene.terminal_pixels[i] = 0xff0b1418u;
+    }
+    scene.mode = ZELL_MODE_SERVICE;
+    scene.service_phase = 5;
+    zell_draw(&scene, &c);
+    zell_terminal_layout_for(&scene, c.w, c.h, &layout);
+    cx = layout.close.x + layout.close.w / 2;
+    cy = layout.close.y + layout.close.h / 2;
+    expect(layout.close.w >= 2 * REACH + 6 && layout.close.h >= 2 * REACH + 6, "the button holds the cross");
+    /* Pixel cx + d covers d to d + 1 from the middle, so the square is d = -REACH .. REACH - 1. */
+    for (dy = -REACH - 3; dy <= REACH + 3; dy++) {
+        for (dx = -REACH - 3; dx <= REACH + 3; dx++) {
+            uint32_t p = c.px[(cy + dy) * c.w + cx + dx];
+            int in_square = dx >= -REACH && dx < REACH && dy >= -REACH && dy < REACH;
+            int near_square = dx >= -REACH - 1 && dx <= REACH + 1 && dy >= -REACH - 1 && dy <= REACH + 1;
+
+            if (in_square && like(p, ink) < like(p, ground)) {
+                inked++;
+                quarter[(dy >= 0) * 2 + (dx >= 0)]++;
+            }
+            if (!near_square && like(p, ground) > 12) {
+                outside++;
+            }
+        }
+    }
+    for (i = 1; i <= REACH - 1; i++) {
+        on_diagonals += like(c.px[(cy - i) * c.w + cx - i], ink) < 60;
+        on_diagonals += like(c.px[(cy - i) * c.w + cx + i - 1], ink) < 60;
+        on_diagonals += like(c.px[(cy + i - 1) * c.w + cx - i], ink) < 60;
+        on_diagonals += like(c.px[(cy + i - 1) * c.w + cx + i - 1], ink) < 60;
+    }
+    for (i = -1; i <= 0; i++) {
+        at_sides += like(c.px[(cy - REACH) * c.w + cx + i], ground) > 40;
+        at_sides += like(c.px[(cy + REACH - 1) * c.w + cx + i], ground) > 40;
+        at_sides += like(c.px[(cy + i) * c.w + cx - REACH], ground) > 40;
+        at_sides += like(c.px[(cy + i) * c.w + cx + REACH - 1], ground) > 40;
+    }
+    expect(on_diagonals == 4 * (REACH - 1), "ink runs along both diagonals from the middle");
+    expect(at_sides == 0, "the middle of each side is clear");
+    expect(inked >= 60 && inked <= 88, "the strokes are about three pixels thick");
+    expect(abs(quarter[0] - quarter[1]) <= 4 && abs(quarter[2] - quarter[3]) <= 4 &&
+           abs(quarter[0] - quarter[2]) <= 4 && quarter[0] >= 8, "the four arms are alike");
+    expect(outside == 0, "past its square the cross has a soft edge of one pixel at most");
+    {
+        /* Where the ink's weight lies. The cell is placed on whole pixels,
+         * and here that puts the sign half a pixel left of the button's
+         * middle and level with it. The sums are twice the offset, so a
+         * cross one pixel away from there is off by two. */
+        long weight = 0;
+        long across = 0;
+        long down = 0;
+
+        for (dy = -REACH - 2; dy <= REACH + 2; dy++) {
+            for (dx = -REACH - 2; dx <= REACH + 2; dx++) {
+                int w = like(c.px[(cy + dy) * c.w + cx + dx], ground);
+
+                weight += w;
+                across += (long)w * (2 * dx + 1);
+                down += (long)w * (2 * dy + 1);
+            }
+        }
+        expect(weight > 0 && labs(across + weight) * 5 <= weight * 2, "the cross is half a pixel left of the middle");
+        expect(weight > 0 && down * 10 >= -3 * weight && down * 10 <= 7 * weight, "the cross is level with the middle");
+    }
+    free(scene.terminal_pixels);
+    sr_canvas_free(&c);
+}
+
+/* The disc and the ellipse are the black circle fitted to the shape's box.
+ * The counts are what the reviewed weights give; a cell one pixel off in
+ * size or place changes them. */
+static void test_ellipse_fills_its_box(void)
+{
+    /* Pinned with neuronte-v2 2.5.1's split-v9 black circle. */
+    static const struct { float cx, cy, rx, ry; int x0, x1, y0, y1, inked; } want[] = {
+        {60.0f, 40.0f, 40.0f, 20.0f, 20, 100, 20, 59, 2586},
+        {60.0f, 40.0f, 17.0f, 5.0f, 43, 76, 35, 44, 270},
+        {60.5f, 40.5f, 23.0f, 7.0f, 37, 83, 33, 47, 532},
+    };
+    sr_canvas c;
+    size_t i;
+
+    expect(sr_canvas_init(&c, 120, 80), "ellipse canvas allocates");
+    for (i = 0; i < sizeof want / sizeof want[0]; i++) {
+        int x0 = c.w;
+        int y0 = c.h;
+        int x1 = -1;
+        int y1 = -1;
+        int inked = 0;
+        int x;
+        int y;
+
+        sr_clear(&c, 0x000000u);
+        zell_neuronte_ellipse(&c, want[i].cx, want[i].cy, want[i].rx, want[i].ry, 0xffffffu, 1.0f);
+        for (y = 0; y < c.h; y++) {
+            for (x = 0; x < c.w; x++) {
+                if ((c.px[y * c.w + x] & 255u) >= 128u) {
+                    x0 = x < x0 ? x : x0;
+                    y0 = y < y0 ? y : y0;
+                    x1 = x > x1 ? x : x1;
+                    y1 = y > y1 ? y : y1;
+                    inked++;
+                }
+            }
+        }
+        if (x0 != want[i].x0 || x1 != want[i].x1 || y0 != want[i].y0 || y1 != want[i].y1 ||
+            inked != want[i].inked) {
+            fprintf(stderr, "ellipse %d: x %d..%d y %d..%d, %d pixels\n", (int)i, x0, x1, y0, y1, inked);
+        }
+        expect(x0 == want[i].x0 && x1 == want[i].x1 && y0 == want[i].y0 && y1 == want[i].y1,
+               "the ellipse's ink is in its box");
+        expect(inked == want[i].inked, "the ellipse has its area");
+        /* The pinned numbers themselves stay within a pixel of the box asked for. */
+        expect(abs(want[i].x0 - (int)(want[i].cx - want[i].rx)) <= 1 &&
+               abs(want[i].x1 + 1 - (int)(want[i].cx + want[i].rx)) <= 1 &&
+               abs(want[i].y0 - (int)(want[i].cy - want[i].ry)) <= 1 &&
+               abs(want[i].y1 + 1 - (int)(want[i].cy + want[i].ry)) <= 1,
+               "the pinned box is the box asked for, to a pixel");
+    }
+    sr_canvas_free(&c);
+}
+
+/* A shape's place in its cell is measured from the open weights, and
+ * closing them forgets it. A weight file that could not be read must not
+ * leave the shape undrawn once a good file is open. This has to run before
+ * anything else draws an ellipse: a shape already measured is not measured
+ * again while the weights stay open. */
+static int ellipse_pixels(sr_canvas *c)
+{
+    int inked = 0;
+    int i;
+
+    sr_clear(c, 0x000000u);
+    zell_neuronte_ellipse(c, 60.0f, 40.0f, 40.0f, 20.0f, 0xffffffu, 1.0f);
+    for (i = 0; i < c->w * c->h; i++) {
+        inked += (c->px[i] & 255u) >= 128u;
+    }
+    return inked;
+}
+
+static void test_shapes_are_measured_again_after_close(void)
+{
+    static char saved[4096];
+    const char *was = getenv("ZELL_NEURONTE_WEIGHTS");
+    bool had = was != NULL && strlen(was) < sizeof saved;
+    sr_canvas c;
+
+    if (was != NULL && !had) {
+        return;
+    }
+    if (had) {
+        strcpy(saved, was);
+    }
+    expect(sr_canvas_init(&c, 120, 80), "canvas for the reopened weights allocates");
+    zell_neuronte_close();
+    setenv("ZELL_NEURONTE_WEIGHTS", "/nonexistent/zell-test.nrt", 1);
+    expect(ellipse_pixels(&c) == 0, "with no weights no ellipse is drawn");
+    zell_neuronte_close();
+    if (had) {
+        setenv("ZELL_NEURONTE_WEIGHTS", saved, 1);
+    } else {
+        unsetenv("ZELL_NEURONTE_WEIGHTS");
+    }
+    expect(zell_neuronte_open(), "the weights open again");
+    expect(ellipse_pixels(&c) == 2586, "the ellipse is measured again after a failed open");
+    sr_canvas_free(&c);
+}
+
 int main(void)
 {
+    /* This is the Neuronte build's own test: weights it cannot load are a
+     * failure, so a wrong weights path is not passed over as a skip. */
     if (!zell_neuronte_open()) {
-        printf("test-neuronte: skipped, cannot load %s\n", zell_neuronte_weights());
-        return 0;
+        fprintf(stderr, "FAIL: test-neuronte cannot load %s\n", zell_neuronte_weights());
+        return 1;
     }
+    /* First, while no shape has been measured yet. */
+    test_shapes_are_measured_again_after_close();
     test_answer_text_is_drawn();
     test_untrained_and_utf8();
+    test_each_character_goes_to_its_net();
+    test_the_untrained_mark_is_one_shape();
+    test_scaled_text_steps_a_scaled_cell();
+    test_the_bundle_cap_keeps_the_first_names();
     test_sign_reads_voice();
     test_tiles_are_pixel_exact();
     test_framerate_is_shown();
+    test_open_exits_show_the_floor();
+    test_close_button_is_a_cross();
+    test_ellipse_fills_its_box();
     test_screens_repeat();
     zell_neuronte_close();
     if (failures) {

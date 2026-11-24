@@ -295,10 +295,10 @@ static void test_wizard_question_routes(void)
         const char *cursor;
 
         for (cursor = word; *cursor != '\0'; cursor++) {
-            typed.character = (unsigned char)*cursor;
+            typed.edits[0] = *cursor;
             zell_scene_tick(&scene, &typed);
         }
-        typed.character = 0;
+        typed.edits[0] = '\0';
         typed.confirm = true;
         zell_scene_tick(&scene, &typed);
     }
@@ -1098,9 +1098,9 @@ static void test_history_switch(void)
     scene.y = scene.wizard_y;
     zell_scene_tick(&scene, &talk);
     for (cursor = word; *cursor != '\0'; cursor++) {
-        typed.character = (unsigned char)*cursor;
+        typed.edits[0] = *cursor;
         zell_scene_tick(&scene, &typed);
-        typed.character = 0;
+        typed.edits[0] = '\0';
     }
     zell_scene_tick(&scene, &talk);
     expect(scene.mode == ZELL_MODE_WAIT, "a typed question is sent");

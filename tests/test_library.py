@@ -9,11 +9,68 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
 import desktop
 import zell_library as local
 
+import package_runtime
+
+
+class StartTests(unittest.TestCase):
+    def test_zell_starts_the_desktop_at_the_entrance(self):
+        # main() is not run by a unit test; it must start the desktop with
+        # zell_desktop_start (test_desktop.c holds what that does), not
+        # with zell_desktop_init alone, which leaves Kilix mid-cave.
+        main = (Path(__file__).resolve().parents[1]/'src/main.c').read_text()
+        self.assertEqual(main.count('zell_desktop_start(&scene);'), 1)
+        self.assertNotIn('zell_desktop_init(', main)
+
+
+class NeuronteWeightsTests(unittest.TestCase):
+    def test_zell_takes_split_v9_and_the_bundles_beside_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            weights = Path(directory, 'weights')
+            weights.mkdir()
+            for name in ('neuronte-split-v9.nrt', 'neuronte-split-v4.nrt', 'neuronte-term-letters-v1.nrt',
+                         'neuronte-term-letters-v1.list.txt', 'neuronte-term-blocks-v1.nrt',
+                         'neuronte-term-blocks-v1.list.txt', 'neuronte-term-math-v1.nrt',
+                         'neuronte-kilix-chrome-v1.nrt', 'neuronte-kilix-chrome-v1.list.txt',
+                         'neuronte-kilix-chrome-v2.nrt', 'neuronte-kilix-chrome-v2.symbols.txt',
+                         'neuronte-emoji-v1.nrt', 'neuronte-ui9-v2.nrt'):
+                (weights/name).touch()
+            # Only listed bundles, each with its list: not term-math (no list
+            # here) nor kilix-chrome-v2 (two cells wide, so never listed).
+            self.assertEqual(package_runtime.neuronte_weights(Path(directory)),
+                             ['neuronte-split-v9.nrt', 'neuronte-kilix-chrome-v1.nrt', 'neuronte-kilix-chrome-v1.list.txt',
+                              'neuronte-term-blocks-v1.nrt', 'neuronte-term-blocks-v1.list.txt',
+                              'neuronte-term-letters-v1.nrt', 'neuronte-term-letters-v1.list.txt'])
+            # A checkout from before neuronte-v2 is refused, by name.
+            (weights/'neuronte-split-v9.nrt').unlink()
+            with self.assertRaises(SystemExit) as refused:
+                package_runtime.neuronte_weights(Path(directory))
+            self.assertIn('neuronte-v2', str(refused.exception))
+
+
 class LibraryTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name)
         self.state=patch.object(desktop,'BASE',self.root/'state');self.state.start()
     def tearDown(self):self.state.stop();self.tmp.cleanup()
+    def test_open_libraries_preserve_edits_made_during_a_scan(self):
+        books=self.root/'Books';books.mkdir()
+        first=books/'one.txt';second=self.root/'two.txt'
+        first.touch();second.touch()
+        left=local.Library(desktop,'documents');right=local.Library(desktop,'documents')
+        left.add(books,folder=True)
+        right.add(second)
+        self.assertCountEqual(right.data['files'],[str(first),str(second)])
+        third=books/'three.txt';third.touch()
+        def scan(path):
+            right.remove('folders',str(books))
+            return [str(first),str(third)],[]
+        with patch.object(left,'scan',side_effect=scan):
+            self.assertEqual(left.refresh(),(0,[]))
+        left.remove_file(str(first))
+        saved=local.Library(desktop,'documents')
+        self.assertEqual(saved.data['files'],[str(second)])
+        self.assertEqual(saved.data['folders'],[])
+
     def test_scan_filter_dedup_refresh_and_removal_preserve_originals(self):
         books=self.root/'Books';books.mkdir();(books/'one.epub').write_text('book')
         (books/'song.mp3').write_text('song');(books/'.hidden.pdf').touch()
@@ -35,18 +92,20 @@ class LibraryTests(unittest.TestCase):
         with self.assertRaises(ValueError):lib.add(str(self.root/'missing'),True)
     def test_launcher_selects_neuronte_and_preserves_arguments(self):
         app=self.root/'installed';(app/'weights').mkdir(parents=True)
-        (app/'weights/neuronte-split-v4.nrt').touch()
+        (app/'weights/neuronte-split-v9.nrt').touch()
         binary=app/'zell-neuronte';binary.write_text('#!/bin/sh\nprintf "%s\\n" "$ZELL_NEURONTE_WEIGHTS" "$@"\n');binary.chmod(0o755)
         launcher=Path(__file__).resolve().parents[1]/'bin/zell'
         env=dict(os.environ,ZELL_NEURONTE_HOME=str(app));env.pop('ZELL_NEURONTE_WEIGHTS',None)
         result=subprocess.run([str(launcher),'argument with spaces','--version'],capture_output=True,text=True,env=env,check=True)
-        self.assertEqual(result.stdout.splitlines(),[str(app/'weights/neuronte-split-v4.nrt'),'argument with spaces','--version'])
+        self.assertEqual(result.stdout.splitlines(),[str(app/'weights/neuronte-split-v9.nrt'),'argument with spaces','--version'])
     def test_launcher_does_not_fall_back_to_legacy_zell(self):
+        legacy=self.root/'legacy';legacy.mkdir()
+        (legacy/'zell').write_text('#!/bin/sh\necho legacy\n');(legacy/'zell').chmod(0o755)
         app=self.root/'kilix-apps/kilix-zell';app.mkdir(parents=True)
-        (app/'zell').write_text('#!/bin/sh\nexit 0\n');(app/'zell').chmod(0o755)
-        env=dict(os.environ,ZELL_NEURONTE_HOME='',GPU_TERMINAL_HOME=str(self.root/'runtime'),GPU_TERMINAL_SOURCE_HOME=str(self.root))
+        (app/'zell-neuronte').write_text('#!/bin/sh\necho neuronte\n');(app/'zell-neuronte').chmod(0o755)
+        env=dict(os.environ,ZELL_NEURONTE_HOME=str(legacy),GPU_TERMINAL_HOME=str(self.root/'runtime'),GPU_TERMINAL_SOURCE_HOME=str(self.root))
         result=subprocess.run([str(Path(__file__).resolve().parents[1]/'bin/zell')],capture_output=True,text=True,env=env)
-        self.assertEqual(result.returncode,127)
-        self.assertIn('make install',result.stderr)
+        self.assertEqual(result.returncode,0)
+        self.assertEqual(result.stdout.strip(),'neuronte')
 
 if __name__=='__main__':unittest.main()

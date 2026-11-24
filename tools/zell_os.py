@@ -75,7 +75,7 @@ def read_state(name, default=None):
         if path.is_symlink() or path.stat().st_size > 2**20:
             return default
         return json.loads(path.read_text())
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return default
 
 def write_state(name, value):

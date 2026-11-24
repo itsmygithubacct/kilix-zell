@@ -17,8 +17,13 @@ import uuid
 import zipfile
 from zell_os import task, ask, pick, confirm, run, path_input, positive, read_state, write_state, state_root, Cancelled
 
-def active_path(path):
-    path=Path(path).expanduser().resolve()
+def entry_path(path):
+    """Resolve the containing directory and keep the selected directory entry."""
+    return path.parent.resolve()/path.name if path.is_symlink() else path.resolve()
+
+def active_path(path, *, preserve_link=False):
+    path=Path(path).expanduser()
+    path=entry_path(path) if preserve_link else path.resolve()
     reserved=archive_only_root(path)
     if reserved:
         raise ValueError(f'{reserved} is reserved for archives on this machine; choose another disk for active files.')
@@ -32,7 +37,9 @@ def target_new(prompt):
     return path
 
 def ordinary(path):
-    path=active_path(path)
+    path=active_path(path,preserve_link=True)
+    if not path.exists() and not path.is_symlink():
+        raise ValueError('Choose an existing file, folder or symbolic link.')
     if path in {Path('/'),Path.home().resolve()} or path in Path.home().resolve().parents:
         raise ValueError('Choose a specific file or subfolder, not an entire system or home root.')
     return path
@@ -62,7 +69,7 @@ def digest(path):
 @task('porter','copy-move','Copy or move files and folders')
 def copy_move():
     operation=pick('File operation',[('Copy','copy'),('Move','move')])
-    source=ordinary(path_input('Source file or folder'))
+    source=ordinary(path_input('Source file or folder',exists=False))
     destination=target_new('New destination path')
     if source.is_dir() and source in destination.resolve().parents:raise ValueError('Destination cannot be inside the source.')
     confirm(f'{operation.capitalize()}\n  {source}\nto\n  {destination}',operation)
@@ -72,7 +79,7 @@ def copy_move():
 
 @task('porter','rename','Rename a file or folder')
 def rename():
-    source=ordinary(path_input('File or folder to rename'))
+    source=ordinary(path_input('File or folder to rename',exists=False))
     name=ask('New name (without a folder path)')
     if name in {'.','..'} or '/' in name:raise ValueError('Enter a filename only.')
     dest=source.with_name(name)
@@ -89,7 +96,7 @@ def trash():
     operation=pick('Trash',[(v,v) for v in ['move','open','restore','empty']])
     if operation=='open':return run(['gio','open','trash:///'])
     if operation=='move':
-        path=ordinary(path_input('File or folder to trash'))
+        path=ordinary(path_input('File or folder to trash',exists=False))
         confirm('Move to trash: '+str(path),'trash');return run(['gio','trash','--',path])
     run(['gio','trash','--list'])
     if operation=='empty':
@@ -278,7 +285,8 @@ def backup_copy(source,destination):
     run(['rsync','-a','--safe-links','--checksum','--',str(source)+'/',str(destination)+'/'])
 
 def verify_backup(source,destination):
-    differences=run(['rsync','-a','--safe-links','--checksum','--dry-run','--itemize-changes','--',str(source)+'/',str(destination)+'/'],capture=True,timeout=3600)
+    # A dry run also lists files found only in the snapshot. Neither tree changes.
+    differences=run(['rsync','-a','--safe-links','--checksum','--dry-run','--delete','--itemize-changes','--',str(source)+'/',str(destination)+'/'],capture=True,timeout=3600)
     if differences.strip():raise RuntimeError('Backup differs from source:\n'+differences[:10000])
 
 def backup_volume(path):
@@ -334,8 +342,10 @@ def backup_status():
 @task('vault','restore','Restore a file or folder')
 def restore():
     record=backup_record();root=Path(record['destination']).resolve()
-    source=path_input('File or folder inside the backup').resolve()
-    if source!=root and root not in source.parents:raise ValueError('Choose something inside the selected backup.')
+    source=entry_path(path_input('File or folder inside the backup',exists=False))
+    if not source.is_relative_to(root) or not source.resolve().is_relative_to(root):
+        raise ValueError('Choose something inside the selected backup.')
+    if not source.is_symlink() and not source.exists():raise ValueError('That backup entry is missing.')
     destination=target_new('New restore destination (existing files are never replaced)')
     confirm(f'Restore {source} to {destination}','restore')
     run(['cp','--archive','--no-clobber','--',source,destination])
@@ -404,7 +414,8 @@ def model_manager():
     if operation=='trash-gguf':
         path=ordinary(path_input('Local .gguf model file'))
         if path.suffix.lower()!='.gguf' or not path.is_file():raise ValueError('Choose a GGUF file.')
-        confirm(f'Trash model {path} ({path.stat().st_size/2**30:.2f} GiB). Stop its model server first. Empty trash later to reclaim space.','trash')
+        if path.is_symlink():confirm(f'Trash the symbolic link {path}?','trash')
+        else:confirm(f'Trash model {path} ({path.stat().st_size/2**30:.2f} GiB). Stop its model server first. Empty trash later to reclaim space.','trash')
         return run(['gio','trash','--',path])
     if operation=='remove':
         listing=run(['ollama','list'],capture=True)

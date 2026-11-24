@@ -1,7 +1,7 @@
 """Local vitals. Here only request_mana may invoke a provider; snapshots never do.
 The Mana console (zell_mana) owns the automatic background reading.
 
-Fatigue is remaining headroom: min(CPU idle%, MemAvailable/MemTotal%).
+Stamina is remaining headroom: min(CPU idle%, MemAvailable/MemTotal%).
 CPU uses successive /proc/stat deltas (including iowait as idle, excluding
 already-counted guest ticks). A 0.25 EMA smooths samples; the first CPU sample
 is unknown. Mana is the mean of known providers' most restrictive windows.
@@ -32,14 +32,20 @@ _smoothed = None
 
 
 def number(value):
-    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        return float(value) if math.isfinite(value) else None
+    except OverflowError:
+        # An integer too large for a float: a damaged file, not a number.
+        return None
 
 
 def read_json(path):
     try:
         value = json.loads(path.read_text())
         return value if isinstance(value, dict) else {}
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return {}
 
 
@@ -118,7 +124,7 @@ def cpu_memory():
     return (sum(ticks), ticks[3] + ticks[4]), 100 * memory['MemAvailable'] / memory['MemTotal']
 
 
-def fatigue():
+def stamina():
     global _previous_cpu, _smoothed
     with _sample_lock:
         try:
@@ -151,53 +157,96 @@ def provider_value(entry, now):
     return min(values)
 
 
+ATTENTION = ('attention', 'login_required')
+
+
+def claudex_percent(entry, attempt, now):
+    """Claudex's reading for one provider, as the MANA bar and the Mana
+    console both take it: percent left 0-100, -1 when unknown, -2 when only
+    the person can unblock it. A reading followed by a failed check is not
+    shown, and neither is one with no time it was taken."""
+    entry = entry if isinstance(entry, dict) else {}
+    attempt = attempt if isinstance(attempt, dict) else {}
+    if entry.get('status') in ATTENTION:
+        return -2
+    checked = number(entry.get('checked_at'))
+    failed = attempt.get('failed') and (number(attempt.get('at')) or 0) > (checked or 0)
+    value = None if failed or not checked else provider_value(entry, now)
+    return -1 if value is None else max(0, min(100, round(value)))
+
+
+def published_percentages(directory, now):
+    """The percentages a provider snapshot publishes, {provider: percent},
+    and the account mode."""
+    import zell_providers
+    if directory is None:
+        directory = zell_providers.state_directory()
+    mode = zell_providers.account_mode(directory)
+    if mode == zell_providers.UNSET or directory is None:
+        return {}, mode
+    try:
+        hosted = zell_providers.load_state(directory, now)
+    except (OSError, ValueError):
+        return {}, mode
+    return {row['id']: row['percent'] for row in zell_providers.published_rows(hosted['sources'], mode, now)
+            if type(row['percent']) is int and 0 <= row['percent'] <= 100}, mode
+
+
 def mana(ui, now, provider_directory=None):
+    """The MANA bar: a mean of percentages left, unknown providers left out.
+
+    What the person set by hand comes first. Without published percentages
+    the rest are Claudex's readings. Once a provider snapshot publishes any,
+    they replace Claudex's readings altogether, for every provider they
+    name. The Mana console shows its three providers by the same rule."""
     cache = read_json(config_path().parent / '.loop/usage-pages.json')
     entries = cache.get('providers', {})
     if not isinstance(entries, dict):
         entries = {}
     attempts = read_json(config_path().parent / '.loop/zell-mana-attempts.json')
     values, ages, lines, missing = [], [], [], []
+    import zell_mana_manual
+    # Values set by hand at the Command computer live in Zell's state folder.
+    base = getattr(ui, 'BASE', None)
+    base = base if isinstance(base, (str, Path)) else None
+    manual = zell_mana_manual.standing(base, entries, now)
+    directory = provider_directory if isinstance(provider_directory, (str, Path)) else base
+    rows, mode = published_percentages(directory, now)
     for provider in PROVIDERS:
         entry = entries.get(provider, {})
         entry = entry if isinstance(entry, dict) else {}
         checked = number(entry.get('checked_at'))
         attempt = attempts.get(provider, {})
         attempt = attempt if isinstance(attempt, dict) else {}
-        failed = attempt.get('failed') and (number(attempt.get('at')) or 0) > (checked or 0)
-        value = None if failed or not checked else provider_value(entry, now)
         stamp = max(checked or 0, number(attempt.get('at')) or 0)
-        if value is None:
+        hand = manual.get(provider)
+        if hand is not None:
+            values.append(hand[0])
+            ages.append(max(0, int(now - hand[1])))
+            lines.append(f'{provider}: {hand[0]}% remaining (set by hand)'
+                         f'; set {datetime.fromtimestamp(hand[1]).isoformat(timespec="seconds")}')
+            continue
+        if rows:
+            shown = rows.get(provider)
+            lines.append(f'{provider}: ' + ('not published by a provider source' if shown is None else
+                                            f'{shown}% remaining (published by a provider source)'))
+            continue
+        value = claudex_percent(entry, attempt, now)
+        if value < 0:
             missing.append(provider)
         else:
             values.append(value)
-            if checked:
-                ages.append(max(0, int(now - checked)))
-        waiting = value is None and entry.get('status') in ('attention', 'login_required')
-        lines.append(f'{provider}: ' + ('needs you (see the Mana console)' if waiting else 'unknown' if value is None else f'{value:g}% remaining') +
+            ages.append(max(0, int(now - checked)))
+        lines.append(f'{provider}: ' + ('needs you (see the Mana console)' if value == -2 else 'unknown' if value < 0 else f'{value}% remaining') +
                      (f'; checked {datetime.fromtimestamp(stamp).isoformat(timespec="seconds")}' if stamp else '; never checked'))
     lines.append('Mana: mean of known provider minima; unknown providers excluded.')
     lines.append('Missing/unknown providers: ' + (', '.join(missing) or 'none'))
-    value = round(sum(values) / len(values)) if values else -1
-    import zell_providers
-    directory = provider_directory if isinstance(provider_directory, (str, Path)) else None
-    if directory is None:
-        base = getattr(ui, "BASE", None)
-        if isinstance(base, (str, Path)):
-            directory = base
-    if directory is None:
-        directory = zell_providers.state_directory()
-    mode = zell_providers.account_mode(directory)
     lines.append('Account mode: ' + mode)
-    if mode != zell_providers.UNSET and directory is not None:
-        try:
-            hosted = zell_providers.load_state(directory, now)
-        except (OSError, ValueError):
-            hosted = None
-        if hosted is not None:
-            adjusted = zell_providers.verified_mean(hosted['sources'], mode, now)
-            if adjusted is not None:
-                value = adjusted
+    if rows:
+        known = dict(rows)
+        known.update({provider: hand[0] for provider, hand in manual.items()})
+        values = list(known.values())
+    value = round(sum(values) / len(values)) if values else -1
     return value, max(ages) if ages else -1, lines
 
 
@@ -206,24 +255,81 @@ def snapshot(ui, provider_directory=None):
     upgraded = last_upgrade(ui)
     age = max(0, int((now - upgraded) // 86400)) if upgraded else -1
     health = max(10, 100 - 10 * age) if age >= 0 else -1
-    remaining = fatigue()
+    remaining = stamina()
     magic, magic_age, lines = mana(ui, now, provider_directory)
     details = '\n'.join([f'Health: {health}; days since successful upgrade: {age}',
         'Health stays 100 for 24 hours, then loses 10 per elapsed day (floor 10). Unknown = -1.',
-        f'Fatigue headroom: {remaining}%; min(CPU idle, available memory), smoothed with 25% new sample.',
+        f'Stamina: {remaining}% (CPU and memory headroom, smoothed with 25% new sample).',
         f'Mana: {magic}%; oldest known reading age: {magic_age} seconds', *lines])
-    return dict(health=health, fatigue=remaining, mana=magic, age_days=age, mana_age=magic_age, details=details)
+    return dict(health=health, stamina=remaining, mana=magic, age_days=age, mana_age=magic_age, updated_at=int(upgraded or 0), details=details)
 
 
 def monitor(ui):
     while True:
         value = snapshot(ui)
-        ui.DIALOGUE.send('V', ' '.join(str(value[k]) for k in ('health', 'fatigue', 'mana', 'age_days', 'mana_age')))
+        ui.DIALOGUE.send('V', ' '.join(str(value[k]) for k in ('health', 'stamina', 'mana', 'age_days', 'mana_age')))
         time.sleep(5)
 
 
-def claudex_script():
-    """Claudex's usage reader: beside a source checkout, or behind the command."""
+# Claudex in the Kilix catalog. Kilix installs the pinned copy on first use.
+CLAUDEX_APP = 'kilix-claudex'
+# How long a "not installed" answer from Kilix is believed before asking again.
+CATALOG_RECHECK = 300
+# A first-use install is a small clone; this is generous for a slow line.
+INSTALL_TIMEOUT = 600
+# A look only asks Kilix where its copy is, but Kilix checks that copy's
+# git checkout first, which takes a while on a cold disk. The room's monitor
+# never waits for it (claudex_script(wait=False)).
+LOOK_TIMEOUT = 30
+_catalog = {'script': None, 'asked': None}
+_looking = threading.Lock()
+
+
+def claudex_catalog(install=False):
+    """The Kilix catalog's copy of Claudex, as (usage reader or None, reason).
+
+    Kilix checks the copy it installed and prints where its command is.
+    With install, Kilix first fetches the pinned copy when there is none:
+    that is the first-use install, and it honours KILIX_APP_AUTO_INSTALL=0.
+    Without install nothing is ever fetched.
+    """
+    kilix = shutil.which('kilix')
+    if not kilix:
+        return None, 'the kilix command was not found'
+    env = dict(os.environ)
+    if not install:
+        env['KILIX_APP_AUTO_INSTALL'] = '0'
+    try:
+        done = subprocess.run([kilix, 'app', 'install', CLAUDEX_APP], stdin=subprocess.DEVNULL, capture_output=True,
+                              text=True, errors='replace', timeout=INSTALL_TIMEOUT if install else LOOK_TIMEOUT,
+                              env=env, cwd=Path.home())
+    except (OSError, subprocess.SubprocessError) as error:
+        return None, str(error)
+    printed = done.stdout.strip().splitlines()
+    if done.returncode or not printed:
+        said = done.stderr.strip().splitlines()
+        return None, said[-1][:300] if said else f'kilix app install {CLAUDEX_APP} ended with status {done.returncode}'
+    named = printed[-1].strip()
+    try:
+        # Kilix prints the command's full path. Anything else is not believed:
+        # a relative path, a folder, a path no file system can hold.
+        command = Path(named)
+        reader = command.resolve().with_name('pane_loop.py') if command.is_absolute() and command.is_file() else None
+        found = reader is not None and reader.is_file()
+    except (OSError, ValueError):
+        found = False
+    if not found:
+        return None, f'Kilix named {named[:200]!r}, which is not a Claudex command with its usage reader beside it'
+    return reader, ''
+
+
+def claudex_script(wait=True):
+    """Claudex's usage reader: beside a source checkout, behind the command,
+    or the copy Kilix installed. Looking never installs anything.
+
+    Asking Kilix about its copy can take a while. Without wait (the room's
+    monitor) Kilix is asked beside the caller, which gets None now and the
+    answer on a later look."""
     candidates = []
     if os.environ.get('KILIX_ZELL_CLAUDEX'):
         candidates.append(Path(os.environ['KILIX_ZELL_CLAUDEX']).expanduser())
@@ -231,7 +337,53 @@ def claudex_script():
     launcher = shutil.which('claudex')
     if launcher:
         candidates.append(Path(launcher).resolve().with_name('pane_loop.py'))
-    return next((path for path in candidates if path.is_file()), None)
+    found = next((path for path in candidates if path.is_file()), None)
+    if found is not None:
+        return found
+    # The catalog copy. Asking Kilix starts a process, and the room's monitor
+    # looks every few seconds, so a "no" is kept for a while.
+    known = _catalog['script']
+    if known is not None and known.is_file():
+        return known
+    now = time.time()
+    if _catalog['asked'] is not None and 0 <= now - _catalog['asked'] < CATALOG_RECHECK:
+        return None
+    if not wait:
+        if _looking.acquire(blocking=False):
+            def look():
+                try:
+                    _catalog['script'] = claudex_catalog()[0]
+                finally:
+                    _catalog['asked'] = time.time()
+                    _looking.release()
+            threading.Thread(target=look, name='zell-claudex-look', daemon=True).start()
+        return None
+    _catalog['asked'] = now
+    _catalog['script'] = claudex_catalog()[0]
+    return _catalog['script']
+
+
+def claudex_ready(report=None, install=True):
+    """The usage reader for a task the person asked for, as (reader or None,
+    reason). When no copy is found, Kilix is asked to install the catalog's
+    pinned copy: Claudex is installed on first use, not with Zell. With
+    install false (the automatic reading) nothing is ever installed."""
+    script = claudex_script()
+    if script is not None:
+        return script, ''
+    if not install:
+        return None, 'it is not installed, and the automatic reading installs nothing'
+    if report is None:
+        # The station's page shows what its helper prints.
+        def report(text):
+            print(text, flush=True)
+    if shutil.which('kilix'):
+        report('Claudex is not installed yet. Asking Kilix to install it; this happens once.')
+    script, reason = claudex_catalog(install=True)
+    _catalog['script'], _catalog['asked'] = script, time.time()
+    if script is not None:
+        report('Claudex is installed.')
+    return script, reason
 
 
 def check_provider(provider):
@@ -257,11 +409,13 @@ def write_json(path, value):
 
 def request_mana(ui):
     runtime = config_path().parent / '.loop'
-    if claudex_script() is None:
+    # This is a task the person asked for, so a missing Claudex is installed now.
+    script, reason = claudex_ready()
+    if script is None:
         # Nothing was asked of any provider, so nothing is recorded or throttled.
-        ui.page_text('Mana refresh unavailable: the Claudex usage reader was not found. Install Claudex '
-                     '(the `claudex` command) or set KILIX_ZELL_CLAUDEX to its pane_loop.py.\n\n'
-                     + snapshot(ui)['details'])
+        ui.page_text('Mana refresh unavailable: the Claudex usage reader was not found and Kilix could not '
+                     f'install it ({reason}). Run `kilix app install {CLAUDEX_APP}`, or set KILIX_ZELL_CLAUDEX '
+                     'to its pane_loop.py.\n\n' + snapshot(ui)['details'])
         return
     try:
         runtime.mkdir(parents=True, exist_ok=True)

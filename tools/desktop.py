@@ -422,10 +422,10 @@ def vitals_snapshot():
     if count:status['health']=max(1,(base if base>=0 else 100)-count)
     status['dirty_files']=count if watched['known'] else -1
     global LAST_VITALS
-    summary={k:status[k] for k in ('health','os_health','dirty_files','fatigue','mana','age_days')}
-    # Fatigue moves every sample; log only when something else changed.
-    if zell_debug.enabled() and {k:v for k,v in summary.items() if k!='fatigue'}!=LAST_VITALS:
-        LAST_VITALS={k:v for k,v in summary.items() if k!='fatigue'};zell_debug.log('vitals',**summary)
+    summary={k:status[k] for k in ('health','os_health','dirty_files','stamina','mana','age_days')}
+    # Stamina moves every sample; log only when something else changed.
+    if zell_debug.enabled() and {k:v for k,v in summary.items() if k!='stamina'}!=LAST_VITALS:
+        LAST_VITALS={k:v for k,v in summary.items() if k!='stamina'};zell_debug.log('vitals',**summary)
     status['details']+=f"\n\nCombined health: {status['health']}%; Git penalty: {count} percentage points.\n"+watched['details']
     if base<0 and count:status['details']+='\nOS age unknown: only the known Git penalty is applied to 100%.'
     return status
@@ -433,6 +433,21 @@ def vitals_snapshot():
 
 def desktop(station,action):
     ui=sys.modules.get(__name__) or SimpleNamespace(**globals())
+    if station==57:
+        import zell_puzzllm
+        print('Opening PuzzLLM…',flush=True)
+        try:
+            argv=[str(zell_puzzllm.launcher())]
+            state=os.environ.get('PUZZLLM_STATE')
+            if state:
+                # The new tab inherits the Kilix broker's environment.
+                argv=['env','PUZZLLM_STATE='+str(Path(state).expanduser().resolve()),*argv]
+            status=open_tab(argv,title='PuzzLLM')
+        except (OSError,RuntimeError,subprocess.TimeoutExpired) as error:
+            print(f'Could not open PuzzLLM: {error}',flush=True)
+            status=1
+        if status:raise SystemExit(status)
+        return 0
     if station==46:return zell_agents.switch(ui)
     if station==47:return zell_agents.updates(ui)
     if station in zell_os.STATIONS:return zell_os.hub(ui,zell_os.STATIONS[station],action)
@@ -487,17 +502,30 @@ def desktop(station,action):
             audio_stop.set();audio_thread.join(timeout=1);audio_monitor.close();raise SystemExit(0)
         signal.signal(signal.SIGTERM,stop_monitor)
         signal.signal(signal.SIGHUP,stop_monitor)
+        import zell_messages
+        speech = zell_messages.StaminaSpeech()
+        history_at, sent = 0, set()
         previous_fleet=None
         while True:
             status=vitals_snapshot()
-            DIALOGUE.send('V',' '.join(str(status[k]) for k in ('health','fatigue','mana','age_days','mana_age','os_health','dirty_files')))
+            DIALOGUE.send('V',' '.join(str(status[k]) for k in ('health','stamina','mana','age_days','mana_age','os_health','dirty_files')))
+            DIALOGUE.send('Z',str(status.get('updated_at',0)))
+            spoken=speech.sample(status['stamina'])
+            if spoken:
+                DIALOGUE.send('E',f'{spoken[0]}\tKilix\t{spoken[1]}')
+            if time.monotonic()>=history_at:
+                rows=zell_messages.history(with_kind=True)
+                for row in reversed(rows):
+                    stamp,source,text,kind=row
+                    if row not in sent and text:
+                        DIALOGUE.send(kind,f'{stamp}\t{source}\t{text}')
+                sent=set(rows)
+                history_at=time.monotonic()+30
+
             DIALOGUE.send('J',str(status['restart_needed']))
             import zell_mana
-            # L5 calls zell_provider_apply; this monitor G line stays three integers.
-            DIALOGUE.send('G',' '.join(str(value) for value in zell_mana.readings()))
-            import zell_providers
-            for kind,payload in zell_providers.monitor_frames(BASE):
-                DIALOGUE.send(kind,payload)
+            # L5 calls zell_provider_apply for the snapshot; the mana line follows it.
+            zell_mana.send_console(DIALOGUE,BASE)
             zell_mana.refresh_in_background(ui)
             from zell_schedule import aggregate
             notices=aggregate();DIALOGUE.send('N',str(notices['count'])+' '+notices['text'])
@@ -505,13 +533,13 @@ def desktop(station,action):
             DIALOGUE.send('W',f"{weather['state']} {weather['icon']} {weather['temperature']}\n{weather['place']}\n{weather['condition']}")
             try:drives=zell_rooms.disks()
             except OSError:drives=[]
-            DIALOGUE.send('D')
+            bins=[]
             for index,disk in enumerate(drives[:8]):
                 used=disk.get('used_percent');percent=round(used) if isinstance(used,(int,float)) else -1
                 label=disk['label'] if index<7 or len(drives)<=8 else 'More drives (Enter)'
-                DIALOGUE.send('B',f'{percent} {label}')
-            for index,screen in enumerate(zell_rooms.previews(ui)):
-                DIALOGUE.send('S',f"{index} {screen['status']}\n{screen['text']}")
+                label=' '.join(label.splitlines())[:95]
+                bins.append(f'{percent} {label}')
+            DIALOGUE.send('D','\n'.join(bins))
             try:
                 import zell_fleets
                 try:fleet_snapshot=zell_rooms._snapshot()
@@ -533,6 +561,10 @@ def desktop(station,action):
         if not Path(shell).is_file() or not os.access(shell,os.X_OK):shell='/bin/sh'
         from zell_terminal import terminal_loop
         return terminal_loop(ui,[shell,'-i'],title='Workshop computer')
+    if station==56:
+        # The Command computer: a shell in the folder of scripts that set mana by hand.
+        from zell_terminal import terminal_loop
+        return terminal_loop(ui,command_computer(),title='Command computer')
     if station==12:return neuronte_shell()
     if station==1:return logs(action)
     if station==2:return admin(action)
@@ -557,6 +589,18 @@ def desktop(station,action):
         now=datetime.datetime.now()
         return page_text(now.strftime('%A %d %B %Y, %H:%M:%S')+'\n\n'+calendar.month(now.year,now.month))
     raise ValueError('Unknown station')
+
+MANA_SCRIPTS=Path(__file__).resolve().parent/'mana'
+
+def command_computer(shell=None):
+    """The Command computer's shell: started in the mana scripts' folder, with
+    that folder first on PATH and this Zell's state folder named for them."""
+    shell=shell or os.environ.get('SHELL') or '/bin/bash'
+    if not Path(shell).is_file() or not os.access(shell,os.X_OK):shell='/bin/sh'
+    script=('cd -- "$1" || exit 1\nPATH="$1:$PATH"\nKILIX_ZELL_STATE="$2"\nexport PATH KILIX_ZELL_STATE\n'
+            'printf \'%s\\n\' "Mana scripts are in this folder: set-mana, show-mana, clear-mana." '
+            '"Example: set-mana codex 62   (the percentage left)" "If your shell does not find one, start it with ./ as in ./set-mana" ""\nexec "$3" -i')
+    return ['/bin/sh','-c',script,'command-computer',str(MANA_SCRIPTS),str(Path(BASE).resolve()),shell]
 
 _INSTALL_CHROME_DEB='google-chrome-stable_current_amd64.deb'
 
@@ -620,6 +664,11 @@ if __name__=='__main__':
     except (OSError,ValueError,subprocess.TimeoutExpired) as error:
         zell_debug.error('helper.failed')
         print(f'Could not complete the action: {error}')
+    except SystemExit as stop:
+        # Asked to stop (the vitals monitor on SIGTERM) or done with a code:
+        # an exit, not a crash.
+        zell_debug.log('helper.done' if stop.code in (0,None) else 'helper.exit',code=stop.code)
+        raise
     except BaseException:
         zell_debug.error('helper.crashed')
         raise

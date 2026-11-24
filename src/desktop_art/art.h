@@ -33,4 +33,5 @@ extern const zell_art_source zell_art_theater_foreground[];
 extern const zell_art_source zell_art_meditation_foreground[];
 extern const zell_art_source zell_art_library_foreground[];
 extern const zell_art_source zell_art_room_hatches[];
+extern const zell_art_source zell_art_cave_hatches_open[];
 #endif

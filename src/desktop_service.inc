@@ -31,6 +31,7 @@ static const struct { char kind; bool job; bool monitor; } zell_frame_registry[]
  {'R',true,false},{'O',true,false},{'T',true,false},
  {'G',false,true},{'H',false,true},{'F',false,true},{'U',false,true},
  {'V',false,true},{'Y',false,true},{'N',false,true},{'S',false,true},{'W',false,true},
+ {'Z',false,true},{'I',false,true},{'E',false,true},{'e',false,true},
  {'A',false,true},{'J',false,true},{'D',false,true},{'B',false,true}
 };
 static int frame_origin_allowed(char kind,int origin){
@@ -96,6 +97,32 @@ static bool window_prepare_slot0(zell_scene *s,int *generation){
     *generation=gen;
     return true;
 }
+static void service_disk_bin(zell_scene *s,const char *row){
+    int used;char label[96];
+    if(s->disk_count>=8||sscanf(row,"%d %95[^\n]",&used,label)!=2||used< -1||used>100)return;
+    int i=s->disk_count++;
+    s->disk_used[i]=used;
+    snprintf(s->disk_labels[i],sizeof s->disk_labels[i],"%s",label);
+}
+static void service_disks(zell_scene *s,char *rows){
+    bool selecting=s->mode==ZELL_MODE_LAUNCHER&&s->room==2&&!s->launcher_query[0];
+    int station=selecting?zell_desktop_launcher_station(s,s->menu_index):-1;
+    char previous[96]="";
+    if(station>=20&&station<20+s->disk_count)
+        snprintf(previous,sizeof previous,"%s",s->disk_labels[station-20]);
+    s->disk_count=0;s->disks_ready=true;
+    char *next;
+    for(char *row=strtok_r(rows,"\n",&next);row;row=strtok_r(NULL,"\n",&next))service_disk_bin(s,row);
+    if(!selecting)return;
+    if(previous[0]){
+        station=-1;
+        for(int i=0;i<s->disk_count;i++)if(!strcmp(previous,s->disk_labels[i])){station=20+i;break;}
+    }
+    int count=zell_desktop_launcher_count(s);
+    for(int i=0;i<count;i++)if(zell_desktop_launcher_station(s,i)==station){s->menu_index=i;return;}
+    /* The highlighted drive disappeared. The next tick settles the cursor. */
+    s->menu_index=count;
+}
 static void service_frame(zell_scene *s,char *frame,int origin,int slot,int generation){
     /* A job frame is ignored unless zell_window_accepts_frame says this slot
      * still has the generation captured with the owning pipe. */
@@ -111,14 +138,28 @@ static void service_frame(zell_scene *s,char *frame,int origin,int slot,int gene
     if(origin==SERVICE_ORIGIN_MONITOR){
         /* L5 calls zell_provider_apply. */
         if(kind=='G'){
-            int a,b,c,used=0;
-            if(sscanf(decoded,"%d %d %d%n",&a,&b,&c,&used)==3&&!decoded[used]){service_mana(s,decoded);return;}
-            (void)a;(void)b;(void)c;
+            /* The console's three numbers carry the word "mana". A bare
+             * three-integer line is a provider snapshot with no rows
+             * ("1 generation 0"), and must reach the provider parser. */
+            if(!strncmp(decoded,"mana ",5)){service_mana(s,decoded+5);return;}
             zell_provider_apply(s,decoded);return;
         }
         /* L5 calls zell_provider_check_apply. */
         if(kind=='H'){zell_provider_check_apply(s,decoded);return;}
         /* L6 calls zell_fleet_apply. */
+        if(kind=='Z'){char *end;long long stamp=strtoll(decoded,&end,10);
+            if(end!=decoded&&!*end&&stamp>=0)s->upgraded_at=stamp;
+            return;
+        }
+        /* E speaks now. A lowercase e restores the same remark silently. */
+        if(kind=='I'||kind=='E'||kind=='e'){
+            char *source,*body;long long stamp=strtoll(decoded,&source,10);
+            if(stamp<=0||*source!='\t')return;
+            body=strchr(++source,'\t');if(!body)return;
+            *body++=0;zell_message_add(s,stamp,source,body,kind!='I');
+            if(kind=='E'){snprintf(s->bubble,sizeof s->bubble,"%.239s",body);s->bubble_until=zell_notice_clock_ms()+8500;}
+            return;
+        }
         if(kind=='F'){zell_fleet_apply(s,decoded);return;}
         if(kind=='U'){zell_update_apply(s,decoded);return;}
         /* Legacy M carries the same three integers for one transition, never a menu. */
@@ -154,35 +195,22 @@ static void service_frame(zell_scene *s,char *frame,int origin,int slot,int gene
         snprintf(s->weather_place,sizeof s->weather_place,"%.95s",place);
         snprintf(s->weather_condition,sizeof s->weather_condition,"%.63s",condition);return;
     }
-    if(kind=='S'){
-        if(n<2||decoded[0]<'0'||decoded[0]>'4'||decoded[1]!=' ')return;
-        int i=decoded[0]-'0';char *body=strchr(decoded+2,'\n');
-        if(!body)return;
-        *body++=0;snprintf(s->screen_status[i],sizeof s->screen_status[i],"%.95s",decoded+2);
-        snprintf(s->screen_preview[i],sizeof s->screen_preview[i],"%.1199s",body);s->screens_ready=true;return;
-    }
     if(kind=='V'){
-        int hp,fatigue,mana,days,age,baseline,dirty;
-        int fields=sscanf(decoded,"%d %d %d %d %d %d %d",&hp,&fatigue,&mana,&days,&age,&baseline,&dirty);
-        if((fields==5||fields==7)&&hp>=-1&&hp<=100&&fatigue>=-1&&fatigue<=100&&mana>=-1&&mana<=100){
-            s->hp=hp;s->fatigue=fatigue;s->mana=mana;s->update_age_days=days;s->mana_age=age;
+        int hp,stamina,mana,days,age,baseline,dirty;
+        int fields=sscanf(decoded,"%d %d %d %d %d %d %d",&hp,&stamina,&mana,&days,&age,&baseline,&dirty);
+        if((fields==5||fields==7)&&hp>=-1&&hp<=100&&stamina>=-1&&stamina<=100&&mana>=-1&&mana<=100){
+            s->hp=hp;s->stamina=stamina;s->mana=mana;s->update_age_days=days;s->mana_age=age;
             if(fields==7&&baseline>=-1&&baseline<=100&&dirty>=-1){s->os_health=baseline;s->dirty_files=dirty;}
             else {s->os_health=hp;s->dirty_files=-1;}
         }
         return;
     }
-    if(kind=='D'){s->disk_count=0;s->disks_ready=true;return;}
-    if(kind=='B'&&s->disk_count<8){
-        int used;char label[96];
-        if(sscanf(decoded,"%d %95[^\n]",&used,label)==2&&used>=-1&&used<=100){
-            int i=s->disk_count++;s->disk_used[i]=used;snprintf(s->disk_labels[i],96,"%s",label);
-        }
-        return;
-    }
+    if(kind=='D'){service_disks(s,decoded);return;}
+    if(kind=='B'){service_disk_bin(s,decoded);return;} /* Older monitors stream one bin per frame. */
     return;
     }
     /* Telemetry belongs to the monitor. A job M is a menu even when the title is numeric. */
-    if(kind&&strchr("GHFUVYNSWAJDB",kind))return;
+    if(kind&&strchr("GHFUVYNSWAJDBZIE",kind))return;
     if(kind&&strchr("TPQROLCM",kind)&&!zell_window_accepts_frame(s,slot,generation))return;
     if(kind=='T'){s->service_phase=5;s->terminal_maximized=s->terminal_minimized=false;return;}
     /* A helper that leaves the terminal for a prompt or report must be seen. */
@@ -273,14 +301,14 @@ static void service_start_mode(desktop_service *p,zell_scene *s,bool monitor){
     s->service_scroll=0;s->service_send=s->service_cancel=false;
     }
     char script[4096],station[16],action[16];int to_child[2],from_child[2];
-    ssize_t n=readlink("/proc/self/exe",script,sizeof script-32);
-    if(n<0)goto failed;
-    script[n]=0;char *slash=strrchr(script,'/');if(!slash)goto failed;
-    strcpy(slash+1,"tools/desktop.py");
+    if(!zell_runtime_tool_path(script,sizeof script,"desktop.py"))goto failed;
     snprintf(station,sizeof station,"%d",monitor?-1:s->station);snprintf(action,sizeof action,"%d",s->menu_index);
     if(pipe(to_child)!=0)goto failed;
     if(pipe(from_child)!=0){close(to_child[0]);close(to_child[1]);goto failed;}
-    if(!monitor&&(p->sensitive||workshop)){
+    /* Any station's helper can open the floating terminal (the Command
+     * Center's screens show Kilix panes in it, the DJ a browser): each gets
+     * its shared surface. The vitals monitor never does. */
+    if(!monitor){
         p->frame_fd=(int)syscall(SYS_memfd_create,"zell-terminal",0);
         if(p->frame_fd>=0&&ftruncate(p->frame_fd,(off_t)ZELL_TERMINAL_BYTES)==0){
             p->frame_map=mmap(NULL,ZELL_TERMINAL_BYTES,PROT_READ|PROT_WRITE,MAP_SHARED,p->frame_fd,0);
@@ -365,7 +393,7 @@ static void service_pump(desktop_service *p,zell_scene *s){
                 /* A frame that does not fit is discarded whole, so a truncated prefix cannot apply. */
                 if(p->length&&p->length<sizeof p->frame){
                     p->frame[p->length]=0;
-                    if(!p->monitor||strchr("VDBSWJNAYGHFMU",p->frame[0]))
+                    if(!p->monitor||frame_origin_allowed(p->frame[0],SERVICE_ORIGIN_MONITOR)==1)
                         service_frame(s,p->frame,p->monitor?SERVICE_ORIGIN_MONITOR:SERVICE_ORIGIN_JOB,p->window_slot,p->window_generation);
                 }
                 p->length=0;
@@ -377,7 +405,7 @@ static void service_pump(desktop_service *p,zell_scene *s){
     int status=0;pid_t ended=waitpid(p->pid,&status,WNOHANG);
     if(ended==p->pid){
         p->pid=0;
-        if(p->monitor){s->fatigue=-1;s->screens_ready=false;s->coding_yolo_ready=false;s->weather_state=0;memset(s->screen_preview,0,sizeof s->screen_preview);service_stop(p);return;}
+        if(p->monitor){s->stamina=-1;s->coding_yolo_ready=false;s->weather_state=0;service_stop(p);return;}
         if(s->theater_install_watching)theater_install_note(s,WIFEXITED(status)?WEXITSTATUS(status):-1);
         if(p->cancelled)service_append(s,"\nCancelled.");
         else if(!WIFEXITED(status)||WEXITSTATUS(status)!=0)service_append(s,"\nThe station helper failed. Please try again.");
@@ -386,7 +414,7 @@ static void service_pump(desktop_service *p,zell_scene *s){
         int slot=p->window_slot,generation=p->window_generation;
         service_stop(p);zell_terminal_restore(s);s->service_phase=4;s->service_scroll=0;
         window_release_owner(s,slot,generation);
-        if((s->station==45||s->station==46)&&WIFEXITED(status)&&WEXITSTATUS(status)==0)s->mode=ZELL_MODE_WALK;
+        if((s->station==45||s->station==46||s->station==ZELL_PUZZLLM_HATCH)&&WIFEXITED(status)&&WEXITSTATUS(status)==0)s->mode=ZELL_MODE_WALK;
         if(sensitive){
             if(s->terminal_pixels){explicit_bzero(s->terminal_pixels,1200u*640u*4u);free(s->terminal_pixels);s->terminal_pixels=NULL;s->terminal_width=s->terminal_height=0;}
             explicit_bzero(s->service_reply,sizeof s->service_reply);
@@ -398,7 +426,6 @@ static void service_pump(desktop_service *p,zell_scene *s){
 static bool service_start_install(desktop_service *p,zell_scene *s){
     char script[4096],payload[8192];
     int to_child[2],from_child[2],generation=0;
-    ssize_t n;
     if(!p||!s||p->pid>0)return false;
     if(!zell_theater_install_json(payload,sizeof payload))return false;
     if(!window_prepare_slot0(s,&generation))return false;
@@ -418,14 +445,7 @@ static bool service_start_install(desktop_service *p,zell_scene *s){
     s->windows[0].minimized=s->windows[0].maximized=false;
     s->service_text[0]=s->service_title[0]=s->service_input[0]=0;
     s->service_scroll=0;s->service_send=s->service_cancel=false;
-    n=readlink("/proc/self/exe",script,sizeof script-32);
-    if(n<0)goto failed;
-    script[n]=0;
-    {
-        char *slash=strrchr(script,'/');
-        if(!slash)goto failed;
-        strcpy(slash+1,"tools/desktop.py");
-    }
+    if(!zell_runtime_tool_path(script,sizeof script,"desktop.py"))goto failed;
     if(pipe(to_child)!=0)goto failed;
     if(pipe(from_child)!=0){close(to_child[0]);close(to_child[1]);goto failed;}
     p->frame_fd=(int)syscall(SYS_memfd_create,"zell-terminal",0);

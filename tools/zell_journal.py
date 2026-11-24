@@ -2,10 +2,16 @@
 import datetime
 import json
 import uuid
+from zell_paths import state_lock
 
 TASKS = 'tasks.json'
 HISTORY = 'conversations.json'
 SETTINGS = 'conversation-settings.json'
+
+
+def _enabled(ui):
+    settings = ui.state_read(SETTINGS, {})
+    return isinstance(settings, dict) and settings.get('enabled') is True
 
 
 def _rows(ui, name):
@@ -26,23 +32,32 @@ def tasks(ui):
             title = input('Task: ').strip()[:500]
             if not title:
                 continue
-            if len(rows) >= 200:
-                ui.page_text('The task board holds 200 tasks. Remove a finished task first.')
-                continue
-            rows.append(dict(id=uuid.uuid4().hex, title=title, done=False))
-        else:
+            with state_lock(ui.BASE):
+                rows = _rows(ui, TASKS)
+                if len(rows) < 200:
+                    rows.append(dict(id=uuid.uuid4().hex, title=title, done=False))
+                    ui.state_write(TASKS, rows)
+                    continue
+            ui.page_text('The task board holds 200 tasks. Remove a finished task first.')
+            continue
+        row = next((r for r in rows if r.get('id') == picked), None)
+        if row is None:
+            continue
+        done = not row.get('done')
+        action = ui.choose(str(row.get('title', '')), [('Mark done' if done else 'Reopen', 'toggle'),
+                                                       ('Remove task', 'remove')])
+        if action not in ('toggle', 'remove'):
+            continue
+        with state_lock(ui.BASE):
+            rows = _rows(ui, TASKS)
             row = next((r for r in rows if r.get('id') == picked), None)
             if row is None:
                 continue
-            action = ui.choose(str(row['title']), [('Reopen' if row.get('done') else 'Mark done', 'toggle'),
-                                                  ('Remove task', 'remove')])
-            if action == 'toggle':
-                row['done'] = not row.get('done')
-            elif action == 'remove':
+            if action == 'remove':
                 rows.remove(row)
             else:
-                continue
-        ui.state_write(TASKS, rows)
+                row['done'] = done
+            ui.state_write(TASKS, rows)
 
 
 def recorder(ui, station):
@@ -50,21 +65,22 @@ def recorder(ui, station):
     # notebook views are excluded to avoid recording vault metadata or history.
     if station in {-1, 9, 31} or station>=32:
         return None
-    settings = ui.state_read(SETTINGS, {})
-    if not isinstance(settings, dict) or settings.get('enabled') is not True:
-        return None
     def record(role, text):
-        rows = _rows(ui, HISTORY)
-        rows.append(dict(station=station, role=role, text=str(text)[:5500],
-                         time=datetime.datetime.now().isoformat(timespec='seconds')))
-        ui.state_write(HISTORY, rows[-100:])
+        if not _enabled(ui):
+            return
+        with state_lock(ui.BASE):
+            # The setting may have changed while another tab held the lock.
+            if _enabled(ui):
+                rows = _rows(ui, HISTORY)
+                rows.append(dict(station=station, role=role, text=str(text)[:5500],
+                                 time=datetime.datetime.now().isoformat(timespec='seconds')))
+                ui.state_write(HISTORY, rows[-100:])
     return record
 
 
 def conversations(ui):
     while True:
-        settings = ui.state_read(SETTINGS, {})
-        enabled = isinstance(settings, dict) and settings.get('enabled') is True
+        enabled = _enabled(ui)
         action = ui.choose('Station conversations', [('Read saved conversations', 'read'),
             ('Stop saving conversations' if enabled else 'Enable local conversation history', 'toggle'),
             ('Clear saved conversations', 'clear')])
@@ -90,8 +106,10 @@ def conversations(ui):
                 'Key Master and terminal contents are always excluded. Reports may contain personal data.',
                 [('Enable history', True), ('Cancel', False)]) is not True:
                 continue
-            ui.state_write(SETTINGS, {'enabled': not enabled})
+            with state_lock(ui.BASE):
+                ui.state_write(SETTINGS, {'enabled': not enabled})
         elif action == 'clear':
             if ui.choose('Clear saved conversations?', [('Cancel', False), ('Clear', True)]) is True:
-                ui.state_write(HISTORY, [])
-                (ui.BASE/'wizard-conversations.jsonl').unlink(missing_ok=True)
+                with state_lock(ui.BASE):
+                    ui.state_write(HISTORY, [])
+                    (ui.BASE/'wizard-conversations.jsonl').unlink(missing_ok=True)

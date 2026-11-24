@@ -10,6 +10,10 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 import zell_rooms as rooms
+import zell_providers
+
+NAMES = list(zell_providers.CLI_FILES)
+OTHERS = [name for name in NAMES if name != 'codex']
 
 
 def pane(number, agent='codex'):
@@ -49,7 +53,7 @@ class RoomsTests(unittest.TestCase):
         self.assertFalse(any('dump' in c.args[0] for c in command.call_args_list))
 
     def test_launch_saves_exact_receipt_and_uses_own_tab(self):
-        self.ui.choose.return_value = 'start'
+        self.ui.choose.return_value = 'start:codex'
         responses = [dict(caller_pane=1, panes=[pane(1)]), dict(status='created', pane=pane(8))]
         with patch.object(rooms, '_control', side_effect=responses) as control, patch('builtins.input', return_value=str(Path.home())):
             rooms.screen(self.ui, 2)
@@ -60,15 +64,86 @@ class RoomsTests(unittest.TestCase):
         self.assertIn('gpt-6-astra', argv)
         self.assertIn('--expect-broker', argv)
 
+    def test_a_screen_offers_every_agent_and_any_kilix_pane(self):
+        self.ui.choose.return_value = None
+        with patch.object(rooms, '_snapshot', return_value=dict(panes=[pane(1)])):
+            rooms.screen(self.ui, 3)
+        options = self.ui.choose.call_args.args[1]
+        self.assertGreaterEqual(len(NAMES), 3)
+        self.assertEqual(options[:len(NAMES) + 1],
+                         [(f'Start {zell_providers.LABELS[name]} session', 'start:' + name) for name in NAMES] +
+                         [('Show another Kilix pane here', 'view')])
+        # With a live session: show it here, or focus it.
+        self.ui.state_read.return_value = {'screens': {'3': pane(2, OTHERS[0])}}
+        with patch.object(rooms, '_snapshot', return_value=dict(panes=[pane(2, OTHERS[0])])):
+            rooms.screen(self.ui, 3)
+        self.assertEqual([value for _label, value in self.ui.choose.call_args.args[1][:3]], ['show', 'focus', 'view'])
+
+    def test_the_other_agents_start_with_their_own_model(self):
+        self.assertTrue(OTHERS)
+        for agent in OTHERS:
+            self.ui.choose.return_value = 'start:' + agent
+            responses = [dict(caller_pane=1, panes=[pane(1)]), dict(status='created', pane=pane(8, agent))]
+            with patch.object(rooms, '_control', side_effect=responses) as control, \
+                    patch('builtins.input', return_value=str(Path.home())):
+                rooms.screen(self.ui, 4)
+            argv = list(control.call_args.args)
+            self.assertEqual(argv[argv.index('--agent') + 1], agent)
+            self.assertNotIn('--model', argv)
+            self.assertIn('--coding-yolo', argv)
+            self.assertIn('--own-tab', argv)
+            self.assertEqual(self.ui.state_write.call_args.args[1]['screens']['4'], pane(8, agent))
+            self.assertIn('\n%s\n' % agent, self.ui.page_text.call_args.args[0])
+
+    def test_no_other_agent_is_launched(self):
+        with patch.object(rooms, '_control') as control:
+            with self.assertRaisesRegex(ValueError, 'Choose ' + rooms.AGENT_LABELS):
+                rooms._create(self.ui, {'screens': {}}, dict(caller_pane=1, panes=[pane(1)]), Path.home(), 1,
+                              agent='bash')
+        control.assert_not_called()
+
+    def test_a_kilix_pane_is_shown_in_the_screen(self):
+        import zell_terminal
+        self.ui.choose.return_value = 'view'
+        with patch.object(rooms, '_snapshot', return_value=dict(panes=[pane(1)])), \
+                patch.object(zell_terminal, 'terminal_loop') as loop:
+            rooms.screen(self.ui, 2)
+        argv = loop.call_args.args[1]
+        self.assertEqual(argv, [sys.executable, str(rooms.ATTACH)])
+        self.assertTrue(rooms.ATTACH.is_file())
+        self.assertIn('Ctrl-] leaves', loop.call_args.kwargs['title'])
+        # The screen's own session, checked again first.
+        self.ui.state_read.return_value = {'screens': {'2': pane(5)}}
+        self.ui.choose.return_value = 'show'
+        with patch.object(rooms, '_snapshot', return_value=dict(panes=[pane(5)])), \
+                patch.object(zell_terminal, 'terminal_loop') as loop:
+            rooms.screen(self.ui, 2)
+        self.assertEqual(loop.call_args.args[1], [sys.executable, str(rooms.ATTACH), '--pane', '5'])
+        changed = dict(pane(5), broker='recycled')
+        with patch.object(rooms, '_snapshot', side_effect=[dict(panes=[pane(5)]), dict(panes=[changed])]), \
+                patch.object(zell_terminal, 'terminal_loop') as loop:
+            rooms.screen(self.ui, 2)
+        loop.assert_not_called()
+        self.assertIn('identity changed', self.ui.page_text.call_args.args[0])
+
+    def test_the_other_agents_sessions_are_previewed(self):
+        for agent in OTHERS:
+            self.ui.state_read.return_value = {'screens': {'0': pane(2, agent)}}
+            snapshot = json.dumps({'panes': [pane(2, agent)]})
+            with patch.object(rooms, '_command', side_effect=[snapshot, 'screen text', snapshot]):
+                rows = rooms.previews(self.ui)
+            self.assertIn('live screen', rows[0]['status'])
+            self.assertIn('screen text', rows[0]['text'])
+
     def test_unverified_caller_cannot_launch(self):
-        self.ui.choose.return_value = 'start'
+        self.ui.choose.return_value = 'start:codex'
         with patch.object(rooms, '_control', return_value=dict(caller_pane=None, panes=[pane(1)])) as control:
             rooms.screen(self.ui, 1)
         self.assertEqual(control.call_count, 1)
         self.ui.state_write.assert_not_called()
 
     def test_invalid_receipt_not_saved(self):
-        self.ui.choose.return_value = 'start'
+        self.ui.choose.return_value = 'start:codex'
         with patch.object(rooms, '_control', side_effect=[dict(caller_pane=1, panes=[pane(1)]), dict(status='created', pane={})]), patch('builtins.input', return_value=str(Path.home())):
             rooms.screen(self.ui, 1)
         self.ui.state_write.assert_not_called()

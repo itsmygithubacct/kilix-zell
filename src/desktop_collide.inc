@@ -1,6 +1,5 @@
-/* Furniture footprints measured from the room paintings. Command Center
- * screens are not copied here: collision calls zell_monitor_layout and
- * zell_mana_console_layout. Floor-panel rims are not obstacles.
+/* Furniture footprints measured from the room paintings. The Command Center
+ * adds the live display wall and the four floor panels below.
  * tools/room_grid.py prints this table; keep one brace per line. */
 typedef struct { int room; float x0,y0,x1,y1; } zell_block;
 static const zell_block zell_blocks[]={
@@ -31,7 +30,7 @@ static const zell_block zell_blocks[]={
 {8,1136.f,256.f,1496.f,592.f} /* library: right shelves */
 };
 #define ZELL_BLOCK_CAP 64
-_Static_assert(sizeof zell_blocks/sizeof zell_blocks[0] + 6 <= ZELL_BLOCK_CAP,
+_Static_assert(sizeof zell_blocks/sizeof zell_blocks[0] + 1 + ZELL_FLOOR_PANELS <= ZELL_BLOCK_CAP,
  "raise ZELL_BLOCK_CAP");
 typedef struct { float x0,y0,x1,y1; } zell_span;
 static bool span_has(float x,float y,float x0,float y0,float x1,float y1){
@@ -48,30 +47,40 @@ static int spans_for(const zell_scene *s,zell_span *out,int cap){
   n++;
  }
  if(s->room!=1)return n;
- for(int screen=0;screen<5&&n<cap;screen++){
-  zell_rect frame,display;
-  zell_monitor_layout(screen,&frame,&display);
-  out[n].x0=(float)frame.x;out[n].y0=(float)frame.y;
-  out[n].x1=(float)(frame.x+frame.w);out[n].y1=(float)(frame.y+frame.h);
-  n++;
- }
- if(n<cap){
-  zell_rect frame,display;
-  zell_mana_console_layout(&frame,&display);
-  out[n].x0=(float)frame.x;out[n].y0=(float)frame.y;
-  out[n].x1=(float)(frame.x+frame.w);out[n].y1=(float)(frame.y+frame.h);
-  n++;
+ zell_rect wall=zell_command_wall_bounds();
+ if(n<cap)out[n++]=(zell_span){(float)wall.x,(float)wall.y,(float)(wall.x+wall.w),(float)(wall.y+wall.h)};
+ /* Movement tests the foot center. Allow for both feet at the frame edges
+  * so Kilix cannot squeeze through a gap narrower than his stance. */
+ for(int i=0;i<ZELL_FLOOR_PANELS&&n<cap;i++){
+  zell_rect panel;zell_floor_panel_layout(i,&panel,NULL);
+  out[n++]=(zell_span){(float)(panel.x-ZELL_FOOT_RADIUS_X),(float)(panel.y-ZELL_FOOT_RADIUS_Y),
+                      (float)(panel.x+panel.w+ZELL_FOOT_RADIUS_X),(float)(panel.y+panel.h+ZELL_FOOT_RADIUS_Y)};
  }
  return n;
 }
 float zell_desktop_north(int room){
+ if(room==1){
+  zell_rect wall=zell_command_wall_bounds();
+  return (float)(wall.y+wall.h);
+ }
  if(room==5)return 380.f;
  if(room==6)return 735.f;
  if(room==7||room==8)return 400.f;
  return (float)ZELL_WORLD_H*.32f;
 }
+static bool command_tunnel_y(float y){
+ return y>=(float)ZELL_COMMAND_OPENING_TOP&&y<(float)ZELL_COMMAND_OPENING_BOTTOM;
+}
+static int command_passage(float x,float y){
+ if(!command_tunnel_y(y))return 0;
+ if(x<=(float)ZELL_COMMAND_OPENING_DEPTH)return ZELL_ROOM_PANES_LEFT;
+ if(x>=(float)(ZELL_WORLD_W-ZELL_COMMAND_OPENING_DEPTH))return ZELL_ROOM_PANES_RIGHT;
+ return 0;
+}
 bool zell_desktop_blocked(const zell_scene *s,float x,float y){
  zell_span spans[ZELL_BLOCK_CAP];
+ if(s&&s->room==1&&!command_tunnel_y(y)&&
+    (x<(float)ZELL_COMMAND_SIDE_WALL||x>(float)(ZELL_WORLD_W-ZELL_COMMAND_SIDE_WALL)))return true;
  int n=spans_for(s,spans,ZELL_BLOCK_CAP);
  for(int i=0;i<n;i++)if(span_has(x,y,spans[i].x0,spans[i].y0,spans[i].x1,spans[i].y1))return true;
  return false;
