@@ -10,7 +10,7 @@
 #define ZELL_ROOM_VITALS_H 38
 #define ZELL_ROOM_HUD_BOTTOM (ZELL_ROOM_VITALS_Y + ZELL_ROOM_VITALS_H)
 #define ZELL_ROOM_STATUS_STRIP 30
-#define ZELL_STATIONS 62
+#define ZELL_STATIONS 63
 /* The Command Center computer that zooms into a usage browser. */
 #define ZELL_MANA_CONSOLE 48
 #define ZELL_WORKSHOP_COMPUTER 49
@@ -37,6 +37,12 @@
 #define ZELL_PUZZLLM_ARCADE 59
 #define ZELL_LANDER_ARCADE 60
 #define ZELL_TANKS_ARCADE 61
+/* The Meditation room's desk computer in front of its right bench. It opens
+ * Bonsai Image Generation. The desk is drawn with its feet on DESK_FOOT;
+ * the room's foreground has no paint low enough to reach him there. */
+#define ZELL_BONSAI_COMPUTER 62
+#define ZELL_BONSAI_DESK_X 1280
+#define ZELL_BONSAI_DESK_FOOT 700
 /* The Command Center's controller and four worker screens. */
 #define ZELL_COMMAND_SCREEN_FIRST 15
 #define ZELL_COMMAND_SCREEN_LAST 19
@@ -126,6 +132,7 @@ void zell_messages_scroll(zell_scene *s,int step);
 int zell_input_terminal(const zell_scene *s);
 void zell_command_term_layout(int index,zell_rect *frame,zell_rect *body);
 zell_rect zell_command_wall_bounds(void);
+zell_rect zell_bonsai_desk_rect(void);
 void zell_command_focus(zell_scene *s,int index);
 /* The Key Master's two lines, shown while Kilix is beside him. He stands in
  * the bottom right corner, with the fleet panel above him and the tunnel to

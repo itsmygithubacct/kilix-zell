@@ -53,6 +53,9 @@ SHEETS = (
     ('library_foreground', [None]),
     ('room_hatches', [None] * 8),
     ('cave_hatches_open', [None] * 4),
+    # The Meditation room's Bonsai Image computer: the cave's TUI desk drawn
+    # at the downstairs furniture's scale, with a bonsai on its screen.
+    ('bonsai_computer', [230]),
 )
 
 # Width in world pixels. Each Vault or Workshop entry gives the limits of its
@@ -246,7 +249,53 @@ def load_images():
         'meditation-room-foreground.png', 'library-room-foreground.png'))
     images.extend(column_cutouts('room-hatches.png', 4, 2))
     images.extend(cutout(cell) for cell in fixed_cells('cave-hatches-open.png', 2, 2))
+    desks = Image.open(ASSETS / 'workstations.png').convert('RGBA')
+    images.append(cutout(bonsai_screen(desks.crop(
+        (2 * desks.width // 4, 0, 3 * desks.width // 4, desks.height // 2)))))
     return images
+
+
+# A bonsai in the screen's own colours, one character per 5-pixel cell:
+# L highlight, G leaves, T trunk, P pot.
+BONSAI = (
+    '........................',
+    '......LLGGGG............',
+    '....GLLGGGGGGG...LGGG...',
+    '.....GGGGGGGGG..GGGGGG..',
+    '........TT.....GGGGGGG..',
+    '.LGGG....TT.....TTT.....',
+    'GGGGGG....TT..TT........',
+    '.GGGGTTT...TTT..........',
+    '.......TTT.TT...........',
+    '..........TT............',
+    '.........TTT............',
+    '......PPPPPPPPPPPP......',
+    '.......PPPPPPPPPP.......',
+    '........PP....PP........',
+    '........................',
+)
+BONSAI_INK = {'L': (232, 255, 249), 'G': (99, 242, 216), 'T': (6, 66, 58), 'P': (12, 48, 40)}
+
+
+def bonsai_screen(cell, left=140, top=122, step=5):
+    """Replace the TUI desk's menu lines with a bonsai on the same glass.
+
+    The glass is the cell's x 120..265, y 110..207. Its glare in the top left
+    corner stays; the rest gets the glass's own top-to-bottom teal.
+    """
+    cell = cell.copy()
+    draw = ImageDraw.Draw(cell)
+    width, height = len(BONSAI[0]) * step, len(BONSAI) * step
+    for y in range(height):
+        t = y / (height - 1)
+        shade = tuple(round(a + (b - a) * t) for a, b in zip((27, 176, 145), (8, 128, 108)))
+        draw.line([(left, top + y), (left + width - 1, top + y)], fill=shade + (255,))
+    for row, line in enumerate(BONSAI):
+        for col, ink in enumerate(line):
+            if ink in BONSAI_INK:
+                x, y = left + col * step, top + row * step
+                draw.rectangle([x, y, x + step - 1, y + step - 1], fill=BONSAI_INK[ink] + (255,))
+    return cell
 
 
 def quiet_alpha(cell):

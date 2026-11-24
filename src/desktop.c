@@ -83,7 +83,9 @@ const zell_station zell_stations[ZELL_STATIONS]={
  {"Chess stool","Hop up and play Chess Bash",452.f/ZELL_WORLD_W,590.f/ZELL_WORLD_H,-1},
  {"Arcade cabinet","Play the coding puzzle rooms",768.f/ZELL_WORLD_W,392.f/ZELL_WORLD_H,-1},
  {"Lander cabinet","Play Terminal Lander",547.f/ZELL_WORLD_W,392.f/ZELL_WORLD_H,-1},
- {"Tanks cabinet","Play Bashed Earth",993.f/ZELL_WORLD_W,392.f/ZELL_WORLD_H,-1}
+ {"Tanks cabinet","Play Bashed Earth",993.f/ZELL_WORLD_W,392.f/ZELL_WORLD_H,-1},
+ /* The floor in front of the Meditation room's desk computer. */
+ {"Bonsai computer","Generate images with Bonsai Image",(float)ZELL_BONSAI_DESK_X/ZELL_WORLD_W,716.f/ZELL_WORLD_H,-1}
 };
 static const char *const actions[ZELL_STATIONS][17]={
  {"Ask the wizard","First-run tour of Zell",NULL},
@@ -119,7 +121,8 @@ static const char *const actions[ZELL_STATIONS][17]={
  [ZELL_CHESS_STOOL]={"Play Chess Bash",NULL},
  [ZELL_PUZZLLM_ARCADE]={"Play PuzzLLM",NULL},
  [ZELL_LANDER_ARCADE]={"Play Terminal Lander",NULL},
- [ZELL_TANKS_ARCADE]={"Play Bashed Earth",NULL}
+ [ZELL_TANKS_ARCADE]={"Play Bashed Earth",NULL},
+ [ZELL_BONSAI_COMPUTER]={"Open Bonsai Image Generation",NULL}
 };
 int zell_desktop_actions(int station){int n=0;
  if(station<0||station>=ZELL_STATIONS)return 0;
@@ -140,7 +143,8 @@ bool zell_desktop_station_visible(const zell_scene *s,int station){
  /* The Sentinel keeps the Vault with its keeper; the Signalman and the
   * Merchant work in the Workshop. */
  return (s->room==3&&(station==40||station==39))||(s->room==4&&(station==41||station==33||station==36||station==ZELL_WORKSHOP_COMPUTER||station==ZELL_PUZZLLM_HATCH))||
-  (s->room==5&&(station==ZELL_CHESS_STOOL||zell_arcade_game(station)));
+  (s->room==5&&(station==ZELL_CHESS_STOOL||zell_arcade_game(station)))||
+  (s->room==7&&station==ZELL_BONSAI_COMPUTER);
 }
 /* The cabinets' painted bodies, measured from the room art. */
 static const struct { int station; zell_rect body; const char *game; } arcades[]={
@@ -151,6 +155,12 @@ static const struct { int station; zell_rect body; const char *game; } arcades[]
 const char *zell_arcade_game(int station){
  for(size_t i=0;i<sizeof arcades/sizeof arcades[0];i++)if(arcades[i].station==station)return arcades[i].game;
  return NULL;
+}
+/* The Bonsai computer's drawn desk, at its compiled size. */
+zell_rect zell_bonsai_desk_rect(void){
+ const zell_art *a=zell_art_get(ZELL_ART_BONSAI_COMPUTER);
+ int w=a?a->width:181,h=a?a->height:230;
+ return (zell_rect){ZELL_BONSAI_DESK_X-w/2,ZELL_BONSAI_DESK_FOOT-h,w,h};
 }
 static bool contains_folded(const char *haystack,const char *needle){
  for(;*haystack;haystack++){size_t i=0;while(needle[i]&&haystack[i]&&tolower((unsigned char)haystack[i])==tolower((unsigned char)needle[i]))i++;if(!needle[i])return true;}
@@ -277,9 +287,14 @@ bool zell_desktop_kilix_box(const zell_scene *s,int *x0,int *y0,int *x1,int *y1)
  if(*y1>ZELL_WORLD_H)*y1=ZELL_WORLD_H;
  return *x0<*x1&&*y0<*y1;
 }
-/* The theater, meditation room and library foregrounds still always cover him. */
+/* The theater, meditation room and library foregrounds still always cover him,
+ * except in front of the Meditation room's desk computer. The desk stands in
+ * front of the room's right bench, so it is drawn over the foreground; when he
+ * is nearer than the desk it goes over the desk. The foreground has no paint
+ * that low, so laying it under him there hides nothing. */
 bool zell_desktop_foreground_in_front(const zell_scene *s){
  if(!s||s->room<5||s->room>8)return false;
+ if(s->room==7&&s->y>=(float)ZELL_BONSAI_DESK_FOOT)return false;
  /* On the chess stool, or hopping onto it, he is above the furniture. */
  if(s->seat_ticks>0)return false;
  const short *depth=foreground_depth(s->room);
@@ -537,7 +552,7 @@ static void open_station(zell_scene *s,int n){
  if(n==10){s->voice_on=!s->voice_on;s->voice_changed=true;s->mode=ZELL_MODE_WALK;}
  else if(n==44){s->dictation_on=!s->dictation_on;s->dictation_changed=true;s->mode=ZELL_MODE_WALK;}
  else if(n==ZELL_FLOOR_PANEL){s->mode=ZELL_MODE_WALK;s->desktop_launch=false;}
- else {s->mode=ZELL_MODE_DESK;if(n==12||(n>=15&&n<=31)||(n>=45&&n<=47)||n==ZELL_COMMAND_COMPUTER||n==ZELL_PUZZLLM_HATCH||zell_arcade_game(n))s->desktop_launch=true;}}
+ else {s->mode=ZELL_MODE_DESK;if(n==12||(n>=15&&n<=31)||(n>=45&&n<=47)||n==ZELL_COMMAND_COMPUTER||n==ZELL_PUZZLLM_HATCH||zell_arcade_game(n)||n==ZELL_BONSAI_COMPUTER)s->desktop_launch=true;}}
 #include "desktop_collide.inc"
 int zell_desktop_tick(zell_scene *s,const zell_controls *c){
  if(!s->desktop)return 0;
@@ -604,7 +619,7 @@ int zell_desktop_tick(zell_scene *s,const zell_controls *c){
      if(zell_desktop_blocked(s,s->x,s->y)){s->x=oldx;s->y=oldy;}
     }
     for(int i=0;i<ZELL_STATIONS;i++){
-     if(!zell_desktop_station_visible(s,i)||i==28||i==ZELL_WORKSHOP_COMPUTER||i==ZELL_PUZZLLM_HATCH||i==ZELL_CHESS_STOOL||zell_arcade_game(i))continue;
+     if(!zell_desktop_station_visible(s,i)||i==28||i==ZELL_WORKSHOP_COMPUTER||i==ZELL_PUZZLLM_HATCH||i==ZELL_CHESS_STOOL||zell_arcade_game(i)||i==ZELL_BONSAI_COMPUTER)continue;
      /* The wall and floor panels already contributed their rectangles.
       * Only the Command Center staff need a separate body check. */
      if(s->room==1&&(i<29||i>31))continue;
@@ -953,6 +968,10 @@ bool zell_desktop_click(zell_scene *s){
   for(size_t i=0;i<sizeof arcades/sizeof arcades[0]&&station<0;i++)
    if(rect_holds(&arcades[i].body,ix,iy))station=arcades[i].station;
   if(station>=0){s->mouse_click=false;open_station(s,station);return true;}
+ }
+ if(s->room==7){
+  zell_rect desk=zell_bonsai_desk_rect();
+  if(rect_holds(&desk,ix,iy)){s->mouse_click=false;open_station(s,ZELL_BONSAI_COMPUTER);return true;}
  }
  if(s->room!=1)return false;
  s->command_focus=0;

@@ -39,7 +39,7 @@ static void place_room(zell_scene *s,int room,float x,float y){
 /* Same bodies the movement loop refuses, so an approach is not stopped early. */
 static int body_near(const zell_scene *s,float x,float y){
     for(int i=0;i<ZELL_STATIONS;i++){
-        if(!zell_desktop_station_visible(s,i)||i==28||i==ZELL_WORKSHOP_COMPUTER||i==ZELL_CHESS_STOOL||zell_arcade_game(i))continue;
+        if(!zell_desktop_station_visible(s,i)||i==28||i==ZELL_WORKSHOP_COMPUTER||i==ZELL_CHESS_STOOL||zell_arcade_game(i)||i==ZELL_BONSAI_COMPUTER)continue;
         if(s->room==1&&(i<29||i>31))continue;
         if(s->room==0&&i>=6&&!(i>=32&&i<=41))continue;
         float ax=x-zell_stations[i].x*(float)ZELL_WORLD_W;
@@ -1123,6 +1123,118 @@ static int chess_seat_changed(const zell_scene *seated,int y0,int y1){
     return n;
 }
 #endif
+#ifndef ZELL_RENDER_NEURONTE
+/* Pixels in the world box that differ between Kilix at (x,y) in the
+ * Meditation room and Kilix across the room. */
+static int meditation_kilix_changed(float x,float y,int x0,int y0,int x1,int y1){
+    int w=ZELL_WORLD_W,h=ZELL_WORLD_H+ZELL_ROOM_HUD_BOTTOM+ZELL_ROOM_STATUS_STRIP,n=0;
+    sr_canvas here,away;
+    zell_scene a,b;
+    assert(sr_canvas_init(&here,w,h)&&sr_canvas_init(&away,w,h));
+    place_room(&a,7,x,y);place_room(&b,7,400.f,800.f);
+    zell_scene_resize(&a,w,h);zell_scene_resize(&b,w,h);a.flame_tick=b.flame_tick=0;
+    zell_room_view_identity(&a);zell_room_view_identity(&b);
+    assert(a.room_view.scale==1.f);
+    zell_draw(&a,&here);zell_draw(&b,&away);
+    for(int wy=y0;wy<y1;wy++)
+        for(int wx=x0;wx<x1;wx++){
+            float sx,sy;zell_world_to_screen(&a,(float)wx,(float)wy,&sx,&sy);
+            size_t at=(size_t)sy*(size_t)w+(size_t)sx;
+            int diff=0;
+            for(int shift=0;shift<24;shift+=8)
+                diff+=abs((int)((here.px[at]>>shift)&255u)-(int)((away.px[at]>>shift)&255u));
+            if(diff>24)n++;
+        }
+    sr_canvas_free(&here);sr_canvas_free(&away);
+    return n;
+}
+#endif
+/* The Meditation room's desk computer opens Bonsai Image Generation. It
+ * stands on the floor in front of the right bench. */
+static void test_meditation_bonsai_computer(void){
+    zell_scene s;
+    zell_controls enter={.confirm=true};
+    float px=zell_stations[ZELL_BONSAI_COMPUTER].x*ZELL_WORLD_W,py=zell_stations[ZELL_BONSAI_COMPUTER].y*ZELL_WORLD_H;
+    place_room(&s,7,px,py);
+    for(int room=0;room<=ZELL_DOWNSTAIRS_ROOMS;room++){
+        s.room=room;assert(zell_desktop_station_visible(&s,ZELL_BONSAI_COMPUTER)==(room==7));
+    }
+    s.room=7;
+    assert(strcmp(zell_desktop_action(ZELL_BONSAI_COMPUTER,0),"Open Bonsai Image Generation")==0);
+    assert(zell_desktop_actions(ZELL_BONSAI_COMPUTER)==1);
+    /* The desk is the compiled art, its feet on the desk's floor line. */
+    zell_rect desk=zell_bonsai_desk_rect();
+    assert(desk.w==181&&desk.h==230&&desk.x==1190&&desk.y+desk.h==ZELL_BONSAI_DESK_FOOT);
+    /* He walks from the room entry to the floor in front of it, and between
+     * it and the bench; its own footprint is blocked. */
+    assert(!zell_desktop_blocked(&s,px,py));
+    assert(!zell_desktop_blocked(&s,1280.f,630.f));
+    assert(zell_desktop_blocked(&s,1280.f,680.f)&&zell_desktop_blocked(&s,1200.f,690.f)&&zell_desktop_blocked(&s,1360.f,660.f));
+    place_room(&s,7,768.f,(float)ZELL_WORLD_H*ZELL_ROOM_ENTRY_Y);
+    {
+        zell_controls right={.move_x=1},up={.move_y=-1};
+        for(int i=0;i<400&&s.x<px;i++)zell_scene_tick(&s,&right);
+        for(int i=0;i<400&&s.y>py;i++)zell_scene_tick(&s,&up);
+        assert(fabsf(s.x-px)<12.f&&fabsf(s.y-py)<12.f);
+    }
+    assert(zell_desktop_near(&s)==ZELL_BONSAI_COMPUTER);
+    zell_scene_tick(&s,&enter);
+    assert(s.station==ZELL_BONSAI_COMPUTER&&s.desktop_launch&&s.mode==ZELL_MODE_DESK);
+    /* A click on the desk opens it from across the room; the floor beside it does not. */
+    place_room(&s,7,600.f,750.f);
+    zell_room_view_identity(&s);s.mouse_valid=true;
+    click_world(&s,1280.f,560.f);
+    assert(zell_desktop_click(&s)&&s.station==ZELL_BONSAI_COMPUTER&&s.desktop_launch);
+    place_room(&s,7,600.f,750.f);
+    zell_room_view_identity(&s);s.mouse_valid=true;
+    click_world(&s,1150.f,660.f);
+    assert(!zell_desktop_click(&s)&&!s.desktop_launch);
+    /* The launcher finds it from the cave. */
+    place_room(&s,0,768.f,600.f);
+    s.mode=ZELL_MODE_LAUNCHER;s.menu_index=0;s.menu_hold=0;
+    snprintf(s.launcher_query,sizeof s.launcher_query,"Bonsai");
+    assert(zell_desktop_launcher_station(&s,0)==ZELL_BONSAI_COMPUTER);
+    /* In front of the desk the foreground goes under him, which is safe only
+     * because it has no paint as low as his head there. */
+    {
+        const zell_art *front=zell_art_get(ZELL_ART_MEDITATION_FOREGROUND);
+        assert(front&&front->width==ZELL_WORLD_W&&front->height==ZELL_WORLD_H);
+        for(int y=ZELL_BONSAI_DESK_FOOT-ZELL_KILIX_DRAW_HEIGHT-2;y<ZELL_WORLD_H;y++)
+            for(int x=0;x<ZELL_WORLD_W;x++)assert((front->pixels[(size_t)y*ZELL_WORLD_W+(size_t)x]>>24)==0);
+        place_room(&s,7,px,py);assert(!zell_desktop_foreground_in_front(&s));
+        place_room(&s,7,200.f,(float)ZELL_BONSAI_DESK_FOOT);assert(!zell_desktop_foreground_in_front(&s));
+        place_room(&s,7,1280.f,640.f);assert(zell_desktop_foreground_in_front(&s));
+    }
+#ifndef ZELL_RENDER_NEURONTE
+    /* In front of the desk he is drawn over it; behind it the desk, taller
+     * than he is, hides him. */
+    {
+        int front_shown=meditation_kilix_changed(px,py,(int)px-30,(int)py-ZELL_KILIX_DRAW_HEIGHT,(int)px+30,(int)py);
+        int behind=meditation_kilix_changed(1280.f,640.f,1250,desk.y+10,1310,640);
+        assert(front_shown>1500);
+        assert(behind<40);
+        /* With him across the room the desk is drawn as compiled, over the bench. */
+        int w=ZELL_WORLD_W,h=ZELL_WORLD_H+ZELL_ROOM_HUD_BOTTOM+ZELL_ROOM_STATUS_STRIP,opaque=0,same=0;
+        const zell_art *art=zell_art_get(ZELL_ART_BONSAI_COMPUTER);
+        sr_canvas frame;assert(art&&sr_canvas_init(&frame,w,h));
+        place_room(&s,7,400.f,800.f);zell_scene_resize(&s,w,h);zell_room_view_identity(&s);
+        zell_draw(&s,&frame);
+        for(int y=0;y<art->height;y++)
+            for(int x=0;x<art->width;x++){
+                uint32_t want=art->pixels[(size_t)y*(size_t)art->width+(size_t)x];
+                /* The sheet's solid alpha is 253, so the bench shows through a little. */
+                if((want>>24)<250u)continue;
+                float sx,sy;zell_world_to_screen(&s,(float)(desk.x+x),(float)(desk.y+y),&sx,&sy);
+                uint32_t got=frame.px[(size_t)sy*(size_t)w+(size_t)sx];
+                int diff=0;
+                for(int shift=0;shift<24;shift+=8)diff+=abs((int)((got>>shift)&255u)-(int)((want>>shift)&255u));
+                opaque++;same+=diff<=12;
+            }
+        sr_canvas_free(&frame);
+        assert(opaque>20000&&same*100>=opaque*99);
+    }
+#endif
+}
 /* The right stool at the chess table opens Chess Bash; the middle arcade
  * cabinet opens PuzzLLM. */
 static void test_game_room_games(void){
@@ -1355,7 +1467,8 @@ static void test_four_rooms(void){
     zell_controls c;
     const int hatches[4]={ZELL_GAME_HATCH,ZELL_THEATER_HATCH,ZELL_MEDITATION_HATCH,ZELL_LIBRARY_HATCH};
     const float xs[4]={.30f,.46f,.62f,.78f};
-    const int expect_blocks[4]={20,3,3,3};
+    /* The meditation room adds the Bonsai computer desk to its three. */
+    const int expect_blocks[4]={20,3,4,3};
     const float floors[4]={380.f,735.f,400.f,400.f};
     float sx,sy,wx,wy;
     assert(ZELL_ART_GAME_ROOM==ZELL_ART_WORKSHOP_STOOL+1);
@@ -4349,6 +4462,7 @@ int main(void) {
     test_workshop_puzzllm_hatch();
     test_four_rooms();
     test_game_room_games();
+    test_meditation_bonsai_computer();
     test_game_room();
     test_fleet_board();
     test_notice_deadlines();

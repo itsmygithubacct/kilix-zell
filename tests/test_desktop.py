@@ -2,6 +2,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import time
@@ -217,5 +218,58 @@ class DesktopTests(unittest.TestCase):
         real.session=Sess()
         self.assertTrue(real.key('Enter',0,''))
         self.assertEqual([row[2] for row in real.session.inj.chords],[1,3])
+
+
+class BonsaiComputer(unittest.TestCase):
+    """The Meditation room's desk computer opens Bonsai Image Generation."""
+    def setUp(self):
+        temporary=tempfile.TemporaryDirectory();self.addCleanup(temporary.cleanup)
+        self.home=Path(temporary.name)
+        # Nothing on PATH and a private home: only what a test installs is found.
+        env=patch.dict(os.environ,{'HOME':str(self.home),'KILIX_BONSAI_PREFIX':str(self.home/'prefix'),
+                                   'PATH':str(self.home/'empty')})
+        env.start();self.addCleanup(env.stop)
+    def install(self):
+        binary=self.home/'prefix/bin/kilix-bonsai-image'
+        binary.parent.mkdir(parents=True,exist_ok=True);binary.write_text('#!/bin/sh\n');binary.chmod(0o755)
+        return binary
+    def test_opens_the_installed_composer_in_one_tab(self):
+        binary=self.install()
+        with patch.object(d.subprocess,'run') as run,patch.object(d,'open_tab',return_value=0) as tab:
+            self.assertEqual(d.desktop(62,0),0)
+        run.assert_not_called()
+        tab.assert_called_once_with([str(binary)],title='Bonsai Image')
+    def test_installs_the_programs_first_when_missing(self):
+        calls=[]
+        def run(argv,**options):
+            calls.append((argv,options));self.install()
+            return subprocess.CompletedProcess(argv,0,'installed','')
+        with patch.object(d.subprocess,'run',side_effect=run),patch.object(d,'open_tab',return_value=0) as tab:
+            self.assertEqual(d.desktop(62,0),0)
+        self.assertEqual([argv for argv,_ in calls],[['kilix','bonsai','--install-only']])
+        # Installer output must not reach the station's dialogue stream.
+        self.assertTrue(calls[0][1].get('capture_output'))
+        self.assertIs(calls[0][1].get('stdin'),subprocess.DEVNULL)
+        tab.assert_called_once_with([str(self.home/'prefix/bin/kilix-bonsai-image')],title='Bonsai Image')
+    def test_install_failure_is_reported_without_a_tab(self):
+        failed=subprocess.CompletedProcess([],1,'','no network')
+        with patch.object(d.subprocess,'run',return_value=failed),patch.object(d,'open_tab') as tab, \
+                patch('builtins.print') as shown:
+            with self.assertRaises(SystemExit) as failure:d.desktop(62,0)
+        self.assertEqual(failure.exception.code,1)
+        tab.assert_not_called()
+        self.assertIn('no network',' '.join(str(c.args[0]) for c in shown.call_args_list))
+    def test_an_install_without_the_composer_opens_nothing(self):
+        done=subprocess.CompletedProcess([],0,'','')
+        with patch.object(d.subprocess,'run',return_value=done),patch.object(d,'open_tab') as tab, \
+                patch('builtins.print'):
+            with self.assertRaises(SystemExit) as failure:d.desktop(62,0)
+        self.assertEqual(failure.exception.code,1)
+        tab.assert_not_called()
+    def test_tab_failure_exits_nonzero(self):
+        self.install()
+        with patch.object(d,'open_tab',return_value=1),patch('builtins.print'):
+            with self.assertRaises(SystemExit) as failure:d.desktop(62,0)
+        self.assertEqual(failure.exception.code,1)
 
 if __name__=='__main__':unittest.main()

@@ -414,7 +414,7 @@ static void service_pump(desktop_service *p,zell_scene *s){
         int slot=p->window_slot,generation=p->window_generation;
         service_stop(p);zell_terminal_restore(s);s->service_phase=4;s->service_scroll=0;
         window_release_owner(s,slot,generation);
-        if((s->station==45||s->station==46||s->station==ZELL_PUZZLLM_HATCH||s->station==ZELL_CHESS_STOOL||zell_arcade_game(s->station))&&WIFEXITED(status)&&WEXITSTATUS(status)==0)s->mode=ZELL_MODE_WALK;
+        if((s->station==45||s->station==46||s->station==ZELL_PUZZLLM_HATCH||s->station==ZELL_CHESS_STOOL||zell_arcade_game(s->station)||s->station==ZELL_BONSAI_COMPUTER)&&WIFEXITED(status)&&WEXITSTATUS(status)==0)s->mode=ZELL_MODE_WALK;
         if(sensitive){
             if(s->terminal_pixels){explicit_bzero(s->terminal_pixels,1200u*640u*4u);free(s->terminal_pixels);s->terminal_pixels=NULL;s->terminal_width=s->terminal_height=0;}
             explicit_bzero(s->service_reply,sizeof s->service_reply);

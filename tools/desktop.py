@@ -457,9 +457,48 @@ def kilix_game(game,label):
     return 0
 
 
+# The Meditation room's desk computer.
+BONSAI_COMPUTER=62
+
+
+def bonsai_image_command():
+    """The installed Bonsai Image composer, found as Kilix 95 finds it."""
+    name='kilix-bonsai-image'
+    prefix=Path(os.environ.get('KILIX_BONSAI_PREFIX') or '~/.local').expanduser()
+    for path in (shutil.which(name),prefix/'bin'/name,Path('~/.local/bin').expanduser()/name):
+        if path and os.path.isfile(path) and os.access(path,os.X_OK):return str(path)
+    return None
+
+
+def bonsai_image():
+    """Bonsai Image Generation, the composer Kilix 95's row opens, in a new tab.
+
+    When it is not installed, `kilix bonsai --install-only` installs the Bonsai
+    programs here first, so an install error is shown in the station window.
+    """
+    print('Opening Bonsai Image Generation…',flush=True)
+    try:
+        command=bonsai_image_command()
+        if not command:
+            # The station's stdout carries dialogue frames. Keep installer output off it.
+            setup=subprocess.run(['kilix','bonsai','--install-only'],stdin=subprocess.DEVNULL,
+                                 capture_output=True,text=True,errors='replace',timeout=1800)
+            if setup.returncode:
+                raise RuntimeError((setup.stderr or setup.stdout).strip()[-1600:] or f'install exited {setup.returncode}')
+            command=bonsai_image_command()
+            if not command:raise RuntimeError('the Bonsai install did not provide kilix-bonsai-image')
+        status=open_tab([command],title='Bonsai Image')
+    except (OSError,RuntimeError,subprocess.TimeoutExpired) as error:
+        print(f'Could not open Bonsai Image Generation: {error}',flush=True)
+        status=1
+    if status:raise SystemExit(status)
+    return 0
+
+
 def desktop(station,action):
     ui=sys.modules.get(__name__) or SimpleNamespace(**globals())
     if station in KILIX_GAMES:return kilix_game(*KILIX_GAMES[station])
+    if station==BONSAI_COMPUTER:return bonsai_image()
     # The Workshop hatch and the Game Room's middle arcade cabinet.
     if station in (57,59):
         import zell_puzzllm

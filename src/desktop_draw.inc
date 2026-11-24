@@ -302,13 +302,13 @@ static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
  for(int i=15;i<ZELL_STATIONS;i++){
   /* The stool and cabinet are painted in the room. Mark them only when near:
    * the glow on the floor under him, the labels over the furniture. */
-  if(i==ZELL_CHESS_STOOL||zell_arcade_game(i)){
+  if(i==ZELL_CHESS_STOOL||zell_arcade_game(i)||i==ZELL_BONSAI_COMPUTER){
    if(!zell_desktop_station_visible(s,i)||i!=near||s->seat_ticks>0)continue;
    int x=(int)(zell_stations[i].x*ZELL_WORLD_W)-cx,y=(int)(zell_stations[i].y*ZELL_WORLD_H)-cy;
    if(!front)sr_fill_ellipse(c,(float)x,(float)y,40,6,0x80e5c4u,.65f);
    else {
-    desktop_label(c,x,y+15,i==ZELL_CHESS_STOOL?"Chess Bash":zell_arcade_game(i),0xb9f8dbu);
-    desktop_label(c,x,y+40,i==ZELL_CHESS_STOOL?"Enter: hop up and play":"Enter: play",0xa8f3d5u);
+    desktop_label(c,x,y+15,i==ZELL_CHESS_STOOL?"Chess Bash":i==ZELL_BONSAI_COMPUTER?"Bonsai Image":zell_arcade_game(i),0xb9f8dbu);
+    desktop_label(c,x,y+40,i==ZELL_CHESS_STOOL?"Enter: hop up and play":i==ZELL_BONSAI_COMPUTER?"Enter: generate images":"Enter: play",0xa8f3d5u);
    }
    continue;
   }
@@ -498,6 +498,11 @@ static void desktop_command_surround(sr_canvas *background){
   sr_canvas_free(&strip);
  }
 }
+/* The Meditation room's Bonsai computer, drawn at its compiled size. */
+static void desktop_bonsai_computer(sr_canvas *c,int cx,int cy){
+ const zell_art *a=zell_art_get(ZELL_ART_BONSAI_COMPUTER);
+ if(a)desktop_art(c,ZELL_ART_BONSAI_COMPUTER,ZELL_BONSAI_DESK_X-cx,ZELL_BONSAI_DESK_FOOT-cy,a->height);
+}
 static void desktop_world_layer(const zell_scene *s,sr_canvas *c,int cx,int cy){
  static sr_canvas backgrounds[9];
  int room=s->room>=0&&s->room<9?s->room:0;
@@ -531,6 +536,10 @@ static void desktop_world_layer(const zell_scene *s,sr_canvas *c,int cx,int cy){
  bool front_hides=front>=0&&!by_depth&&zell_desktop_foreground_in_front(s);
  /* The whole layer goes under him; its deeper pixels come back over him. */
  if(front>=0&&!front_hides)desktop_registered_front(c,front,cx,cy);
+ /* The desk stands in front of the right bench. He is nearer than it, or it
+  * goes over him; zell_desktop_foreground_in_front keeps the bench under it. */
+ bool desk_under=s->room==7&&s->y>=(float)ZELL_BONSAI_DESK_FOOT;
+ if(desk_under)desktop_bonsai_computer(c,cx,cy);
  if(s->mode==ZELL_MODE_WALK&&s->running){
   float px=s->x-(float)cx,py=s->y-(float)cy;
    float dx=s->direction==2?-1.0f:s->direction==3?1.0f:0;
@@ -554,6 +563,7 @@ static void desktop_world_layer(const zell_scene *s,sr_canvas *c,int cx,int cy){
  if(s->room==5&&s->seated&&s->seat_ticks==ZELL_SEAT_HOP_TICKS)desktop_chess_stool_front(c,cx,cy);
  if(front_hides)desktop_registered_front(c,front,cx,cy);
  else if(by_depth&&s->seat_ticks==0)desktop_front_over(s,c,front,cx,cy);
+ if(s->room==7&&!desk_under)desktop_bonsai_computer(c,cx,cy);
  if(s->room)desktop_room(s,c,cx,cy,true);else desktop_cave(s,c,cx,cy,true);
  if(s->debug_blocks[0].enabled){
   int blocks=zell_desktop_block_count(s);

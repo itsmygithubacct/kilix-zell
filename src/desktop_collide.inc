@@ -44,6 +44,7 @@ static const zell_block zell_blocks[]={
 {7,0.f,0.f,1536.f,400.f}, /* meditation: back wall; floor starts at 400 */
 {7,32.f,160.f,480.f,592.f}, /* meditation: left altar */
 {7,1104.f,312.f,1504.f,600.f}, /* meditation: right shrine */
+{7,1196.f,656.f,1366.f,700.f}, /* meditation: Bonsai computer desk, its floor footprint */
 {8,0.f,0.f,1536.f,400.f}, /* library: back wall, ladders, plant, upper shelves; floor starts at 400 */
 {8,40.f,256.f,400.f,600.f}, /* library: left shelves */
 {8,1136.f,256.f,1496.f,592.f} /* library: right shelves */

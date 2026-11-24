@@ -10,6 +10,7 @@ These changes are not in the 0.1.1 runtime archive that Plebian-OS 0.2.3 pins.
 - Open PuzzLLM from the middle arcade cabinet in the Game Room, as well as from the Workshop hatch.
 - Play Terminal Lander from the Game Room's left arcade cabinet and Bashed Earth from its right one, through Kilix's pinned builds.
 - Walk around the Game Room's furniture. Collision now follows each piece's footprint, so the floor behind the chess table and the stool, and around the pool table, is open. Each piece covers Kilix only where it stands nearer than his feet, so a leg in front of him hides his side while the table behind him stays under him.
+- Use Bonsai Image Generation from the desk computer in the Meditation room, in front of its right bench. Enter beside it, or a click on it, opens the Bonsai Image composer in a new tab. If the Bonsai programs are missing, Zell runs `kilix bonsai --install-only` first. The desk covers Kilix when he walks behind it.
 
 - Preserve symbolic links during Porter file operations and Vault restores. Backup verification also reports extra files in a snapshot.
 - Keep tasks, local library references, and DJ subscriptions in sync across open tabs.
