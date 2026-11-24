@@ -39,7 +39,7 @@ static void place_room(zell_scene *s,int room,float x,float y){
 /* Same bodies the movement loop refuses, so an approach is not stopped early. */
 static int body_near(const zell_scene *s,float x,float y){
     for(int i=0;i<ZELL_STATIONS;i++){
-        if(!zell_desktop_station_visible(s,i)||i==28||i==ZELL_WORKSHOP_COMPUTER)continue;
+        if(!zell_desktop_station_visible(s,i)||i==28||i==ZELL_WORKSHOP_COMPUTER||i==ZELL_CHESS_STOOL||i==ZELL_PUZZLLM_ARCADE)continue;
         if(s->room==1&&(i<29||i>31))continue;
         if(s->room==0&&i>=6&&!(i>=32&&i<=41))continue;
         float ax=x-zell_stations[i].x*(float)ZELL_WORLD_W;
@@ -1083,7 +1083,128 @@ static int game_room_visible_over_front(float x,float y){
     sr_canvas_free(&here);sr_canvas_free(&away);
     return n;
 }
+/* Rows of his body the stool front hides once he sits, against a frame
+ * with him across the room. Counts changed pixels in his columns. */
+static int chess_seat_changed(const zell_scene *seated,int y0,int y1){
+    int w=ZELL_WORLD_W,h=ZELL_WORLD_H+ZELL_ROOM_HUD_BOTTOM+ZELL_ROOM_STATUS_STRIP,n=0;
+    sr_canvas here,away;
+    zell_scene a=*seated,b;
+    assert(sr_canvas_init(&here,w,h)&&sr_canvas_init(&away,w,h));
+    zell_scene_resize(&a,w,h);a.flame_tick=0;
+    place_room(&b,5,768.f,520.f);zell_scene_resize(&b,w,h);b.flame_tick=0;
+    zell_room_view_identity(&a);zell_room_view_identity(&b);
+    assert(a.room_view.scale==1.f);
+    zell_draw(&a,&here);zell_draw(&b,&away);
+    for(int wy=y0;wy<y1;wy++)
+        for(int wx=(int)a.x-30;wx<(int)a.x+30;wx++){
+            float sx,sy;zell_world_to_screen(&a,(float)wx,(float)wy,&sx,&sy);
+            size_t at=(size_t)sy*(size_t)w+(size_t)sx;
+            /* The sheet's solid alpha is 252, so a covered pixel can move a little. */
+            int diff=0;
+            for(int shift=0;shift<24;shift+=8)
+                diff+=abs((int)((here.px[at]>>shift)&255u)-(int)((away.px[at]>>shift)&255u));
+            if(diff>24)n++;
+        }
+    sr_canvas_free(&here);sr_canvas_free(&away);
+    return n;
+}
 #endif
+/* The right stool at the chess table opens Chess Bash; the middle arcade
+ * cabinet opens PuzzLLM. */
+static void test_game_room_games(void){
+    zell_scene s;
+    zell_controls none={0},enter={.confirm=true};
+    float floor_x,floor_y,seat_x,seat_y;
+    zell_chess_floor_point(&floor_x,&floor_y);zell_chess_seat_point(&seat_x,&seat_y);
+    place_room(&s,5,floor_x,floor_y);
+    for(int room=0;room<=ZELL_DOWNSTAIRS_ROOMS;room++){
+        s.room=room;
+        assert(zell_desktop_station_visible(&s,ZELL_CHESS_STOOL)==(room==5));
+        assert(zell_desktop_station_visible(&s,ZELL_PUZZLLM_ARCADE)==(room==5));
+    }
+    s.room=5;
+    /* He reaches the stool's floor point from the room entry, and it is clear. */
+    assert(!zell_desktop_blocked(&s,floor_x,floor_y));
+    assert(zell_desktop_blocked(&s,seat_x,seat_y));
+    assert(zell_desktop_near(&s)==ZELL_CHESS_STOOL);
+    assert(strcmp(zell_desktop_action(ZELL_CHESS_STOOL,0),"Play Chess Bash")==0);
+    assert(strcmp(zell_desktop_action(ZELL_PUZZLLM_ARCADE,0),"Play PuzzLLM")==0);
+
+    zell_scene_tick(&s,&enter);
+    assert(s.seat_ticks==1&&!s.seated&&s.mode==ZELL_MODE_WALK&&!s.desktop_launch);
+    assert(!zell_desktop_foreground_in_front(&s));
+    for(int i=0;i<ZELL_SEAT_HOP_TICKS*2&&!s.seated;i++){
+        zell_scene_tick(&s,&none);
+        /* Over the stool and table for the whole hop. */
+        assert(!zell_desktop_foreground_in_front(&s));
+    }
+    assert(s.seated&&s.seat_ticks==ZELL_SEAT_HOP_TICKS&&s.x==seat_x&&s.y==seat_y);
+    assert(s.direction==ZELL_DIR_LEFT&&zell_seat_draw_dy(&s)==ZELL_SEAT_SIT_DROP);
+    assert(s.station==ZELL_CHESS_STOOL&&s.mode==ZELL_MODE_DESK&&s.desktop_launch);
+
+    /* Back from the game tab: Enter plays again, movement hops down. */
+    s.mode=ZELL_MODE_WALK;s.desktop_launch=false;
+#ifndef ZELL_RENDER_NEURONTE
+    {
+        int feet=(int)seat_y+ZELL_SEAT_SIT_DROP;
+        int shown=chess_seat_changed(&s,feet-ZELL_KILIX_DRAW_HEIGHT+8,ZELL_CHESS_FRONT_TOP-2);
+        int hidden=chess_seat_changed(&s,ZELL_CHESS_FRONT_TOP+2,feet);
+        assert(shown>400&&hidden<40);
+    }
+#endif
+    zell_scene_tick(&s,&enter);
+    assert(s.seated&&s.mode==ZELL_MODE_DESK&&s.desktop_launch&&s.station==ZELL_CHESS_STOOL);
+    s.mode=ZELL_MODE_WALK;s.desktop_launch=false;
+    zell_controls right={.move_x=1};
+    zell_scene_tick(&s,&right);
+    assert(s.seated&&s.seat_ticks==ZELL_SEAT_HOP_TICKS-1);
+    for(int i=0;i<ZELL_SEAT_HOP_TICKS*2&&s.seat_ticks>0;i++)zell_scene_tick(&s,&none);
+    assert(!s.seated&&s.seat_ticks==0&&s.x==floor_x&&s.y==floor_y&&s.mode==ZELL_MODE_WALK);
+
+    /* Clicking the stool hops up; clicking it while seated plays again. */
+    zell_room_view_identity(&s);s.mouse_valid=true;
+    click_world(&s,370.f,560.f);
+    assert(zell_desktop_click(&s)&&s.seat_ticks==1);
+    for(int i=0;i<ZELL_SEAT_HOP_TICKS*2&&!s.seated;i++)zell_scene_tick(&s,&none);
+    s.mode=ZELL_MODE_WALK;s.desktop_launch=false;
+    click_world(&s,370.f,600.f);
+    assert(zell_desktop_click(&s)&&s.seated&&s.mode==ZELL_MODE_DESK&&s.desktop_launch);
+
+    /* Leaving the room by the launcher stands him up instead of carrying the seat. */
+    s.mode=ZELL_MODE_LAUNCHER;s.desktop_launch=false;s.menu_index=0;s.menu_hold=0;
+    snprintf(s.launcher_query,sizeof s.launcher_query,"Return to the cave");
+    assert(zell_desktop_launcher_station(&s,0)==28);
+    zell_scene_tick(&s,&enter);
+    assert(s.room==0&&!s.seated&&s.seat_ticks==0);
+    /* And the launcher finds the stool from the cave. */
+    s.mode=ZELL_MODE_LAUNCHER;s.menu_index=0;s.menu_hold=0;
+    snprintf(s.launcher_query,sizeof s.launcher_query,"Chess Bash");
+    assert(zell_desktop_launcher_station(&s,0)==ZELL_CHESS_STOOL);
+    zell_scene_tick(&s,&enter);
+    assert(s.room==5&&s.seat_ticks==1&&!s.seated&&s.station==ZELL_CHESS_STOOL);
+    for(int i=0;i<ZELL_SEAT_HOP_TICKS*2&&!s.seated;i++)zell_scene_tick(&s,&none);
+    assert(s.seated&&s.x==seat_x&&s.y==seat_y);
+
+    /* The middle cabinet: Enter in front of it, or a click on it from anywhere. */
+    place_room(&s,5,768.f,400.f);
+    assert(!zell_desktop_blocked(&s,768.f,400.f));
+    assert(zell_desktop_near(&s)==ZELL_PUZZLLM_ARCADE);
+    zell_scene_tick(&s,&enter);
+    assert(s.station==ZELL_PUZZLLM_ARCADE&&s.desktop_launch&&s.mode==ZELL_MODE_DESK&&!s.seated);
+    place_room(&s,5,1000.f,700.f);
+    zell_room_view_identity(&s);s.mouse_valid=true;
+    click_world(&s,768.f,200.f);
+    assert(zell_desktop_click(&s)&&s.station==ZELL_PUZZLLM_ARCADE&&s.desktop_launch);
+    place_room(&s,5,1000.f,700.f);
+    zell_room_view_identity(&s);s.mouse_valid=true;
+    click_world(&s,560.f,200.f);
+    assert(!zell_desktop_click(&s)&&!s.desktop_launch);
+    /* Neither station is a body he bumps into. */
+    place_room(&s,5,768.f,440.f);
+    zell_controls up={.move_y=-1};
+    for(int i=0;i<30;i++)zell_scene_tick(&s,&up);
+    assert(s.y<=392.f);
+}
 static void test_game_room(void){
     zell_scene s;
     const float rocks[][2]={{230.f,760.f},{300.f,800.f},{430.f,790.f},{570.f,920.f},
@@ -4140,6 +4261,7 @@ int main(void) {
     test_lower_hatches();
     test_workshop_puzzllm_hatch();
     test_four_rooms();
+    test_game_room_games();
     test_game_room();
     test_fleet_board();
     test_notice_deadlines();

@@ -10,7 +10,7 @@
 #define ZELL_ROOM_VITALS_H 38
 #define ZELL_ROOM_HUD_BOTTOM (ZELL_ROOM_VITALS_Y + ZELL_ROOM_VITALS_H)
 #define ZELL_ROOM_STATUS_STRIP 30
-#define ZELL_STATIONS 58
+#define ZELL_STATIONS 60
 /* The Command Center computer that zooms into a usage browser. */
 #define ZELL_MANA_CONSOLE 48
 #define ZELL_WORKSHOP_COMPUTER 49
@@ -30,6 +30,10 @@
 /* Shell below the Mana readout in the center of the wall. */
 #define ZELL_COMMAND_COMPUTER 56
 #define ZELL_PUZZLLM_HATCH 57
+/* The Game Room's right stool at the chess table. Landing on it opens Chess Bash. */
+#define ZELL_CHESS_STOOL 58
+/* The middle arcade cabinet on the Game Room's back wall opens PuzzLLM. */
+#define ZELL_PUZZLLM_ARCADE 59
 /* The Command Center's controller and four worker screens. */
 #define ZELL_COMMAND_SCREEN_FIRST 15
 #define ZELL_COMMAND_SCREEN_LAST 19
@@ -321,6 +325,10 @@ int zell_seat_lift(int tick);
 int zell_seat_draw_dy(const zell_scene *s);
 void zell_workshop_floor_point(float *x,float *y);
 void zell_workshop_seat_point(float *x,float *y);
+void zell_chess_floor_point(float *x,float *y);
+void zell_chess_seat_point(float *x,float *y);
+/* World row where the chess stool's front starts covering him once seated. */
+#define ZELL_CHESS_FRONT_TOP 528
 bool zell_provider_apply(zell_scene *s,const char *text);
 bool zell_provider_check_apply(zell_scene *s,const char *text);
 bool zell_fleet_apply(zell_scene *s,const char *text);

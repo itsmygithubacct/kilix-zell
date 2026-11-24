@@ -34,6 +34,21 @@ static void desktop_stool_front(sr_canvas *c,int cx,int cy){
  sr_canvas src;sr_canvas_wrap(&src,a->pixels,a->width,a->height);
  sr_blit_scaled(c,&src,-cx,-cy,a->width,a->height,1.f);
 }
+/* The chess stool's cushion front and legs, cut from the Game Room
+ * foreground, go over his legs once he sits, as the Workshop stool's rim
+ * does. The cut starts below the cushion's top so he sits on it. */
+static void desktop_chess_stool_front(sr_canvas *c,int cx,int cy){
+ enum { X0=317,X1=427,Y0=ZELL_CHESS_FRONT_TOP,Y1=640,W=X1-X0,H=Y1-Y0 };
+ static uint32_t pixels[W*H];static bool ready;
+ const zell_art *a=zell_art_get(ZELL_ART_GAME_FOREGROUND);
+ if(!a||a->width!=ZELL_WORLD_W||a->height!=ZELL_WORLD_H)return;
+ if(!ready){
+  for(int y=0;y<H;y++)memcpy(&pixels[y*W],&a->pixels[(size_t)(Y0+y)*ZELL_WORLD_W+X0],W*sizeof pixels[0]);
+  ready=true;
+ }
+ sr_canvas src;sr_canvas_wrap(&src,pixels,W,H);
+ sr_blit_scaled(c,&src,X0-cx,Y0-cy,W,H,1.f);
+}
 /* Full-canvas foreground. The asset compiler keeps the 1536x1024 anchor. */
 static void desktop_registered_front(sr_canvas *c,int art,int cx,int cy){
  const zell_art *sheet=zell_art_get(art);if(!sheet)return;
@@ -265,6 +280,18 @@ static void desktop_room(const zell_scene *s,sr_canvas *c,int cx,int cy,bool fro
  /* Floor pass, before Kilix and before anything that stands over him. */
  if(!front)desktop_floor_panels(s,c,cx,cy);
  for(int i=15;i<ZELL_STATIONS;i++){
+  /* The stool and cabinet are painted in the room. Mark them only when near:
+   * the glow on the floor under him, the labels over the furniture. */
+  if(i==ZELL_CHESS_STOOL||i==ZELL_PUZZLLM_ARCADE){
+   if(!zell_desktop_station_visible(s,i)||i!=near||s->seat_ticks>0)continue;
+   int x=(int)(zell_stations[i].x*ZELL_WORLD_W)-cx,y=(int)(zell_stations[i].y*ZELL_WORLD_H)-cy;
+   if(!front)sr_fill_ellipse(c,(float)x,(float)y,40,6,0x80e5c4u,.65f);
+   else {
+    desktop_label(c,x,y+15,i==ZELL_CHESS_STOOL?"Chess Bash":"PuzzLLM",0xb9f8dbu);
+    desktop_label(c,x,y+40,i==ZELL_CHESS_STOOL?"Enter: hop up and play":"Enter: play",0xa8f3d5u);
+   }
+   continue;
+  }
   if(!zell_desktop_station_visible(s,i)||zell_desktop_station_in_front(s,i)!=front)continue;
   if(i==ZELL_COMMAND_COMPUTER){if(!front)desktop_monitor(s,c,ZELL_COMMAND_SHELL,cx,cy);continue;}
   int x=(int)(zell_stations[i].x*ZELL_WORLD_W)-cx,y=(int)(zell_stations[i].y*ZELL_WORLD_H)-cy;
@@ -503,6 +530,7 @@ static void desktop_world_layer(const zell_scene *s,sr_canvas *c,int cx,int cy){
  sr_fill_ellipse(c,s->x-(float)cx,s->y-(float)cy,ZELL_FOOT_RADIUS_X*shadow,ZELL_FOOT_RADIUS_Y*shadow,0x071719u,.45f);
  desktop_art(c,pose.art,(int)s->x-cx+pose.offset_x,(int)s->y-cy+pose.offset_y+seat_dy,ZELL_KILIX_DRAW_HEIGHT);
  if(s->room==4&&s->seated&&s->seat_ticks==ZELL_SEAT_HOP_TICKS)desktop_stool_front(c,cx,cy);
+ if(s->room==5&&s->seated&&s->seat_ticks==ZELL_SEAT_HOP_TICKS)desktop_chess_stool_front(c,cx,cy);
  if(front_hides)desktop_registered_front(c,front,cx,cy);
  if(s->room)desktop_room(s,c,cx,cy,true);else desktop_cave(s,c,cx,cy,true);
  if(s->debug_blocks[0].enabled){
@@ -546,6 +574,7 @@ static void desktop_chrome(const zell_scene *s,sr_canvas *c,int cx,int cy){
   if(s->command_focus)hint="F6 next shell | Alt+Esc walk";
   else if(near<0)hint="Click a shell or F6 | WASD walk | Tab stations";
  }
+ if(s->room==5&&s->seated&&s->mode==ZELL_MODE_WALK)hint="Enter play Chess Bash | WASD hop down";
  sr_text(c,12,(float)(c->h-22),hint,0xc7d8dau,1,1);
  /* L8 calls zell_notice_show. */
  zell_notice_show(s,c,hint);

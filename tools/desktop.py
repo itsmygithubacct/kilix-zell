@@ -431,9 +431,33 @@ def vitals_snapshot():
     return status
 
 
+def chess_bash():
+    """The Game Room's chess stool: Kilix's pinned Chess Bash in a new tab.
+
+    `kilix games play` installs and builds the catalog's pinned game. The setup
+    runs here first, so an install error is shown in the station window
+    instead of a tab that closes at once.
+    """
+    print('Opening Chess Bash…',flush=True)
+    try:
+        # The station's stdout carries dialogue frames. Keep build output off it.
+        setup=subprocess.run(['kilix','games','play','chess-bash','--setup-only'],stdin=subprocess.DEVNULL,
+                             capture_output=True,text=True,errors='replace',timeout=1800)
+        if setup.returncode:
+            raise RuntimeError((setup.stderr or setup.stdout).strip()[-1600:] or f'setup exited {setup.returncode}')
+        status=open_tab(['kilix','games','play','chess-bash'],title='Chess Bash')
+    except (OSError,RuntimeError,subprocess.TimeoutExpired) as error:
+        print(f'Could not open Chess Bash: {error}',flush=True)
+        status=1
+    if status:raise SystemExit(status)
+    return 0
+
+
 def desktop(station,action):
     ui=sys.modules.get(__name__) or SimpleNamespace(**globals())
-    if station==57:
+    if station==58:return chess_bash()
+    # The Workshop hatch and the Game Room's middle arcade cabinet.
+    if station in (57,59):
         import zell_puzzllm
         print('Opening PuzzLLM…',flush=True)
         try:
