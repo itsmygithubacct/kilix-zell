@@ -112,9 +112,10 @@ class Kilix:
     """What this needs of Kilix: its panes, a pane's broker, and a way to
     type into a pane."""
 
-    def __init__(self, panes, executable, runtime, own_window=None):
+    def __init__(self, panes, executable, runtime, own_window=None, hidden_window=None):
         self.panes, self.executable, self.runtime = panes, executable, runtime
-        self.own_window = own_window
+        # Zell's own window, when this runs in a Kilix window of its own.
+        self.own_window, self.hidden_window = own_window, hidden_window
 
     @classmethod
     def load(cls, environ=os.environ):
@@ -130,7 +131,7 @@ class Kilix:
         if config not in sys.path:
             sys.path.insert(0, config)
         from kilix_sdk import panes
-        return cls(panes, executable, runtime, environ.get('KITTY_WINDOW_ID'))
+        return cls(panes, executable, runtime, environ.get('KITTY_WINDOW_ID'), environ.get('ZELL_KILIX_WINDOW_ID'))
 
     def listing(self):
         """(tab title, pane) for every pane but this window, with a broker."""
@@ -143,6 +144,8 @@ class Kilix:
                 # This window: by the broker session Kilix matches it with
                 # (window ids change when the engine restarts), and by id.
                 if getattr(pane, 'is_self', False) or (self.own_window and str(pane.id) == str(self.own_window)):
+                    continue
+                if self.hidden_window and str(pane.id) == str(self.hidden_window):
                     continue
                 out.append((tab.title, pane))
         return out
