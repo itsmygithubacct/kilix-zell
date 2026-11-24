@@ -1038,8 +1038,10 @@ class EmbedPane:
         self.input(['scroll-to', str(int(offset))])
 
     def selected_text(self):
+        """Kilix's selection, asked on the input connection so that it comes
+        after the button release sent just before."""
         try:
-            return self.backend.engine.selection(self.window).rstrip('\n')
+            return self.backend.conn.selection(self.window).rstrip('\n')
         except self.kep.EmbedError:
             return ''
 

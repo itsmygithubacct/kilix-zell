@@ -53,7 +53,7 @@ class Reader:
 class Engine:
     def __init__(self, root):
         self.root, self.next, self.calls, self.made = root, 1, [], {}
-        self.listen_on, self.selection_text, self.fail_launch, self.fail_resize = 'unix:@zell-test', '', False, False
+        self.listen_on, self.fail_launch, self.fail_resize = 'unix:@zell-test', False, False
 
     def launch(self, argv, cols, rows, cell_size=None, env=(), cwd=None, title=None):
         if self.fail_launch:
@@ -72,10 +72,6 @@ class Engine:
         self.calls.append(('resize', window.id, cols, rows))
         window.cols, window.rows = cols, rows
 
-    def selection(self, window):
-        self.calls.append(('selection', window.id))
-        return self.selection_text
-
     def close(self, window):
         self.calls.append(('close', window.id))
         if os.path.exists(window.map):
@@ -84,13 +80,17 @@ class Engine:
 
 class Connection:
     def __init__(self):
-        self.sent = []
+        self.sent, self.selection_text = [], ''
 
     def send(self, window, event, mods=0):
         self.sent.append((window.id, list(event), mods))
 
     def send_bytes(self, window, data):
         self.sent.append((window.id, 'bytes', bytes(data)))
+
+    def selection(self, window):
+        self.sent.append((window.id, 'selection?'))
+        return self.selection_text
 
     def close(self):
         pass
@@ -200,21 +200,22 @@ class ProtocolTests(unittest.TestCase):
         room = self.show()
         pane = room.current['panes'][0]
         self.feed(pane)
-        self.engine.selection_text = 'two\nlines\n'
+        self.conn.selection_text = 'two\nlines\n'
         self.rooms.line('M 0 1 1 0 0 0')
-        self.assertIn(('selection', 1), self.engine.calls)
+        # Asked after the release, on the same connection.
+        self.assertEqual(self.events(1)[-2:], [(1, ['mouse', '1', '0', '0', '0', '0', '0', '1'], 0), (1, 'selection?')])
         self.assertEqual(self.said[-1], 'N 9 0 Copied 2 lines.')
         self.assertEqual(self.said[-2], 'Y .')
         # A program that has the mouse gets the release; nothing is copied...
-        self.engine.calls.clear()
+        self.conn.sent.clear()
         self.feed(pane, tracking=1)
         self.rooms.line('M 0 1 1 0 0 0')
-        self.assertNotIn(('selection', 1), self.engine.calls)
+        self.assertNotIn((1, 'selection?'), self.conn.sent)
         # ...unless Shift is held. An empty selection says nothing.
-        self.engine.selection_text = ''
+        self.conn.selection_text = ''
         said = len(self.said)
         self.rooms.line('M 0 1 1 1 0 0')
-        self.assertIn(('selection', 1), self.engine.calls)
+        self.assertIn((1, 'selection?'), self.conn.sent)
         self.assertEqual(len(self.said), said)
 
     def test_page_keys_and_the_scrollbar_scroll_kilixs_history(self):
@@ -480,6 +481,20 @@ class RealEngineTests(unittest.TestCase):
         self.wait(lambda: self.rooms.rooms[9].current['panes'][0] is not left)
         fresh = self.rooms.rooms[9].current['panes'][0]
         self.wait(lambda: fresh.frame is not None)
+
+    def test_a_drag_selects_and_the_release_copies(self):
+        self.rooms.line('S 9 61 16')
+        left = self.rooms.rooms[9].current['panes'][0]
+        self.wait(lambda: left.frame is not None)
+        self.rooms.line('K' + b'clear; echo pick-this-word\r'.hex())
+        self.wait(lambda: 'pick-this-word' in self.text(left))
+        y = self.text(left).index('pick-this-word') * 16 + 8
+        for line in (f'M 0 0 1 0 1 {y}', f'M 0 2 1 0 50 {y}', f'M 0 1 1 0 110 {y}'):
+            self.rooms.line(line)
+        self.assertEqual(self.said[-1], 'N 9 0 Copied 1 line.')
+        import base64
+        pieces = [s[2:] for s in self.said if s.startswith('Y ') and s != 'Y .']
+        self.assertEqual(base64.b64decode(''.join(pieces)).decode(), 'pick-this-word')
 
     def test_the_windows_are_kilix_panes(self):
         self.rooms.line('S 9 61 16')
