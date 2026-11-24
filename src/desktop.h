@@ -81,6 +81,10 @@ int zell_desktop_block_count(const zell_scene *s);
 void zell_desktop_block_rect(const zell_scene *s,int index,float *x0,float *y0,float *x1,float *y1);
 int zell_desktop_block_table(int index,int *room,float *x0,float *y0,float *x1,float *y1);
 bool zell_desktop_station_in_front(const zell_scene *s,int station);
+/* Kilix's walking sprite is drawn this many world pixels tall. */
+#define ZELL_KILIX_DRAW_HEIGHT 84
+/* True when the room's full-canvas foreground is drawn over Kilix. */
+bool zell_desktop_foreground_in_front(const zell_scene *s);
 float zell_desktop_speed_factor(const zell_scene *s);
 int zell_desktop_launcher_count(const zell_scene *s);
 int zell_desktop_launcher_station(const zell_scene *s,int index);

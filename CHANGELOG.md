@@ -4,6 +4,9 @@
 
 These changes are not in the 0.1.1 runtime archive that Plebian-OS 0.2.3 pins.
 
+- Stop Kilix at the rocks and lanterns around the Game Room floor. The stairs between them stay open.
+- Draw the Game Room's chess table, stools, pool table and pinball over Kilix only when he stands behind them. The left stool's front leg now stands behind the rock instead of on it.
+
 - Preserve symbolic links during Porter file operations and Vault restores. Backup verification also reports extra files in a snapshot.
 - Keep tasks, local library references, and DJ subscriptions in sync across open tabs.
 - Keep theater input with the remote or browser while it has focus. All remote controls and file pages are reachable in short panes.

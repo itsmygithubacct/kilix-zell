@@ -19,6 +19,17 @@ static const zell_block zell_blocks[]={
 {5,0.f,0.f,1536.f,380.f}, /* game: back wall and center cabinets; floor starts at 380 */
 {5,72.f,336.f,424.f,680.f}, /* game: left cabinets */
 {5,1056.f,280.f,1504.f,656.f}, /* game: right cabinets */
+{5,200.f,724.f,256.f,1024.f}, /* game: left crystal rocks */
+{5,256.f,744.f,336.f,1024.f}, /* game: left boulder */
+{5,336.f,778.f,384.f,1024.f}, /* game: ferns on the left boulder */
+{5,384.f,772.f,476.f,1024.f}, /* game: left lantern and its rock */
+{5,476.f,836.f,540.f,1024.f}, /* game: rock right of the left lantern */
+{5,540.f,894.f,600.f,1024.f}, /* game: rock beside the stairs, left */
+{5,920.f,890.f,968.f,1024.f}, /* game: rock beside the stairs, right */
+{5,968.f,836.f,1072.f,1024.f}, /* game: right fern rock */
+{5,1072.f,772.f,1160.f,1024.f}, /* game: right lantern and its rock */
+{5,1160.f,820.f,1240.f,1024.f}, /* game: ferns between the right rocks */
+{5,1240.f,752.f,1340.f,1024.f}, /* game: right boulder and crystals */
 {6,0.f,0.f,1536.f,735.f}, /* theater: screen and caption wall; aisle starts at 735 */
 {6,0.f,592.f,600.f,1024.f}, /* theater: left seats, aisle stays open */
 {6,912.f,688.f,1536.f,1024.f}, /* theater: right seats, aisle stays open */

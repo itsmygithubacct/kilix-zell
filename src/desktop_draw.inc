@@ -465,7 +465,6 @@ static void desktop_world_layer(const zell_scene *s,sr_canvas *c,int cx,int cy){
  if(background->px){for(int y=0;y<c->h&&y+cy<ZELL_WORLD_H;y++){int w=c->w;if(w+cx>ZELL_WORLD_W)w=ZELL_WORLD_W-cx;memcpy(c->px+(size_t)y*(size_t)c->w,background->px+(size_t)(y+cy)*ZELL_WORLD_W+(size_t)cx,(size_t)w*4);}}
  if(s->room)desktop_room(s,c,cx,cy,false);
  desktop_weather(s,c,cx,cy);
- int height=112;
  desktop_cave(s,c,cx,cy,false);
  if(s->room==0){
   bool enabled[3]={s->voice_on,s->dictation_on,!s->music_muted};
@@ -480,6 +479,10 @@ static void desktop_world_layer(const zell_scene *s,sr_canvas *c,int cx,int cy){
    }
   }
  }
+ int front=desktop_room_foreground(s->room);
+ bool front_hides=front>=0&&zell_desktop_foreground_in_front(s);
+ /* Furniture nearer the back wall than his feet goes under him. */
+ if(front>=0&&!front_hides)desktop_registered_front(c,front,cx,cy);
  if(s->mode==ZELL_MODE_WALK&&s->running){
   float px=s->x-(float)cx,py=s->y-(float)cy;
    float dx=s->direction==2?-1.0f:s->direction==3?1.0f:0;
@@ -498,9 +501,9 @@ static void desktop_world_layer(const zell_scene *s,sr_canvas *c,int cx,int cy){
  }
  /* The shadow stays on the floor line and shrinks as the hop lifts him. */
  sr_fill_ellipse(c,s->x-(float)cx,s->y-(float)cy,ZELL_FOOT_RADIUS_X*shadow,ZELL_FOOT_RADIUS_Y*shadow,0x071719u,.45f);
- desktop_art(c,pose.art,(int)s->x-cx+pose.offset_x,(int)s->y-cy+pose.offset_y+seat_dy,height*3/4);
+ desktop_art(c,pose.art,(int)s->x-cx+pose.offset_x,(int)s->y-cy+pose.offset_y+seat_dy,ZELL_KILIX_DRAW_HEIGHT);
  if(s->room==4&&s->seated&&s->seat_ticks==ZELL_SEAT_HOP_TICKS)desktop_stool_front(c,cx,cy);
- if(desktop_room_foreground(s->room)>=0)desktop_registered_front(c,desktop_room_foreground(s->room),cx,cy);
+ if(front_hides)desktop_registered_front(c,front,cx,cy);
  if(s->room)desktop_room(s,c,cx,cy,true);else desktop_cave(s,c,cx,cy,true);
  if(s->debug_blocks[0].enabled){
   int blocks=zell_desktop_block_count(s);

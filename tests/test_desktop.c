@@ -48,16 +48,20 @@ static int body_near(const zell_scene *s,float x,float y){
     }
     return 0;
 }
-/* Step from outside one footprint until the foot stops on its near edge. */
+/* Step from outside one footprint until the foot stops on its near edge.
+ * The face toward the middle of the room comes first; rock stepped along a
+ * room's edge hides that face behind its neighbour, so then the other axis. */
 static void walk_into_rect(zell_scene *s,float x0,float y0,float x1,float y1){
     float mid_x=(x0+x1)*0.5f,mid_y=(y0+y1)*0.5f;
     float goal_x=(float)ZELL_WORLD_W*0.50f,goal_y=(float)ZELL_WORLD_H*0.55f;
     if(s->room==1){goal_x=mid_x;goal_y=y1+24.f;}
-    int along_x=fabsf(goal_x-mid_x)<fabsf(goal_y-mid_y);
-    float span=along_x?(x1-x0):(y1-y0);
-    int steps=(int)(span/20.f);if(steps<2)steps=2;
+    int prefer_x=fabsf(goal_x-mid_x)<fabsf(goal_y-mid_y);
     int found=0,dir_x=0,dir_y=0;
     float start_x=0,start_y=0,edge=0;
+    for(int attempt=0;attempt<2&&!found;attempt++){
+    int along_x=attempt?!prefer_x:prefer_x;
+    float span=along_x?(x1-x0):(y1-y0);
+    int steps=(int)(span/20.f);if(steps<2)steps=2;
     for(int i=1;i<steps&&!found;i++){
         float t=(float)i/(float)steps,px,py;
         int mx=0,my=0;
@@ -80,6 +84,7 @@ static void walk_into_rect(zell_scene *s,float x0,float y0,float x1,float y1){
         }
         if(!clear)continue;
         start_x=px;start_y=py;dir_x=mx;dir_y=my;found=1;
+    }
     }
     if(!found)fprintf(stderr,"no clear approach %.0f %.0f %.0f %.0f room %d\n",x0,y0,x1,y1,s->room);
     assert(found);
@@ -1048,12 +1053,101 @@ static void test_workshop_puzzllm_hatch(void){
     sr_canvas_free(&away);sr_canvas_free(&near);
 }
 
+/* The Game Room: the rocks around the floor stop Kilix, the stairs between
+ * them stay open, and the furniture covers him only when he is behind it. */
+#ifndef ZELL_RENDER_NEURONTE
+/* Pixels under the solid foreground (alpha 240 and up; the painting tops
+ * out at 252) near his feet that clearly differ between a frame with him at
+ * (x,y) and one with him across the room. */
+static int game_room_visible_over_front(float x,float y){
+    const zell_art *front=zell_art_get(ZELL_ART_GAME_FOREGROUND);
+    int w=ZELL_WORLD_W,h=ZELL_WORLD_H+ZELL_ROOM_HUD_BOTTOM+ZELL_ROOM_STATUS_STRIP,n=0;
+    sr_canvas here,away;
+    zell_scene a,b;
+    assert(front&&sr_canvas_init(&here,w,h)&&sr_canvas_init(&away,w,h));
+    place_room(&a,5,x,y);zell_scene_resize(&a,w,h);a.flame_tick=0;
+    place_room(&b,5,768.f,520.f);zell_scene_resize(&b,w,h);b.flame_tick=0;
+    zell_room_view_identity(&a);zell_room_view_identity(&b);
+    assert(a.room_view.scale==1.f);
+    zell_draw(&a,&here);zell_draw(&b,&away);
+    for(int wy=(int)y-ZELL_KILIX_DRAW_HEIGHT;wy<(int)y;wy++)
+        for(int wx=(int)x-40;wx<(int)x+40;wx++){
+            if((front->pixels[(size_t)wy*ZELL_WORLD_W+(size_t)wx]>>24)<240u)continue;
+            float sx,sy;zell_world_to_screen(&a,(float)wx,(float)wy,&sx,&sy);
+            size_t at=(size_t)sy*(size_t)w+(size_t)sx;
+            int diff=0;
+            for(int shift=0;shift<24;shift+=8)
+                diff+=abs((int)((here.px[at]>>shift)&255u)-(int)((away.px[at]>>shift)&255u));
+            if(diff>24)n++;
+        }
+    sr_canvas_free(&here);sr_canvas_free(&away);
+    return n;
+}
+#endif
+static void test_game_room(void){
+    zell_scene s;
+    const float rocks[][2]={{230.f,760.f},{300.f,800.f},{430.f,790.f},{570.f,920.f},
+                            {940.f,920.f},{1110.f,790.f},{1200.f,840.f},{1290.f,800.f}};
+    place_room(&s,5,(float)ZELL_WORLD_W*.50f,(float)ZELL_WORLD_H*ZELL_ROOM_ENTRY_Y);
+    for(size_t i=0;i<sizeof rocks/sizeof rocks[0];i++)assert(zell_desktop_blocked(&s,rocks[i][0],rocks[i][1]));
+    /* The walk down to the stairs and the floor in front of them stay clear. */
+    for(float y=(float)ZELL_WORLD_H*ZELL_ROOM_ENTRY_Y;y<930.f;y+=8.f)assert(!zell_desktop_blocked(&s,768.f,y));
+    assert(!zell_desktop_blocked(&s,620.f,920.f)&&!zell_desktop_blocked(&s,900.f,920.f));
+    /* Walking south beside the stairs, he stops on the rock's top edge
+     * instead of walking over it down to the .91 clamp. */
+    {
+        const float tops[][2]={{300.f,744.f},{430.f,772.f},{560.f,894.f},{950.f,890.f},{1290.f,752.f}};
+        zell_controls south={.move_y=1},sw={.move_x=-1,.move_y=1},se={.move_x=1,.move_y=1};
+        for(size_t i=0;i<sizeof tops/sizeof tops[0];i++){
+            place_room(&s,5,tops[i][0],700.f);
+            for(int t=0;t<400&&s.room==5;t++)zell_scene_tick(&s,&south);
+            assert(s.room==5&&s.x==tops[i][0]);
+            assert(s.y<tops[i][1]&&s.y>tops[i][1]-ZELL_WALK_SPEED-0.05f);
+        }
+        /* Into either bottom corner he slides along the rocks and stays high. */
+        place_room(&s,5,400.f,700.f);
+        for(int t=0;t<400&&s.room==5;t++)zell_scene_tick(&s,&sw);
+        assert(s.room==5&&s.y<790.f);
+        place_room(&s,5,1150.f,700.f);
+        for(int t=0;t<400&&s.room==5;t++)zell_scene_tick(&s,&se);
+        assert(s.room==5&&s.y<830.f);
+    }
+    /* In front of the stools and the pinball the furniture goes under him;
+     * beside the right stool, behind its feet, it covers him. */
+    place_room(&s,5,220.f,700.f);assert(!zell_desktop_foreground_in_front(&s));
+    s.x=380.f;s.y=690.f;assert(!zell_desktop_foreground_in_front(&s));
+    s.x=440.f;s.y=650.f;assert(!zell_desktop_foreground_in_front(&s));
+    s.x=440.f;s.y=600.f;assert(zell_desktop_foreground_in_front(&s));
+    s.x=1300.f;s.y=690.f;assert(!zell_desktop_foreground_in_front(&s));
+    s.x=1030.f;s.y=520.f;assert(!zell_desktop_foreground_in_front(&s));
+    /* The other rooms keep their foregrounds over him; rooms without one have none. */
+    for(int room=0;room<=8;room++){
+        s.room=room;s.x=768.f;s.y=600.f;
+        assert(zell_desktop_foreground_in_front(&s)==(room>=6));
+    }
+    /* The foreground stool's front-left foot stops at the rock edge, so the
+     * background's rock shows in front of it. */
+    {
+        const zell_art *front=zell_art_get(ZELL_ART_GAME_FOREGROUND);
+        assert(front);
+        for(int x=78;x<=92;x++)
+            for(int y=652;y<660;y++)
+                assert((front->pixels[(size_t)y*ZELL_WORLD_W+(size_t)x]>>24)==0u);
+        assert((front->pixels[(size_t)630*ZELL_WORLD_W+85u]>>24)>=240u);
+    }
+#ifndef ZELL_RENDER_NEURONTE
+    /* Drawn: in front of the left stool he shows over its solid pixels; beside
+     * the right stool, behind its feet, none of him shows through them. */
+    assert(game_room_visible_over_front(220.f,700.f)>50);
+    assert(game_room_visible_over_front(440.f,600.f)==0);
+#endif
+}
 static void test_four_rooms(void){
     zell_scene s;
     zell_controls c;
     const int hatches[4]={ZELL_GAME_HATCH,ZELL_THEATER_HATCH,ZELL_MEDITATION_HATCH,ZELL_LIBRARY_HATCH};
     const float xs[4]={.30f,.46f,.62f,.78f};
-    const int expect_blocks[4]={3,3,3,3};
+    const int expect_blocks[4]={14,3,3,3};
     const float floors[4]={380.f,735.f,400.f,400.f};
     float sx,sy,wx,wy;
     assert(ZELL_ART_GAME_ROOM==ZELL_ART_WORKSHOP_STOOL+1);
@@ -4046,6 +4140,7 @@ int main(void) {
     test_lower_hatches();
     test_workshop_puzzllm_hatch();
     test_four_rooms();
+    test_game_room();
     test_fleet_board();
     test_notice_deadlines();
     test_floor_panels();

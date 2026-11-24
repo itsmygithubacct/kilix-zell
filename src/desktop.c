@@ -196,6 +196,42 @@ bool zell_desktop_station_in_front(const zell_scene *s,int i){
  bool stands=s->room==0?(i<6||(i>=32&&i<=41)):(i!=28&&i>=15&&i<46);
  return !(s->room==1&&i>=15&&i<=19)&&stands&&zell_stations[i].y*(float)ZELL_WORLD_H>s->y;
 }
+/* The Game Room's furniture is one full-room foreground. Its feet in each
+ * column are the lowest solid pixel there. The blocks keep Kilix from standing
+ * between two pieces that share a column, so comparing his feet with the
+ * lowest feet under his sprite orders the whole layer. */
+static const short *foreground_feet(int room){
+ static short feet[ZELL_WORLD_W];
+ static bool ready;
+ if(room!=5)return NULL;
+ if(!ready){
+  const zell_art *a=zell_art_get(ZELL_ART_GAME_FOREGROUND);
+  if(!a||a->width!=ZELL_WORLD_W||a->height!=ZELL_WORLD_H)return NULL;
+  for(int x=0;x<ZELL_WORLD_W;x++){
+   feet[x]=-1;
+   for(int y=ZELL_WORLD_H-1;y>=0;y--)
+    if((a->pixels[(size_t)y*ZELL_WORLD_W+(size_t)x]>>24)>=128u){feet[x]=(short)y;break;}
+  }
+  ready=true;
+ }
+ return feet;
+}
+/* The theater, meditation room and library foregrounds still always cover him. */
+bool zell_desktop_foreground_in_front(const zell_scene *s){
+ if(!s||s->room<5||s->room>8)return false;
+ const short *feet=foreground_feet(s->room);
+ if(!feet)return true;
+ zell_actor_pose pose=zell_desktop_pose(s,-1);
+ const zell_art *a=zell_art_get(pose.art);
+ if(!a||a->height<1)return true;
+ int width=ZELL_KILIX_DRAW_HEIGHT*a->width/a->height;
+ int x0=(int)s->x+pose.offset_x-width/2,x1=x0+width;
+ if(x0<0)x0=0;
+ if(x1>ZELL_WORLD_W)x1=ZELL_WORLD_W;
+ int lowest=-1;
+ for(int x=x0;x<x1;x++)if(feet[x]>lowest)lowest=feet[x];
+ return lowest>=0&&(float)lowest>=s->y;
+}
 
 /* Stool cushion and the floor just south of its legs, in world pixels.
  * Measured from the compiled stool sheet: opaque bounds x 759..835, y 291..383. */
