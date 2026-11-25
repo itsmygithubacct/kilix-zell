@@ -8,6 +8,12 @@ helper paints the cells under them. Zell starts it beside itself the first
 time Kilix walks into one. A room's shells live until Zell closes; only the
 room Kilix is in is painted.
 
+When the Kilix engine has embedded windows (kilix-embed-pane), each pane is
+a Kilix window of its own: listed and addressable like any Kilix pane, with
+Kilix's scrollback, selection, mouse modes and resizing. This helper reads
+its cells, paints them and passes Zell's input on. On an older engine, or
+with ZELL_PANES_BACKEND=pty, the panes are this helper's own terminals.
+
 Lines on stdin (INDEX is a pane of the shown room, from 0):
   S ROOM COLS ROWS  show a room at this size (its shells start the first time)
   H                 hide: the shells keep running, painting stops
@@ -319,26 +325,31 @@ def room_grid(display, workspace):
     return records
 
 
+def room_layout(workspace, tab=None):
+    """One tab of side-by-side panes and nothing else: no tab bar, no help
+    line, no pane titles. A zoomed pane has every column and the others are
+    not shown; they keep their size until it is unzoomed."""
+    tab = workspace.current if tab is None else tab
+    if workspace.zoom is not None:
+        rectangles = [None] * len(tab['panes'])
+        tab['panes'][workspace.zoom].resize(workspace.cols, workspace.rows)
+        rectangles[workspace.zoom] = (0, 0, workspace.cols, workspace.rows)
+        return rectangles
+    rectangles, x = [], 0
+    for pane, width in zip(tab['panes'], column_widths(workspace.cols, len(tab['panes']))):
+        pane.resize(width, workspace.rows)
+        rectangles.append((x, 0, width, workspace.rows))
+        x += width + 1
+    return rectangles
+
+
 def room_workspace(display, count, cols, rows, command):
     class PaneRoom(display.Workspace):
-        """One tab of side-by-side panes and nothing else: no tab bar, no
-        help line, no pane titles. A zoomed pane has every column and the
-        others are not shown; they keep their size until it is unzoomed."""
+        """A pane room of this helper's own terminals (see room_layout)."""
         zoom = None
 
         def layout(self, tab=None):
-            tab = self.current if tab is None else tab
-            if self.zoom is not None:
-                rectangles = [None] * len(tab['panes'])
-                tab['panes'][self.zoom].resize(self.cols, self.rows)
-                rectangles[self.zoom] = (0, 0, self.cols, self.rows)
-                return rectangles
-            rectangles, x = [], 0
-            for pane, width in zip(tab['panes'], column_widths(self.cols, len(tab['panes']))):
-                pane.resize(width, self.rows)
-                rectangles.append((x, 0, width, self.rows))
-                x += width + 1
-            return rectangles
+            return room_layout(self, tab)
 
         def resize(self, cols, rows):
             self.cols, self.rows = cols, rows
@@ -817,6 +828,10 @@ class Rooms:
             if room == self.shown and changed:
                 self.dirty = True
         self.report_bars()
+        self.report_titles(now)
+
+    def report_titles(self, now):
+        """Say what runs in front in each pane, when it changes."""
         if now >= self.next_titles:
             self.next_titles = now + TITLE_SECONDS
             for room, workspace in self.rooms.items():
@@ -842,6 +857,481 @@ class Rooms:
         for workspace in self.rooms.values():
             workspace.close()
         self.rooms = {}
+
+# Pane rooms whose panes are Kilix windows (kilix-embed-pane). The engine
+# runs each shell in an embedded window, a real Kilix pane with its own
+# screen, scrollback, selection and mouse modes; this helper reads the cells
+# from the window's map, draws them with Neuronte and sends Zell's input on.
+# Used when the engine has embedded windows; else the panes are this helper's
+# own terminals, as above.
+
+# Ghostty's buttons, as Zell sends them, as the engine numbers them.
+EMBED_BUTTONS = {0: -1, 1: 0, 2: 1, 3: 2, 8: 3, 9: 4}
+# What the Kilix pane viewer needs from Zell's environment, by name only:
+# the rest of it (keys, tokens) never goes on a command line.
+VIEW_ENV = ('KILIX_HOME', 'GPU_TERMINAL_SOURCE_HOME', 'GPU_TERMINAL_HOME', 'KITTY_PTY_BROKER_EXECUTABLE',
+            'KITTY_PTY_BROKER_RUNTIME', 'KILIX_RC_PASSWORD_FILE', 'PATH', 'LANG')
+# A viewer that ends this soon after it started could not show the panes.
+VIEW_FAILED_SECONDS = 2.0
+
+
+def load_embed_module(environ=os.environ):
+    """kilix_embed_pane from the module beside Zell or in kilix-modules, or
+    None when there is none."""
+    import importlib.util
+    here = Path(__file__).resolve()
+    root = Path(environ.get('GPU_TERMINAL_HOME') or Path.home() / '.local/gpu_terminal')
+    override = environ.get('KILIX_ZELL_EMBED_PANE')
+    paths = [Path(override).expanduser()] if override else [
+        here.parents[1] / 'libexec/kilix-embed-pane',
+        Path(environ.get('GPU_TERMINAL_SOURCE_HOME') or Path.home() / 'gpu_terminal') / 'kilix-modules/kilix-embed-pane',
+        Path.home() / 'gpu_terminal/kilix-modules/kilix-embed-pane',
+        root / 'kilix-modules/kilix-embed-pane',
+        here.parents[3] / 'kilix-modules/kilix-embed-pane',
+    ]
+    for path in paths:
+        package = path if (path / '__init__.py').is_file() else path / 'python' / 'kilix_embed_pane'
+        init = package / '__init__.py'
+        if not init.is_file():
+            continue
+        spec = importlib.util.spec_from_file_location('kilix_embed_pane', init,
+                                                      submodule_search_locations=[str(package)])
+        module = importlib.util.module_from_spec(spec)
+        sys.modules['kilix_embed_pane'] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            sys.modules.pop('kilix_embed_pane', None)
+            raise
+        return module
+    return None
+
+
+def embed_foreground(pane):
+    """The process group in front in an embedded pane's terminal and its
+    name, from the shell's /proc entry (its terminal's foreground group)."""
+    pid = getattr(pane, 'pid', 0)
+    if not pid:
+        return None, None
+    try:
+        with open(f'/proc/{pid}/stat') as stream:
+            group = int(stream.read().rsplit(')', 1)[1].split()[5])
+        if group <= 0:
+            return None, None
+        name = Path(f'/proc/{group}/comm').read_text().strip()
+    except (OSError, ValueError, IndexError):
+        return None, None
+    return group, name
+
+
+class EmbedTerminal:
+    """What Rooms asks of a pane's terminal, answered from the window's last
+    frame; scrolling goes to the engine."""
+
+    def __init__(self, pane):
+        self.pane = pane
+
+    def frame(self):
+        return self.pane.frame
+
+    def alternate_screen(self):
+        f = self.frame()
+        return bool(f and f.modes & self.pane.kep.MODE_ALTERNATE_SCREEN)
+
+    def scrollbar(self):
+        """(rows kept, first shown, shown), as the scrollbar counts them."""
+        f = self.frame()
+        if f is None:
+            return 0, 0, 0
+        if self.alternate_screen():
+            return f.rows, 0, f.rows
+        return f.history_rows + f.rows, max(0, f.history_rows - f.view_offset), f.rows
+
+    def mouse_tracking(self):
+        f = self.frame()
+        return bool(f and f.mouse_tracking_mode)
+
+    def mode(self, number, ansi=False):
+        f = self.frame()
+        if f is None or ansi:
+            return False
+        kep = self.pane.kep
+        return {
+            1: bool(f.modes & kep.MODE_APPLICATION_CURSOR),
+            1000: f.mouse_tracking_mode >= 1, 1002: f.mouse_tracking_mode >= 2, 1003: f.mouse_tracking_mode == 3,
+            1004: bool(f.modes & kep.MODE_FOCUS_TRACKING), 2004: bool(f.modes & kep.MODE_BRACKETED_PASTE),
+            1049: self.alternate_screen(), 1047: self.alternate_screen(), 47: self.alternate_screen(),
+        }.get(number, False)
+
+    def title(self):
+        f = self.frame()
+        return f.title if f else ''
+
+    def scroll(self, rows):
+        """Like Terminal.scroll: rows < 0 back through history."""
+        f = self.frame()
+        if f is not None and rows and not self.alternate_screen():
+            self.pane.scroll_to(max(0, min(f.history_rows, f.view_offset - rows)))
+
+    def scroll_to(self, row):
+        f = self.frame()
+        if f is not None and not self.alternate_screen():
+            self.pane.scroll_to(max(0, min(f.history_rows, f.history_rows - row)))
+
+    def scroll_top(self):
+        f = self.frame()
+        if f is not None:
+            self.pane.scroll_to(f.history_rows)
+
+    def scroll_bottom(self):
+        self.pane.scroll_to(0)
+
+
+class EmbedPane:
+    """One pane as an embedded Kilix window. fd is -1 while the window is
+    open, None once it is gone: Rooms reads it as whether the pane is alive,
+    and this helper never waits on it."""
+
+    def __init__(self, backend, command, cols, rows, env=()):
+        self.backend, self.kep = backend, backend.kep
+        self.window = backend.engine.launch(command, cols, rows, (CELL_WIDTH, CELL_HEIGHT), env=env,
+                                            cwd=str(Path.home()))
+        try:
+            self.reader = self.kep.MapReader(self.window.map)
+        except self.kep.MapError:
+            backend.close_window(self.window)
+            raise
+        self.cols, self.rows = self.window.cols, self.window.rows
+        self.frame, self.exit_status, self.fd, self.pid = None, None, -1, 0
+        self.name = Path(command[0]).name if command else None
+        self.selection, self.pending = None, b''
+        self.terminal = EmbedTerminal(self)
+
+    def update(self):
+        """Read the window's map; True when what is shown changed."""
+        if self.fd is None:
+            return False
+        if not os.path.exists(self.window.map):
+            self.eof()
+            return True
+        frame = self.reader.read()
+        if frame is None:
+            return False
+        self.frame = frame
+        if frame.child_pid:
+            self.pid = frame.child_pid
+        return True
+
+    def input(self, event, mods=0):
+        if self.fd is not None:
+            self.backend.conn.send(self.window, event, mods)
+
+    def send(self, data):
+        if self.fd is not None and data:
+            self.backend.conn.send_bytes(self.window, data)
+
+    def paste(self, text):
+        if self.fd is not None and text:
+            self.input(['paste', text])
+
+    def scroll_to(self, offset):
+        self.input(['scroll-to', str(int(offset))])
+
+    def selected_text(self):
+        """Kilix's selection, asked on the input connection so that it comes
+        after the button release sent just before."""
+        try:
+            return self.backend.conn.selection(self.window).rstrip('\n')
+        except self.kep.EmbedError:
+            return ''
+
+    def resize(self, cols, rows):
+        if self.fd is None or (cols, rows) == (self.cols, self.rows):
+            return
+        try:
+            self.backend.engine.resize(self.window, cols, rows, (CELL_WIDTH, CELL_HEIGHT))
+        except self.kep.EmbedError:
+            return  # it keeps its size and is drawn cut to its place; tried again next layout
+        self.cols, self.rows = self.window.cols, self.window.rows
+
+    def read(self):
+        return b''
+
+    def flush(self):
+        pass
+
+    def reap(self):
+        pass
+
+    def eof(self):
+        if self.fd is not None:
+            self.fd = None
+            if self.exit_status is None:
+                self.exit_status = 0
+            self.reader.close()
+
+    def close(self):
+        alive = self.fd is not None
+        self.eof()
+        if alive:
+            self.backend.close_window(self.window)
+
+
+class EmbedBackend:
+    """The engine, one input connection for every pane, and the module."""
+
+    def __init__(self, kep, engine):
+        self.kep, self.engine = kep, engine
+        self.conn = kep.InputConnection(engine.listen_on)
+
+    @classmethod
+    def open(cls, environ):
+        """The backend, or None when this engine has no embedded windows."""
+        kep = load_embed_module(environ)
+        if kep is None:
+            return None
+        try:
+            engine = kep.Engine.from_environment(environ)
+        except kep.EmbedError:
+            return None
+        return cls(kep, engine) if engine.supported() else None
+
+    def close_window(self, window):
+        try:
+            self.engine.close(window)
+        except self.kep.EmbedError:
+            pass
+
+    def close(self):
+        self.conn.close()
+
+
+class EmbedWorkspace:
+    """A pane room of embedded Kilix windows, side by side (room_layout)."""
+    zoom = None
+
+    def __init__(self, new_pane, count, cols, rows):
+        self.new_pane = new_pane
+        self.cols, self.rows, self.cw, self.ch, self.lib = cols, rows, CELL_WIDTH, CELL_HEIGHT, None
+        self.tabs, self.tab, self.focus = [{'panes': []}], 0, 0
+        now = time.monotonic()
+        try:
+            for width in column_widths(cols, count):
+                pane = new_pane(width, rows)
+                pane.born = now
+                self.tabs[0]['panes'].append(pane)
+        except BaseException:
+            self.close()
+            raise
+
+    @property
+    def current(self):
+        return self.tabs[self.tab]
+
+    @property
+    def selected(self):
+        return self.current['panes'][self.focus]
+
+    def panes(self):
+        return [pane for tab in self.tabs for pane in tab['panes']]
+
+    def layout(self, tab=None):
+        return room_layout(self, tab)
+
+    def resize(self, cols, rows):
+        self.cols, self.rows = cols, rows
+        for tab in self.tabs:
+            self.layout(tab)
+
+    def close(self):
+        for pane in self.panes():
+            try:
+                pane.close()
+            except PANE_ERRORS:
+                pass
+
+
+def embed_grid(display, workspace):
+    """The room's records: each pane's cells as Kilix drew them (selection
+    and reverse video already in the colours), the focused pane's cursor
+    reversed, a line between neighbours."""
+    cols, rows = workspace.cols, workspace.rows
+    blank = (32, display.FG, display.BG, 0)
+    records = [blank] * (cols * rows)
+    for index, (pane, rectangle) in enumerate(zip(workspace.current['panes'], workspace.layout())):
+        if rectangle is None:
+            continue
+        x, _y, width, height = rectangle
+        frame = pane.frame
+        if frame is not None:
+            cells = pane.kep.to_records(frame)
+            w, h = min(width, frame.cols), min(height, frame.rows)
+            for row in range(h):
+                records[row * cols + x:row * cols + x + w] = cells[row * frame.cols:row * frame.cols + w]
+            cx, cy, _shape, visible = frame.cursor[:4]
+            if index == workspace.focus and visible and frame.view_offset == 0 and 0 <= cx < w and 0 <= cy < h:
+                at = cy * cols + x + cx
+                code, foreground, background, flags = records[at]
+                records[at] = (code, foreground, background, flags ^ 16)
+        if x + width < cols:
+            for row in range(rows):
+                records[row * cols + x + width] = (0x2502, SEPARATOR, display.BG, 0)
+    return records
+
+
+class EmbedRooms(Rooms):
+    """Rooms whose panes are embedded Kilix windows. Kilix keeps the
+    selection, scrollback and mouse modes; this only forwards."""
+
+    def __init__(self, display, command, backend, viewer_env=(), **kw):
+        self.backend = backend
+        self.viewer_env = list(viewer_env)
+        kw.setdefault('front', embed_foreground)
+        super().__init__(display, command, make=self.make_workspace, **kw)
+        if self.viewer is True:
+            self.viewer = self.make_viewer
+
+    def new_pane(self, cols, rows):
+        return EmbedPane(self.backend, self.command, cols, rows)
+
+    def make_workspace(self, _display, count, cols, rows, _command):
+        return EmbedWorkspace(self.new_pane, count, cols, rows)
+
+    def make_viewer(self, _workspace, cols, rows):
+        return EmbedPane(self.backend, [sys.executable, str(ATTACH)], cols, rows, env=self.viewer_env)
+
+    def replace(self, workspace, tab, index, now):
+        """End a pane's window and open a new one of the same size there.
+        If that fails the old one stays, ended, and is tried again later."""
+        old = tab['panes'][index]
+        try:
+            fresh = self.new_pane(old.cols, old.rows)
+        except PANE_ERRORS:
+            old.born = now
+            return False
+        try:
+            old.close()
+        except PANE_ERRORS:
+            pass
+        fresh.born = now
+        tab['panes'][index] = fresh
+        self.backlog.pop(old, None)
+        workspace.layout()
+        return True
+
+    def take(self, text):
+        if text.startswith('K'):
+            workspace = self.rooms.get(self.shown)
+            try:
+                data = bytes.fromhex(text[1:])
+            except ValueError:
+                return
+            if workspace is not None and data:
+                # The engine shows the live rows again as it types.
+                self.send(workspace.selected, data)
+            return
+        words = text.split()
+        if words[:1] == ['X'] and len(words) == 2:
+            found = self.pane(words[1])
+            if not found:
+                return
+            workspace, index = found
+            pane = workspace.current['panes'][index]
+            if getattr(pane, 'shell', None) is not None:
+                self.unview(workspace.current, index)
+                workspace.layout()
+                self.dirty = True
+                return
+            group = self.front(pane)[0]
+            if group is not None and group != pane.pid:
+                try:
+                    self.hang_up(group, signal.SIGHUP)
+                except OSError:
+                    pass
+            self.replace(workspace, workspace.current, index, self.clock())
+            self.dirty = True
+            return
+        super().take(text)
+
+    def pointer(self, pane, index, action, button, mods, x, y):
+        frame = pane.frame
+        if frame is None:
+            return
+        # Zell: Shift 1, Ctrl 2, Alt 4. The engine: Shift 1, Alt 2, Ctrl 4.
+        engine_mods = (1 if mods & 1 else 0) | (4 if mods & 2 else 0) | (2 if mods & 4 else 0)
+        column = min(max(0, x // CELL_WIDTH), frame.cols - 1)
+        row = min(max(0, y // CELL_HEIGHT), frame.rows - 1)
+        if button in (4, 5):
+            if action == PRESS:
+                lines = WHEEL_ROWS if button == 4 else -WHEEL_ROWS
+                pane.input(['scroll', str(lines), str(column), str(row), str(x), str(y)], engine_mods)
+            return
+        engine_button = EMBED_BUTTONS.get(button)
+        if engine_button is None or (engine_button < 0 and action != MOTION):
+            return
+        left_half = 1 if x % CELL_WIDTH < CELL_WIDTH / 2 else 0
+        pane.input(['mouse', str(action), str(engine_button), str(column), str(row), str(x), str(y), str(left_half)],
+                   engine_mods)
+        program = frame.mouse_tracking_mode and not mods & SHIFT
+        if action == RELEASE and button == LEFT and not program:
+            text = pane.selected_text()
+            if text:
+                self.copy(index, text)
+
+    def paste_line(self, room_word, index_word, piece):
+        try:
+            room, index = int(room_word), int(index_word)
+        except ValueError:
+            return
+        workspace = self.rooms.get(room)
+        if workspace is None or not 0 <= index < len(workspace.current['panes']):
+            return
+        if piece != '.':
+            super().paste_line(room_word, index_word, piece)
+            return
+        held = self.pastes.pop((room, index), None)
+        if held:
+            # Kilix brackets it when the program asked, and shows the live rows.
+            workspace.current['panes'][index].paste(bytes(held).decode('utf-8', 'replace'))
+
+    def poll(self, now):
+        for room, workspace in self.rooms.items():
+            changed = False
+            for tab in workspace.tabs:
+                for index, pane in enumerate(tab['panes']):
+                    try:
+                        changed = pane.update() or changed
+                    except PANE_ERRORS:
+                        pane.eof()
+                        changed = True
+                    shell = getattr(pane, 'shell', None)
+                    if shell is not None:
+                        try:
+                            shell.update()
+                        except PANE_ERRORS:
+                            shell.eof()
+                    if pane.fd is not None:
+                        continue
+                    if shell is not None:
+                        # The Kilix panes were left: the shell is shown again.
+                        failed = now - getattr(pane, 'born', now) < VIEW_FAILED_SECONDS
+                        self.unview(tab, index)
+                        changed = True
+                        if failed:
+                            self.say(f'N {room} {index} {NO_VIEW}')
+                    elif now - getattr(pane, 'born', 0.0) >= RESPAWN_SECONDS:
+                        changed = self.replace(workspace, tab, index, now) or changed
+            if room == self.shown and changed:
+                self.dirty = True
+        self.report_bars()
+        self.report_titles(now)
+
+    def descriptors(self):
+        return []
+
+    def close(self):
+        super().close()
+        self.backend.close()
 
 
 def say(text):
@@ -877,7 +1367,10 @@ def main():
         signal.signal(sig, stop)
     try:
         display = zell_terminal.load_display()
-        if not hasattr(display.Terminal, 'scrollbar'):
+        # Kilix windows when the engine has embedded ones (ZELL_PANES_BACKEND=pty
+        # keeps this helper's own terminals).
+        backend = None if os.environ.get('ZELL_PANES_BACKEND') == 'pty' else EmbedBackend.open(kilix_env)
+        if backend is None and not hasattr(display.Terminal, 'scrollbar'):
             say('E The panes need the Neuronte display from 0.2.4, with scrollback and the mouse.')
             return 1
         weights, library = zell_terminal.renderer_paths()
@@ -889,13 +1382,26 @@ def main():
         os.chdir(Path.home())
         agents = available_agents()
         viewer = None
-        if attach_ready(kilix_env):
-            agents.append(('kilix', 'Kilix', None))
+        shell = [os.environ.get('SHELL') or '/bin/sh']
+        if backend is not None:
+            if attach_ready(kilix_env):
+                agents.append(('kilix', 'Kilix', None))
+                viewer = True
+            # The viewer is a Kilix window of its own; Zell's is left out of its list.
+            viewer_env = [f'{name}={kilix_env[name]}' for name in VIEW_ENV if kilix_env.get(name)]
+            if kilix_env.get('KITTY_WINDOW_ID'):
+                viewer_env.append(f'ZELL_KILIX_WINDOW_ID={kilix_env["KITTY_WINDOW_ID"]}')
+            rooms = EmbedRooms(display, shell, backend, viewer_env=viewer_env, agents=agents, say=say, viewer=viewer)
+            grid = embed_grid
+        else:
+            if attach_ready(kilix_env):
+                agents.append(('kilix', 'Kilix', None))
 
-            def viewer(workspace, cols, rows):
-                return display.Pane([sys.executable, str(ATTACH)], cols, rows, workspace.cw, workspace.ch,
-                                    workspace.lib, env=kilix_env)
-        rooms = Rooms(display, [os.environ.get('SHELL') or '/bin/sh'], agents=agents, say=say, viewer=viewer)
+                def viewer(workspace, cols, rows):
+                    return display.Pane([sys.executable, str(ATTACH)], cols, rows, workspace.cw, workspace.ch,
+                                        workspace.lib, env=kilix_env)
+            rooms = Rooms(display, shell, agents=agents, say=say, viewer=viewer)
+            grid = room_grid
         rooms.quit = bool(stopping)
         say('R')
         for name, label, _typed in agents:
@@ -917,7 +1423,7 @@ def main():
             rooms.poll(now)
             workspace = rooms.rooms.get(rooms.shown)
             if workspace is not None and rooms.dirty and now >= next_frame:
-                records = drawable(cache, room_grid(display, workspace), bad)
+                records = drawable(cache, grid(display, workspace), bad)
                 frame = renderer.render(records, workspace.cols, workspace.rows)
                 publish(shared, frame, rooms.shown)
                 rooms.dirty = False

@@ -400,6 +400,7 @@ test-desktop: $(BUILD)/test-desktop
 	python3 $(ROOT)/tests/test_projects.py
 	python3 $(ROOT)/tests/test_terminal.py
 	python3 $(ROOT)/tests/test_panes.py
+	python3 $(ROOT)/tests/test_panes_embed.py
 	python3 $(ROOT)/tests/test_attach.py
 	python3 $(ROOT)/tests/test_secrets.py
 	python3 $(ROOT)/tests/test_journal.py
